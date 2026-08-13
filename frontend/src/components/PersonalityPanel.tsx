@@ -51,8 +51,21 @@ export function PersonalityPanel(): JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
+    let attempt = 0;
+    // On a fresh launch this effect fires the moment the renderer's JS
+    // executes, which can beat the backend's ~1-2s uvicorn+plugin startup
+    // (see core.watchdog.supervisor) to the punch — the request lands while
+    // the port isn't listening yet. App.tsx's own /api/status poll shrugs
+    // this off by retrying every 1.5s forever; this effect used to run
+    // once and give up permanently on that single early failure, showing
+    // "Не удалось загрузить настройки личности." even though the very next
+    // attempt would have succeeded. Retry a bounded number of times instead
+    // of forever, since a real (non-startup) failure should still surface.
+    const MAX_ATTEMPTS = 5;
+    const RETRY_DELAY_MS = 1000;
 
     async function load(): Promise<void> {
+      attempt += 1;
       try {
         const [availableStyles, style, word, breath] = await Promise.all([
           listCommunicationStyles(),
@@ -70,10 +83,15 @@ export function PersonalityPanel(): JSX.Element {
         setBreathEffect(breath === "1");
         setLoaded(true);
       } catch (error) {
-        if (!cancelled) {
-          console.error("Failed to load personality settings:", error);
-          setError("Не удалось загрузить настройки личности.");
+        if (cancelled) {
+          return;
         }
+        if (attempt < MAX_ATTEMPTS) {
+          setTimeout(() => void load(), RETRY_DELAY_MS);
+          return;
+        }
+        console.error("Failed to load personality settings:", error);
+        setError("Не удалось загрузить настройки личности.");
       }
     }
 

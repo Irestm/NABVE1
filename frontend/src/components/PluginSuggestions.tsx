@@ -19,6 +19,19 @@ export function PluginSuggestions(): JSX.Element | null {
 
   useEffect(() => {
     let cancelled = false;
+    let hasSucceededOnce = false;
+    let startupAttempt = 0;
+    // The regular setInterval below already makes this self-healing, but
+    // at POLL_INTERVAL_MS=15000 that means up to 15s of a visible error
+    // banner after every launch — this effect fires the moment the
+    // renderer's JS executes, which can beat the backend's ~1-2s
+    // uvicorn+plugin startup (see core.watchdog.supervisor) to the punch.
+    // Retry fast (bounded) until the first success, same fix as App.tsx's
+    // own /api/status poll already gets away with via its short 1.5s
+    // interval; once real data has loaded once, fall back to the normal
+    // interval below for ongoing refresh.
+    const STARTUP_MAX_ATTEMPTS = 5;
+    const STARTUP_RETRY_DELAY_MS = 1000;
 
     async function poll(): Promise<void> {
       try {
@@ -26,12 +39,19 @@ export function PluginSuggestions(): JSX.Element | null {
         if (!cancelled) {
           setSuggestions(result);
           setError("");
+          hasSucceededOnce = true;
         }
       } catch (error) {
-        if (!cancelled) {
-          console.error("Failed to poll plugin suggestions:", error);
-          setError("Не удалось получить предложения плагинов");
+        if (cancelled) {
+          return;
         }
+        if (!hasSucceededOnce && startupAttempt < STARTUP_MAX_ATTEMPTS) {
+          startupAttempt += 1;
+          setTimeout(() => void poll(), STARTUP_RETRY_DELAY_MS);
+          return;
+        }
+        console.error("Failed to poll plugin suggestions:", error);
+        setError("Не удалось получить предложения плагинов");
       }
     }
 

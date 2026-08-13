@@ -17,8 +17,20 @@ export function LanQrPanel(): JSX.Element | null {
       return;
     }
     let cancelled = false;
+    let attempt = 0;
+    // This effect fires the moment the renderer's JS executes, which can
+    // beat the backend's ~1-2s uvicorn+plugin startup (see
+    // core.watchdog.supervisor) to the punch — see App.tsx's own
+    // /api/status poll, which shrugs off the same race by retrying every
+    // 1.5s forever. This effect used to run once and give up permanently
+    // on that single early failure. Retry a bounded number of times
+    // instead of forever, since a real (non-startup) failure should still
+    // surface.
+    const MAX_ATTEMPTS = 5;
+    const RETRY_DELAY_MS = 1000;
 
     async function load(): Promise<void> {
+      attempt += 1;
       try {
         const { url: lanUrl } = await getLanUrl();
         if (cancelled) {
@@ -30,10 +42,15 @@ export function LanQrPanel(): JSX.Element | null {
           setQrDataUrl(dataUrl);
         }
       } catch (error) {
-        if (!cancelled) {
-          console.error("Failed to build the LAN QR code:", error);
-          setError("Не удалось определить адрес в локальной сети.");
+        if (cancelled) {
+          return;
         }
+        if (attempt < MAX_ATTEMPTS) {
+          setTimeout(() => void load(), RETRY_DELAY_MS);
+          return;
+        }
+        console.error("Failed to build the LAN QR code:", error);
+        setError("Не удалось определить адрес в локальной сети.");
       }
     }
 

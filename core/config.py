@@ -64,10 +64,19 @@ class Settings:
     db_path: Path = DATA_DIR / "assistant.db"
     confirmation_ttl_seconds: int = int(os.environ.get("ASSISTANT_CONFIRM_TTL", "60"))
     voice_autostart: bool = os.environ.get("ASSISTANT_VOICE_AUTOSTART", "false").lower() == "true"
-    allowed_origins: tuple[str, ...] = (
-        f"http://127.0.0.1:{os.environ.get('ASSISTANT_UI_PORT', '5173')}",
-        f"http://localhost:{os.environ.get('ASSISTANT_UI_PORT', '5173')}",
-    )
+    # "*" is safe here because allow_credentials=False (see main.py's
+    # CORSMiddleware setup) — the real access boundary is api_token above,
+    # not origin checking. A specific-origins allowlist (previously just the
+    # Vite dev server) breaks the packaged Electron build: it loads the UI
+    # over file://, whose Origin header (null / "file://", depending on
+    # platform) never matches an http://host:port entry, so the renderer's
+    # fetch() calls were silently CORS-blocked — the request reached the
+    # server and got a 200 (visible in the server log), but the browser
+    # withheld the response from JS, which read as a permanent "no
+    # connection" error. LAN thin clients (phone browsers) already load the
+    # page same-origin from this same server so were never affected either
+    # way, and the dev server origin still works under "*" too.
+    allowed_origins: tuple[str, ...] = ("*",)
     # modules/meeting_recorder: 2h30m matches the client-side auto-stop limit
     # (see the module's frontend capture logic) — this is the independent
     # server-side check via ffprobe, the client's own reported duration is

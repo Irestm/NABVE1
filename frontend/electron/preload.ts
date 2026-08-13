@@ -1,5 +1,18 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { BACKEND_BASE_URL } from "./config";
+
+// Deliberately not `import { BACKEND_BASE_URL } from "./config"` (as main.ts
+// does) — this script runs through Electron's sandboxed preload loader
+// (the default since webPreferences.sandbox isn't set to false), which only
+// resolves a small built-in allowlist ("electron", node builtins, ...) and
+// throws "module not found" for any require() of a sibling compiled file,
+// silently killing the whole preload script before it ever reaches
+// contextBridge.exposeInMainWorld below — confirmed via the renderer's
+// devtools console, which is the only place Electron surfaces that error
+// (it never reaches main-process stdout/stderr). Every consumer of
+// window.assistantAPI then sees it as simply undefined, with no error of
+// its own. Keep this in sync with electron/config.ts's BACKEND_BASE_URL by
+// hand until preload has a real bundler step.
+const BACKEND_BASE_URL = "http://127.0.0.1:8756";
 
 const API_TOKEN_ARG_PREFIX = "--api-token=";
 
