@@ -140,7 +140,13 @@ function createStatusWindow(): BrowserWindow {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: "#0d1117",
-    icon: path.join(__dirname, "..", "assets", "icons", "icon.png"),
+    // A distinct file from assets/icons/icon.png: that one is also the
+    // electron-builder.yml win/linux `icon:` build resource, which
+    // electron-builder silently excludes from the packaged app.asar even
+    // though other assets/icons/*.png files (e.g. tray-idle.png) get
+    // bundled normally — confirmed via `npx asar list` on a packaged
+    // build. Runtime window icon needs its own untouched copy.
+    icon: path.join(__dirname, "..", "assets", "icons", "window.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -180,7 +186,9 @@ export function setAlwaysOnTop(enabled: boolean): void {
 
 function startUiVisibilityPolling(): void {
   visibilityPollTimer = setInterval(() => {
-    void fetch(`${BACKEND_BASE_URL}/api/ui/visibility_request`)
+    void fetch(`${BACKEND_BASE_URL}/api/ui/visibility_request`, {
+      headers: { "X-Assistant-Token": apiToken },
+    })
       .then((response) => (response.ok ? response.json() : null))
       .then((raw: unknown) => {
         const body = raw as { action?: string | null } | null;
