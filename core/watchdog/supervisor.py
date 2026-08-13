@@ -94,8 +94,12 @@ class Supervisor:
         self._process = None
 
     def _check_health(self) -> bool:
+        # /api/status is gated by core.main's require_api_token middleware
+        # like every other /api/* route — without this header every check
+        # gets a 401 and the supervisor kills a perfectly healthy process.
+        request = urllib.request.Request(self._health_url, headers={"X-Assistant-Token": settings.api_token})
         try:
-            with urllib.request.urlopen(self._health_url, timeout=self._health_timeout) as response:
+            with urllib.request.urlopen(request, timeout=self._health_timeout) as response:
                 return 200 <= response.status < 300
         except (urllib.error.URLError, OSError, ValueError):
             return False
