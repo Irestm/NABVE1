@@ -1,0 +1,289 @@
+.sun-design {
+  --sun-core: #ffd166;
+  --sun-mid: #ff9d4d;
+  --sun-edge: #d9660a;
+  --sun-intensity: 0.55;
+  position: relative;
+  width: 132px;
+  height: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Per-state palette + intensity, same idea as CentralOrb's --glow/--glow-strength
+   but with a warm star gradient instead of a flat accent color. */
+.sun-design--idle {
+  --sun-core: #ffd166;
+  --sun-mid: #ff9d4d;
+  --sun-edge: #d9660a;
+  --sun-intensity: 0.5;
+}
+
+.sun-design--listening {
+  --sun-core: #fffde7;
+  --sun-mid: #ffe066;
+  --sun-edge: #ffb703;
+  --sun-intensity: 0.85;
+}
+
+.sun-design--processing {
+  --sun-core: #ffcb69;
+  --sun-mid: #fb8500;
+  --sun-edge: #9d0208;
+  --sun-intensity: 0.65;
+}
+
+.sun-design--thinking {
+  --sun-core: #ffb703;
+  --sun-mid: #fb5607;
+  --sun-edge: #9d0208;
+  --sun-intensity: 0.8;
+}
+
+.sun-design--speaking {
+  --sun-core: #fffbea;
+  --sun-mid: #ffd60a;
+  --sun-edge: #ff8500;
+  --sun-intensity: 1;
+}
+
+.sun-design--error {
+  --sun-core: #ff9b7a;
+  --sun-mid: #d90429;
+  --sun-edge: #6a040f;
+  --sun-intensity: 0.9;
+}
+
+.sun-design--paused {
+  --sun-core: #a9784a;
+  --sun-mid: #6b3e1f;
+  --sun-edge: #2b1608;
+  --sun-intensity: 0.3;
+}
+
+.sun-design__corona {
+  position: absolute;
+  inset: -34px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--sun-mid) 55%, transparent) 0%, transparent 72%);
+  opacity: var(--sun-intensity);
+  filter: blur(5px);
+  transform: scale(calc(1 + var(--amplitude, 0.14) * 0.9));
+  transition: opacity 0.4s ease, background 0.4s ease;
+  animation: sun-breathe calc(5s - var(--sun-intensity) * 1.5s) ease-in-out infinite;
+}
+
+.sun-design__flares {
+  position: absolute;
+  inset: -40px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(
+    from 0deg,
+    color-mix(in srgb, var(--sun-mid) 85%, transparent) 0deg 4deg,
+    transparent 4deg 18deg
+  );
+  opacity: calc(var(--sun-intensity) * 0.5);
+  filter: blur(1px);
+  -webkit-mask: radial-gradient(circle, transparent 38%, #000 55%, transparent 78%);
+  mask: radial-gradient(circle, transparent 38%, #000 55%, transparent 78%);
+  transform: scale(calc(1 + var(--amplitude, 0.14) * 0.7));
+  animation: sun-spin 40s linear infinite;
+}
+
+.sun-design__flares--reverse {
+  inset: -24px;
+  opacity: calc(var(--sun-intensity) * 0.35);
+  animation-direction: reverse;
+  animation-duration: 55s;
+}
+
+.sun-design__surface {
+  position: relative;
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: radial-gradient(circle at 35% 30%, #fff 0%, var(--sun-core) 25%, var(--sun-mid) 55%, var(--sun-edge) 100%);
+  box-shadow:
+    0 0 40px color-mix(in srgb, var(--sun-mid) 70%, transparent),
+    0 0 80px color-mix(in srgb, var(--sun-edge) 40%, transparent),
+    /* Limb darkening: a photosphere is dimmer at the visible edge than at
+       its center, which is what actually reads as "a sphere" rather than a
+       flat glowing disc. */
+    inset 0 0 22px 4px color-mix(in srgb, var(--sun-edge) 65%, black);
+  transform: scale(calc(1 + var(--amplitude, 0.14) * 0.55));
+  transition: box-shadow 0.4s ease;
+}
+
+.sun-design--speaking .sun-design__surface,
+.sun-design--listening .sun-design__surface {
+  animation: sun-pulse 1s ease-in-out infinite;
+}
+
+/* Irregular, non-repeating convection-cell blobs instead of a repeating
+   dot grid — an evenly spaced grid of circles is exactly what reads as a
+   mirror/disco ball rather than a turbulent plasma surface. Each blob has
+   its own size/position/hue so nothing lines up into a pattern, and they're
+   heavily blurred so they blend into the surface instead of sitting on top
+   of it as discrete dots. */
+.sun-design__granules {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  background-image:
+    radial-gradient(ellipse 22px 16px at 22% 28%, color-mix(in srgb, var(--sun-edge) 55%, black) 0%, transparent 70%),
+    radial-gradient(ellipse 18px 24px at 68% 18%, color-mix(in srgb, var(--sun-mid) 60%, black) 0%, transparent 72%),
+    radial-gradient(ellipse 26px 18px at 78% 62%, color-mix(in srgb, var(--sun-edge) 50%, black) 0%, transparent 68%),
+    radial-gradient(ellipse 20px 20px at 34% 74%, color-mix(in srgb, var(--sun-mid) 55%, black) 0%, transparent 70%),
+    radial-gradient(ellipse 16px 22px at 55% 46%, color-mix(in srgb, var(--sun-core) 45%, transparent) 0%, transparent 65%);
+  filter: blur(3px);
+  opacity: 0.55;
+  mix-blend-mode: overlay;
+  animation: sun-granule-drift 9s ease-in-out infinite;
+}
+
+.sun-design__glint {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  top: 12px;
+  left: 18px;
+  background: radial-gradient(circle, #fff, transparent 70%);
+  opacity: 0.85;
+  filter: blur(1px);
+}
+
+@keyframes sun-spin {
+  from {
+    transform: scale(calc(1 + var(--amplitude, 0.14) * 0.7)) rotate(0deg);
+  }
+  to {
+    transform: scale(calc(1 + var(--amplitude, 0.14) * 0.7)) rotate(360deg);
+  }
+}
+
+@keyframes sun-breathe {
+  0%,
+  100% {
+    transform: scale(calc(1 + var(--amplitude, 0.14) * 0.9));
+  }
+  50% {
+    transform: scale(calc(1 + var(--amplitude, 0.14) * 0.9 + 0.06));
+  }
+}
+
+@keyframes sun-granule-drift {
+  0%,
+  100% {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(6deg) scale(1.06);
+  }
+}
+
+@keyframes sun-pulse {
+  0%,
+  100% {
+    transform: scale(calc(1 + var(--amplitude, 0.14) * 0.55));
+  }
+  50% {
+    transform: scale(calc(1 + var(--amplitude, 0.14) * 0.55 + 0.08));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sun-design__corona,
+  .sun-design__flares,
+  .sun-design__surface,
+  .sun-design__granules {
+    animation: none;
+  }
+}
+
+/* ---------- Full-screen backdrop ---------- */
+
+.sun-backdrop {
+  --sky-glow: #ff9d4d;
+  --sky-glow-strength: 0.4;
+  position: absolute;
+  inset: 0;
+}
+
+.sun-backdrop--listening,
+.sun-backdrop--processing {
+  --sky-glow: #ffb703;
+  --sky-glow-strength: 0.55;
+}
+
+.sun-backdrop--thinking {
+  --sky-glow: #fb5607;
+  --sky-glow-strength: 0.6;
+}
+
+.sun-backdrop--speaking {
+  --sky-glow: #ffd60a;
+  --sky-glow-strength: 0.75;
+}
+
+.sun-backdrop--error {
+  --sky-glow: #d90429;
+  --sky-glow-strength: 0.55;
+}
+
+.sun-backdrop--paused {
+  --sky-glow: #6b3e1f;
+  --sky-glow-strength: 0.2;
+}
+
+.sun-backdrop__sky {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 8%, color-mix(in srgb, var(--sky-glow) calc(var(--sky-glow-strength) * 65%), transparent) 0%, transparent 68%),
+    radial-gradient(ellipse 100% 70% at 50% 100%, #2b1608 0%, transparent 60%),
+    linear-gradient(180deg, #170c05 0%, #26150a 55%, #170c05 100%);
+  transition: background 0.6s ease;
+}
+
+.sun-backdrop__rays {
+  position: absolute;
+  inset: -20% -20% auto -20%;
+  top: -30%;
+  height: 90%;
+  border-radius: 50%;
+  background: repeating-conic-gradient(
+    from 0deg,
+    color-mix(in srgb, var(--sky-glow) calc(var(--sky-glow-strength) * 30%), transparent) 0deg 2deg,
+    transparent 2deg 14deg
+  );
+  opacity: 0.5;
+  -webkit-mask: radial-gradient(ellipse 60% 60% at 50% 100%, #000 0%, transparent 70%);
+  mask: radial-gradient(ellipse 60% 60% at 50% 100%, #000 0%, transparent 70%);
+  animation: sun-backdrop-spin 120s linear infinite;
+  transition: opacity 0.6s ease;
+}
+
+.sun-backdrop__rays--reverse {
+  animation-direction: reverse;
+  animation-duration: 160s;
+  opacity: 0.3;
+}
+
+@keyframes sun-backdrop-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sun-backdrop__rays,
+  .sun-backdrop__rays--reverse {
+    animation: none;
+  }
+}

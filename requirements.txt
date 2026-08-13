@@ -1,0 +1,134 @@
+# --- core/ (implemented) ---
+fastapi>=0.111
+uvicorn[standard]>=0.30
+pydantic>=2.7
+# required for FastAPI's UploadFile (used by POST /api/voice/query, the phone
+# thin-client's audio upload endpoint)
+python-multipart>=0.0.9
+
+# --- core/cli_ui (implemented) ---
+# Used by the one-time interactive login helper (modules/gmail/login.py)
+# for readable success/error/account-mismatch output.
+rich>=13.0
+
+# --- core/os_adapter screen/window automation (implemented) ---
+# click/move_mouse/type_text/press_key require tkinter at runtime:
+#   Linux:   sudo apt-get install python3-tk python3-dev
+#   Windows: bundled with the standard python.org installer
+# list_windows/focus_window on Linux require the wmctrl CLI:
+#   sudo apt-get install wmctrl
+# get_active_window on Linux additionally requires the xdotool CLI:
+#   sudo apt-get install xdotool
+pyautogui>=0.9.54
+pygetwindow>=0.0.9 ; sys_platform == 'win32'
+
+# --- core/os_adapter/screenshot.py, modules/ui_automation/ocr_adapter.py (implemented) ---
+# OCR vision fallback for modules/ui_automation, tried only when neither CDP
+# nor AT-SPI can enumerate any elements (Electron/canvas apps with no
+# accessibility tree). Also requires the tesseract-ocr CLI + Russian
+# language pack (system package, not pip):
+#   Linux:   sudo apt-get install tesseract-ocr tesseract-ocr-rus
+#   Windows: installer from https://github.com/UB-Mannheim/tesseract/wiki
+mss>=9.0
+pillow>=10.0
+pytesseract>=0.3.10
+
+# --- core/voice (implemented, lazy-imported: safe to defer install) ---
+# Upper bounds below (numpy/torch/faster-whisper/webrtcvad-wheels) are a
+# safety net, not a tight pin: these are native-extension packages whose
+# ABI compatibility with each other isn't guaranteed across a major bump,
+# so a bare `>=` floor risks a clean install silently pulling a future,
+# untested combination. Capped one major above what's actually
+# tested/working today (numpy 2.5, torch 2.13, faster-whisper 1.2) rather
+# than at the currently-installed versions, so routine minor/patch updates
+# within the same major still install normally.
+numpy>=1.26,<3
+sounddevice>=0.4.6
+faster-whisper>=1.0,<2
+piper-tts>=1.2
+# Real end-of-speech detection for record_until_silence (core/voice/audio_io.py),
+# replacing a raw RMS-energy threshold that was cutting users off mid-sentence
+# on quiet syllables/background noise. webrtcvad-wheels ships prebuilt wheels
+# (unlike plain `webrtcvad`, which needs a C compiler + Python.h to build) and
+# exposes the same `import webrtcvad` API.
+webrtcvad-wheels>=2.0.14,<3
+# pvporcupine>=3.0  # optional: only if ASSISTANT_WAKE_WORD_BACKEND=porcupine, needs a Picovoice access key
+# Silero TTS for Russian replies (core/voice/silero_tts.py): noticeably more
+# natural than Piper's available Russian voice. CPU-only torch is enough —
+# install with: pip install --index-url https://download.pytorch.org/whl/cpu torch
+# The multi-speaker v3_1_ru weights (data/voices/silero_ru_v3.pt) aren't on
+# pip; see core/voice/silero_tts.py's module docstring for where to get them.
+torch>=2.0,<3
+omegaconf>=2.3
+
+# --- core/watchdog (implemented, stdlib only, no new deps) ---
+
+# --- modules/files (implemented, lazy-imported) ---
+# also requires the LibreOffice `soffice` binary on PATH (system package, not pip):
+#   Linux:   sudo apt install libreoffice
+#   Windows: install LibreOffice, soffice.exe is auto-detected in common install paths
+python-docx>=1.1
+openpyxl>=3.1
+
+# --- modules/gmail (implemented, lazy-imported) ---
+# requires ASSISTANT_GMAIL_CLIENT_ID / ASSISTANT_GMAIL_CLIENT_SECRET env vars (an OAuth
+# client, type "Desktop app", from https://console.cloud.google.com/apis/credentials)
+# and a one-time interactive login: python -m modules.gmail.login
+# Read-only (gmail.readonly scope) — email is a notify-only source, no reply/dictation.
+google-api-python-client>=2.198.0
+google-auth-httplib2>=0.4.1
+google-auth-oauthlib>=1.4.0
+
+# --- modules/crm_transcribe (implemented, reuses faster-whisper above) ---
+# requires ffmpeg on PATH (system package, not pip)
+
+# --- modules/ai_bridge, modules/search (implemented, lazy-imported) ---
+# also requires a one-time browser download: playwright install chromium
+playwright>=1.44
+# modules/ai_bridge/api_providers.py: async HTTP client for the optional
+# free-tier Groq API adapter (only used when GROQ_API_KEY is set)
+httpx>=0.27
+
+# --- modules/calendar, modules/cmd_executor (implemented, stdlib + OS-native calls only) ---
+# Linux desktop notifications additionally require: sudo apt-get install libnotify-bin
+
+# --- modules/user_profile, modules/password_manager (implemented, lazy-imported) ---
+cryptography>=42.0
+keyring>=25.2
+
+# --- modules/hardware_adaptive/system_monitor.py (implemented) ---
+# Local, zero-cost battery/disk metrics for proactive spoken alerts (see
+# core/voice/proactive_announcer.py) — no network calls, works on any OS.
+psutil>=5.9
+
+# --- modules/hardware_adaptive (implemented, lazy-imported, optional) ---
+# Only needed if this machine has an NVIDIA/CUDA GPU with >=4GB VRAM (see
+# modules/hardware_adaptive/model_tiers.py); otherwise all AI requests use
+# modules/ai_bridge instead and this package is never imported at runtime.
+# Requires a CUDA-enabled build, e.g.:
+#   CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python
+# and a GGUF model file downloaded manually into data/models/ (see
+# modules/hardware_adaptive/inference_engine.py for the expected filenames).
+# llama-cpp-python>=0.2.90
+
+# --- modules/plugin_agent (implemented) ---
+# hot-reload of modules/plugins/ falls back to "restart to pick up changes"
+# if watchdog isn't installed; everything else in the module works without it
+watchdog>=4.0
+# plugin generation shells out to the Claude Code CLI ('claude') already
+# installed on this machine (https://claude.com/claude-code) — not a pip
+# package, must be on PATH. Not used for anything else in this project.
+
+# --- modules/board_games (implemented, lazy-imported) ---
+# Voice chess/Russian draughts ("давай сыграем партию") — see
+# core/voice/pipeline.py::_resolve_board_game. Chess also requires the
+# Stockfish system binary on PATH (not pip):
+#   Linux:   sudo apt-get install stockfish
+#   Windows: installer from https://stockfishchess.org/download/
+# Draughts uses py-draughts's own pure-Python SimpleEngine, no system binary.
+chess>=1.11
+py-draughts>=1.9
+
+# --- dev/test only ---
+pytest>=8.0
+pytest-asyncio>=0.24

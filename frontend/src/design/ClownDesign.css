@@ -1,0 +1,445 @@
+.clown-design {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Standard clown wig: two dense, round curl poofs, one on each side of the
+   nose. Reference clown wigs (costume-shop product photos) are a solid,
+   high-volume mass of tight curls with no visible gaps between them -
+   earlier attempts with 5 sparse circles per side read as "a few balloons",
+   not "a wig". ClownDesign.tsx now lays ~21 curls out in concentric rings
+   around a center point so the cluster fills in solid and round; both
+   sides use the identical layout (a filled round poof looks the same
+   either way), which also removes the need for any left/right mirroring. */
+.clown-design__wig {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100px;
+  height: 100px;
+}
+
+/* Position is pinned via the standalone `translate`/`rotate` CSS properties
+   (not the `transform` shorthand) specifically so it stays untouched by
+   whatever runs in `animation` - the old version baked translate into the
+   sway/jiggle *keyframes*, and swapping to the honk's clown-rainbow
+   animation (which only defines `filter`) reset `transform` to none,
+   snapping the wig away from the head the instant you clicked the nose.
+   Wig is otherwise static ("зафиксирован на месте") - only its color
+   shimmers, it never moves. */
+.clown-design__wig--left {
+  translate: -90px -50%;
+  rotate: -4deg;
+  animation: clown-wig-shimmer 8s ease-in-out infinite;
+}
+
+.clown-design__wig--right {
+  translate: -10px -50%;
+  rotate: 4deg;
+  animation: clown-wig-shimmer 8s ease-in-out infinite reverse;
+}
+
+.clown-design__wig-curl {
+  position: absolute;
+  border-radius: 50%;
+  box-shadow: inset -3px -3px 6px rgba(0, 0, 0, 0.3), inset 2px 2px 3px rgba(255, 255, 255, 0.2);
+}
+
+/* Default red wig-hair palette (per explicit request) — the shimmer
+   keyframe below still drifts its hue a little for "переливается", but the
+   resting/base color is red. */
+.clown-design__wig-curl--v0 {
+  background: radial-gradient(circle at 32% 28%, #ff9086 0%, #e8382f 50%, #a91d1d 95%);
+}
+
+.clown-design__wig-curl--v1 {
+  background: radial-gradient(circle at 32% 28%, #ff7a70 0%, #d42a26 50%, #931818 95%);
+}
+
+.clown-design__wig-curl--v2 {
+  background: radial-gradient(circle at 32% 28%, #ffb3a8 0%, #f1453b 50%, #b32424 95%);
+}
+
+/* Listening/speaking used to re-point the wig's `animation` at a
+   rotate-only "jiggle" - harmless on its own, but it's exactly the
+   mechanism that made the honk click fling the wig out of place (see the
+   comment above), so state reactivity is now just a faster shimmer instead
+   of anything that touches position. */
+.clown-design--listening .clown-design__wig--left,
+.clown-design--speaking .clown-design__wig--left {
+  animation-duration: 3s;
+}
+
+.clown-design--listening .clown-design__wig--right,
+.clown-design--speaking .clown-design__wig--right {
+  animation-duration: 3s;
+}
+
+.clown-design__nose {
+  position: relative;
+  z-index: 2;
+  /* Shrunk from 54px — at that size the nose's ~27px radius reached up
+     into the eyes (positioned ~24px from center) and clipped their bottom
+     edge behind it, which is what read as "eyes are skewed/cut off". 40px
+     (20px radius) clears the eyes and the mouth with room to spare, and
+     also matches 🤡's proportions better (nose as one feature among
+     several, not covering half the face). */
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  background: radial-gradient(circle at 35% 30%, #ff8a80 0%, #ff1744 45%, #b71c1c 100%);
+  box-shadow: 0 0 18px rgba(255, 23, 68, 0.55), inset -4px -6px 10px rgba(0, 0, 0, 0.35);
+  transform: scale(calc(1 + var(--amplitude, 0.1) * 0.35));
+  transition: transform 0.15s ease-out, box-shadow 0.3s ease, filter 0.3s ease;
+}
+
+.clown-design__nose:hover {
+  filter: brightness(1.1);
+}
+
+.clown-design__nose:active {
+  transform: scale(0.9);
+}
+
+.clown-design__nose-shine {
+  position: absolute;
+  top: 7px;
+  left: 10px;
+  width: 9px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.75);
+  filter: blur(1px);
+}
+
+/* ---------- Face (🤡): skin, greasepaint patches, eyes, cheeks, smile ----- */
+
+.clown-design__face {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 88px;
+  height: 88px;
+  margin: -44px 0 0 -44px;
+  border-radius: 50%;
+  /* White clown greasepaint face (not a skin tone) - subtle grey shading
+     only, for volume. */
+  background: radial-gradient(circle at 34% 28%, #ffffff 0%, #f6f5f7 55%, #dcdae0 100%);
+  box-shadow: inset 0 -8px 14px rgba(40, 30, 40, 0.15), 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.clown-design__patch {
+  position: absolute;
+  top: 14px;
+  width: 30px;
+  height: 20px;
+  background: radial-gradient(ellipse, #fff 0%, #fff 60%, transparent 100%);
+  opacity: 0.9;
+  border-radius: 50%;
+}
+
+.clown-design__patch--left {
+  left: 4px;
+}
+
+.clown-design__patch--right {
+  right: 4px;
+}
+
+/* Now a two-layer eye: this element is the white sclera with a thin
+   outline (the face is white too, so without the outline the eye would
+   just vanish into it), and the ::after pseudo-element is the dark pupil
+   centered on top. */
+.clown-design__eye {
+  position: absolute;
+  top: 19px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 1px solid rgba(40, 28, 24, 0.4);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.clown-design__eye::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #4a2f22, #1a0f0a);
+}
+
+.clown-design__eye--left {
+  left: 21px;
+}
+
+.clown-design__eye--right {
+  right: 21px;
+}
+
+.clown-design__cheek {
+  position: absolute;
+  top: 38px;
+  width: 16px;
+  height: 12px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 105, 135, 0.75), transparent 75%);
+  filter: blur(0.5px);
+}
+
+.clown-design__cheek--left {
+  left: 6px;
+}
+
+.clown-design__cheek--right {
+  right: 6px;
+}
+
+/* Classic CSS "smile" trick: only the bottom arc of an oversized circle is
+   left visible by the clipping parent, giving a curved painted-on grin. */
+.clown-design__mouth {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  width: 34px;
+  height: 12px;
+  margin-left: -17px;
+  overflow: hidden;
+  border-radius: 0 0 17px 17px;
+}
+
+.clown-design__mouth::before {
+  content: "";
+  position: absolute;
+  top: -18px;
+  left: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 70%, #e8283f, #a8102a);
+}
+
+.clown-design--listening .clown-design__nose,
+.clown-design--speaking .clown-design__nose {
+  box-shadow: 0 0 30px rgba(255, 23, 68, 0.85), inset -4px -6px 10px rgba(0, 0, 0, 0.35);
+}
+
+.clown-design--thinking .clown-design__nose,
+.clown-design--processing .clown-design__nose {
+  animation: clown-think-wobble 1.2s ease-in-out infinite;
+}
+
+.clown-design--error .clown-design__nose {
+  box-shadow: 0 0 26px rgba(255, 0, 0, 0.9), inset -4px -6px 10px rgba(0, 0, 0, 0.35);
+}
+
+.clown-design--paused .clown-design__nose {
+  filter: grayscale(0.6) brightness(0.7);
+}
+
+/* Easter egg: click the nose. Rainbow hue-cycle on both the nose and the wig,
+   plus an expanding "honk" shockwave ring — see ClownDesign.tsx's
+   playSqueak() for the paired sound. */
+.clown-design--honking .clown-design__wig {
+  animation: clown-rainbow 0.9s linear infinite;
+}
+
+/* Squash-stretch bounce (once) layered with the rainbow hue-cycle (looping)
+   via a comma-separated animation list — the nose flattens on impact then
+   overshoots before settling, instead of the old flat scale(0.85). */
+.clown-design--honking .clown-design__nose {
+  animation: clown-rainbow 0.9s linear infinite, clown-nose-squash 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 1;
+}
+
+@keyframes clown-nose-squash {
+  0% {
+    transform: scale(1, 1);
+  }
+  15% {
+    transform: scale(1.25, 0.7);
+  }
+  40% {
+    transform: scale(0.8, 1.22);
+  }
+  60% {
+    transform: scale(1.1, 0.92);
+  }
+  80% {
+    transform: scale(0.96, 1.05);
+  }
+  100% {
+    transform: scale(1, 1);
+  }
+}
+
+.clown-design--honking .clown-design__nose::after {
+  content: "";
+  position: absolute;
+  inset: -10px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  opacity: 0;
+  animation: clown-honk-ring 0.6s ease-out;
+}
+
+/* Narrow warm-range hue drift (not a full 0-360 sweep) so the wig's color
+   "переливается" (shimmers) without ever looking broken/glitchy — the honk
+   easter egg still gets the full rainbow via clown-rainbow below. */
+@keyframes clown-wig-shimmer {
+  0%,
+  100% {
+    filter: hue-rotate(-14deg) saturate(1.05);
+  }
+  50% {
+    filter: hue-rotate(18deg) saturate(1.2);
+  }
+}
+
+@keyframes clown-think-wobble {
+  0%,
+  100% {
+    transform: rotate(0deg) scale(calc(1 + var(--amplitude, 0.1) * 0.35));
+  }
+  50% {
+    transform: rotate(8deg) scale(calc(1 + var(--amplitude, 0.1) * 0.35));
+  }
+}
+
+@keyframes clown-rainbow {
+  from {
+    filter: hue-rotate(0deg) saturate(1.7) brightness(1.1);
+  }
+  to {
+    filter: hue-rotate(360deg) saturate(1.7) brightness(1.1);
+  }
+}
+
+@keyframes clown-honk-ring {
+  from {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clown-design__wig,
+  .clown-design__nose,
+  .clown-design__nose::after {
+    animation: none;
+  }
+}
+
+/* ---------- Full-screen backdrop ---------- */
+
+.clown-backdrop {
+  position: absolute;
+  inset: 0;
+}
+
+.clown-backdrop__stripes {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    #7a0e1f 0px 64px,
+    #5c0a17 64px 68px,
+    #d4a017 68px 132px,
+    #a87811 132px 136px
+  );
+}
+
+.clown-backdrop__stripes::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  /* Tent-canopy vignette so the stripes read as a circus big-top rather
+     than a flat wallpaper — darker at the edges, a soft spotlight glow
+     top-center. */
+  background: radial-gradient(ellipse 70% 60% at 50% 0%, rgba(255, 214, 140, 0.18) 0%, transparent 65%),
+    radial-gradient(ellipse 120% 90% at 50% 100%, rgba(10, 2, 4, 0.75) 0%, transparent 60%);
+}
+
+.clown-backdrop--listening .clown-backdrop__stripes::after,
+.clown-backdrop--speaking .clown-backdrop__stripes::after {
+  background: radial-gradient(ellipse 70% 60% at 50% 0%, rgba(255, 214, 140, 0.3) 0%, transparent 65%),
+    radial-gradient(ellipse 120% 90% at 50% 100%, rgba(10, 2, 4, 0.7) 0%, transparent 60%);
+}
+
+.clown-backdrop__streamer {
+  position: absolute;
+  top: -10px;
+  width: 10px;
+  border-radius: 0 0 6px 6px;
+  transform-origin: top center;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.4));
+  animation: clown-streamer-sway 4.5s ease-in-out infinite;
+}
+
+@keyframes clown-streamer-sway {
+  0%,
+  100% {
+    transform: rotate(-6deg);
+  }
+  50% {
+    transform: rotate(6deg);
+  }
+}
+
+.clown-backdrop__confetti {
+  position: absolute;
+  top: 0;
+  border-radius: 2px;
+  opacity: 0;
+  animation-name: clown-confetti-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+@keyframes clown-confetti-fall {
+  0% {
+    transform: translate(0, -10vh) rotate(0deg);
+    opacity: 0;
+  }
+  8% {
+    opacity: 0.95;
+  }
+  25% {
+    transform: translate(var(--confetti-drift), 25vh) rotate(calc(var(--confetti-rotate) * 0.5));
+  }
+  50% {
+    transform: translate(0, 50vh) rotate(var(--confetti-rotate));
+  }
+  75% {
+    transform: translate(calc(var(--confetti-drift) * -1), 75vh) rotate(calc(var(--confetti-rotate) * 1.5));
+  }
+  92% {
+    opacity: 0.95;
+  }
+  100% {
+    transform: translate(0, 110vh) rotate(calc(var(--confetti-rotate) * 2));
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clown-backdrop__streamer,
+  .clown-backdrop__confetti {
+    animation: none;
+    opacity: 0.6;
+  }
+}

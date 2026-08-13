@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Настройка NABVE1</title>
+<style>
+  :root {
+    color-scheme: dark;
+  }
+  body {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    background: #0d1117;
+    color: #e6edf3;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .card {
+    width: 340px;
+    padding: 24px;
+    text-align: center;
+  }
+  h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin: 0 0 18px;
+    color: #8b949e;
+  }
+  .step {
+    font-size: 14px;
+    min-height: 20px;
+    margin-bottom: 14px;
+  }
+  .bar-track {
+    height: 6px;
+    border-radius: 3px;
+    background: #21262d;
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    width: 0%;
+    background: #58a6ff;
+    transition: width 0.3s ease;
+  }
+  .error {
+    display: none;
+    margin-top: 16px;
+    font-size: 13px;
+    color: #f85149;
+    text-align: left;
+    white-space: pre-wrap;
+    max-height: 120px;
+    overflow-y: auto;
+  }
+  .actions {
+    display: none;
+    margin-top: 14px;
+    gap: 10px;
+    justify-content: center;
+  }
+  button {
+    font-size: 13px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid #30363d;
+    background: #21262d;
+    color: #e6edf3;
+    cursor: pointer;
+  }
+  button:hover {
+    border-color: #58a6ff;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>NABVE1 — первый запуск</h1>
+    <div class="step" id="step">Подготовка...</div>
+    <div class="bar-track"><div class="bar-fill" id="bar"></div></div>
+    <div class="error" id="error"></div>
+    <div class="actions" id="actions">
+      <button id="retry">Повторить</button>
+      <button id="openLog">Открыть лог</button>
+    </div>
+  </div>
+  <script>
+    const stepEl = document.getElementById("step");
+    const barEl = document.getElementById("bar");
+    const errorEl = document.getElementById("error");
+    const actionsEl = document.getElementById("actions");
+
+    window.setupAPI.onProgress((progress) => {
+      stepEl.textContent = progress.step;
+      barEl.style.width = progress.percent + "%";
+      errorEl.style.display = "none";
+      actionsEl.style.display = "none";
+    });
+
+    window.setupAPI.onError((message) => {
+      stepEl.textContent = "Не получилось завершить установку";
+      errorEl.textContent = message;
+      errorEl.style.display = "block";
+      actionsEl.style.display = "flex";
+    });
+
+    document.getElementById("retry").addEventListener("click", () => window.setupAPI.retry());
+    document.getElementById("openLog").addEventListener("click", () => window.setupAPI.openLog());
+  </script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+.assistant-avatar {
+  --amplitude: 0.14;
+  position: relative;
+  width: 132px;
+  height: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

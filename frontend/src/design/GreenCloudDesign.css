@@ -1,0 +1,288 @@
+.green-cloud-design {
+  --gc-core: #b9ffce;
+  --gc-mid: #22c55e;
+  position: relative;
+  width: 132px;
+  height: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.green-cloud-design--idle {
+  --gc-core: #b9ffce;
+  --gc-mid: #22c55e;
+}
+
+.green-cloud-design--listening {
+  --gc-core: #d9fff0;
+  --gc-mid: #34d399;
+}
+
+.green-cloud-design--processing {
+  --gc-core: #d3ffe9;
+  --gc-mid: #0ea472;
+}
+
+.green-cloud-design--thinking {
+  --gc-core: #ccffe0;
+  --gc-mid: #14b8a6;
+}
+
+.green-cloud-design--speaking {
+  --gc-core: #eafff2;
+  --gc-mid: #4ade80;
+}
+
+.green-cloud-design--error {
+  --gc-core: #ffd9d9;
+  --gc-mid: #ef4444;
+}
+
+.green-cloud-design--paused {
+  --gc-core: #cfe8d8;
+  --gc-mid: #4b6b57;
+}
+
+/* Soft outer glow behind the whole puff mass — gives the vapor a sense of
+   volume/depth instead of it reading as a flat blurred blob sitting on the
+   background. Pulses gently for "плотность пара" breathing. */
+.green-cloud-design__halo {
+  position: absolute;
+  inset: -18px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--gc-mid) 55%, transparent), transparent 72%);
+  filter: blur(14px);
+  opacity: calc(0.45 + var(--amplitude, 0.14) * 0.25);
+  animation: gc-halo-pulse 5s ease-in-out infinite;
+  transition: opacity 0.3s ease-out, background 0.4s ease;
+}
+
+@keyframes gc-halo-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.12);
+  }
+}
+
+/* The always-visible gaseous body: several overlapping, heavily blurred,
+   screen-blended puffs at irregular offsets so it reads as an amorphous
+   cloud of vapor even in a single still frame, not just a plain sphere
+   that happens to animate. */
+.green-cloud-design__mass {
+  position: relative;
+  width: 92px;
+  height: 84px;
+  transform: scale(calc(1 + var(--amplitude, 0.14) * 0.22));
+  animation: gc-mass-churn 6s ease-in-out infinite;
+  transition: transform 0.2s ease-out;
+}
+
+.green-cloud-design__puff {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--gc-core) 85%, white), var(--gc-mid) 60%, transparent 85%);
+  filter: blur(7px);
+  opacity: calc(0.6 + var(--amplitude, 0.14) * 0.3);
+  mix-blend-mode: screen;
+  transition: opacity 0.2s ease-out;
+}
+
+.green-cloud-design__puff--1 {
+  width: 46px;
+  height: 44px;
+  top: 18px;
+  left: 6px;
+}
+
+.green-cloud-design__puff--2 {
+  width: 40px;
+  height: 38px;
+  top: 4px;
+  left: 30px;
+}
+
+.green-cloud-design__puff--3 {
+  width: 52px;
+  height: 46px;
+  top: 22px;
+  left: 30px;
+}
+
+.green-cloud-design__puff--4 {
+  width: 34px;
+  height: 32px;
+  top: 32px;
+  left: 2px;
+}
+
+.green-cloud-design__puff--5 {
+  width: 30px;
+  height: 30px;
+  top: 8px;
+  left: 58px;
+}
+
+/* Rising wisps that peel off the top of the mass. Negative animation-delays
+   stagger them so several are already mid-flight on first paint instead of
+   every one sitting at its (invisible) 0% keyframe until its delay elapses -
+   a static screenshot taken right after mount still shows vapor rising. */
+.green-cloud-design__wisp {
+  position: absolute;
+  bottom: 60%;
+  left: 50%;
+  width: 22px;
+  height: 30px;
+  border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--gc-mid) 70%, transparent), transparent 72%);
+  filter: blur(3px);
+  mix-blend-mode: screen;
+  opacity: 0;
+  animation: gc-rise 4.4s ease-in infinite;
+}
+
+.green-cloud-design__wisp--0 {
+  margin-left: -36px;
+  animation-delay: -0.2s;
+}
+
+.green-cloud-design__wisp--1 {
+  margin-left: -18px;
+  animation-delay: -1.6s;
+  animation-duration: 5s;
+}
+
+.green-cloud-design__wisp--2 {
+  margin-left: 0;
+  animation-delay: -3s;
+  animation-duration: 4.6s;
+}
+
+.green-cloud-design__wisp--3 {
+  margin-left: 16px;
+  animation-delay: -0.9s;
+  animation-duration: 5.4s;
+}
+
+.green-cloud-design__wisp--4 {
+  margin-left: 30px;
+  animation-delay: -2.3s;
+  animation-duration: 4.8s;
+}
+
+.green-cloud-design__wisp--5 {
+  margin-left: -6px;
+  animation-delay: -3.7s;
+  animation-duration: 5.2s;
+}
+
+.green-cloud-design--paused .green-cloud-design__wisp {
+  animation-play-state: paused;
+  opacity: 0.1;
+}
+
+.green-cloud-design--paused .green-cloud-design__mass {
+  animation-play-state: paused;
+}
+
+@keyframes gc-mass-churn {
+  0%,
+  100% {
+    transform: scale(calc(1 + var(--amplitude, 0.14) * 0.22)) rotate(0deg);
+  }
+  50% {
+    transform: scale(calc(1 + var(--amplitude, 0.14) * 0.22 + 0.04)) rotate(2deg);
+  }
+}
+
+@keyframes gc-rise {
+  0% {
+    transform: translate(-50%, 0) scale(0.7);
+    opacity: 0;
+  }
+  20% {
+    opacity: calc(0.45 + var(--amplitude, 0.14) * 0.4);
+  }
+  75% {
+    opacity: calc(0.22 + var(--amplitude, 0.14) * 0.2);
+  }
+  100% {
+    transform: translate(-50%, -68px) scale(1.5);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .green-cloud-design__mass,
+  .green-cloud-design__wisp,
+  .green-cloud-design__halo {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
+/* ---------- Full-screen backdrop ---------- */
+
+.green-cloud-backdrop {
+  position: absolute;
+  inset: 0;
+  background: #020e08;
+}
+
+.green-cloud-backdrop__base {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 80% 60% at 50% 100%, #0a2318 0%, transparent 65%),
+    linear-gradient(180deg, #020e08 0%, #041a11 60%, #020e08 100%);
+}
+
+.green-cloud-backdrop__radiation {
+  position: absolute;
+  inset: 0;
+  background-repeat: repeat;
+  background-size: 220px 220px;
+  opacity: 0.035;
+  mix-blend-mode: screen;
+}
+
+.green-cloud-backdrop__fog {
+  position: absolute;
+  border-radius: 42% 58% 55% 45% / 55% 45% 58% 42%;
+  background: radial-gradient(circle, color-mix(in srgb, #4ade80 55%, transparent) 0%, transparent 72%);
+  filter: blur(28px);
+  opacity: 0.45;
+  mix-blend-mode: screen;
+  animation-name: gc-backdrop-drift;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+.green-cloud-backdrop--listening .green-cloud-backdrop__fog,
+.green-cloud-backdrop--speaking .green-cloud-backdrop__fog {
+  opacity: 0.6;
+}
+
+@keyframes gc-backdrop-drift {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1) rotate(0deg);
+    border-radius: 42% 58% 55% 45% / 55% 45% 58% 42%;
+  }
+  33% {
+    transform: translate(4vw, -3vh) scale(1.15) rotate(8deg);
+    border-radius: 55% 45% 42% 58% / 45% 58% 42% 55%;
+  }
+  66% {
+    transform: translate(-3vw, 4vh) scale(0.92) rotate(-6deg);
+    border-radius: 48% 52% 60% 40% / 52% 48% 55% 45%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .green-cloud-backdrop__fog {
+    animation: none;
+  }
+}

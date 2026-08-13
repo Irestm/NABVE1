@@ -1,0 +1,17 @@
+# The whole project directory is bind-mounted over /app at runtime (see
+# docker-compose.yml), so anything excluded here only affects build speed /
+# image size, not what the running container actually sees.
+.git
+.idea
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+
+data
+logs
+
+frontend/node_modules
+frontend/dist
+frontend/dist-electron
+frontend/release

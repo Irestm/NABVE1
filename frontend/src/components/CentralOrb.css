@@ -1,0 +1,191 @@
+.central-orb {
+  --glow: var(--glow-idle);
+  --glow-strength: 0.55;
+  position: relative;
+  width: 132px;
+  height: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: filter var(--transition-slow);
+}
+
+.central-orb--idle {
+  --glow: var(--glow-idle);
+  --glow-strength: 0.45;
+}
+
+.central-orb--listening {
+  --glow: var(--glow-listening);
+  --glow-strength: 0.8;
+}
+
+.central-orb--processing {
+  --glow: var(--glow-thinking);
+  --glow-strength: 0.65;
+}
+
+.central-orb--thinking {
+  --glow: var(--glow-thinking);
+  --glow-strength: 0.85;
+}
+
+.central-orb--speaking {
+  --glow: var(--glow-speaking);
+  --glow-strength: 0.95;
+}
+
+.central-orb--error {
+  --glow: var(--glow-error);
+  --glow-strength: 0.9;
+}
+
+.central-orb--paused {
+  --glow: var(--glow-paused);
+  /* Was 0.3 — nearly invisible next to idle's own 0.45, so pausing didn't
+     read as a distinct state at all. Paused should be unmistakable. */
+  --glow-strength: 0.85;
+}
+
+.central-orb__halo {
+  position: absolute;
+  inset: -30px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--glow) 55%, transparent) 0%, transparent 70%);
+  opacity: var(--glow-strength);
+  filter: blur(4px);
+  transition: opacity var(--transition-slow), background var(--transition-slow);
+  animation: orb-breathe calc(var(--spin-duration) * 0.8) ease-in-out infinite;
+}
+
+/* A segmented tick-mark reticle, like a HUD targeting ring — built from a
+   repeating conic gradient (short opaque wedges alternating with
+   transparent gaps) rather than an image, masked down to a thin ring the
+   same way central-orb__ring is. Spins slower and the opposite direction
+   from the outer ring for a layered, mechanical feel. */
+.central-orb__ticks {
+  position: absolute;
+  inset: -14px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(
+    var(--glow) 0deg 3deg,
+    transparent 3deg 15deg
+  );
+  opacity: calc(var(--glow-strength) * 0.6);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  animation: orb-spin calc(var(--spin-duration) * 1.6) linear infinite reverse;
+  transition: opacity var(--transition-slow);
+}
+
+/* One bright wedge sweeping around the core, like a radar/scan pass —
+   distinct from the ambient conic-gradient rings, which are static
+   textures; this one visibly travels. */
+.central-orb__sweep {
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    color-mix(in srgb, var(--glow) 90%, white) 8deg,
+    transparent 26deg
+  );
+  opacity: calc(var(--glow-strength) * 0.5);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+  animation: orb-spin calc(var(--spin-duration) * 0.5) linear infinite;
+}
+
+.central-orb__ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background:
+    conic-gradient(
+        from 0deg,
+        transparent 0deg,
+        var(--glow) 90deg,
+        transparent 200deg,
+        var(--accent-purple) 320deg,
+        transparent 360deg
+      )
+      border-box;
+  -webkit-mask:
+    linear-gradient(#000 0 0) padding-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: orb-spin var(--spin-duration) linear infinite;
+  transition: filter var(--transition-slow);
+}
+
+.central-orb__ring--outer {
+  inset: 0;
+}
+
+.central-orb__ring--inner {
+  inset: 18px;
+  animation-direction: reverse;
+  animation-duration: calc(var(--spin-duration) * 0.7);
+  opacity: 0.7;
+}
+
+.central-orb__core {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffffff 0%, var(--glow) 45%, #05070a 100%);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--glow) 70%, transparent);
+  transition: box-shadow var(--transition-med), transform var(--transition-med);
+}
+
+.central-orb--speaking .central-orb__core,
+.central-orb--listening .central-orb__core {
+  animation: orb-pulse 1.1s ease-in-out infinite;
+}
+
+/* Slow and deliberate on purpose — unlike listening/speaking's quick 1.1s
+   pulse (which reads as "active, responding right now"), paused needs to
+   read as "dormant, waiting" without feeling alarming or urgent. */
+.central-orb--paused .central-orb__core {
+  animation: orb-pulse 3.2s ease-in-out infinite;
+}
+
+@keyframes orb-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes orb-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+@keyframes orb-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .central-orb__ring,
+  .central-orb__halo,
+  .central-orb__core {
+    animation: none;
+  }
+}

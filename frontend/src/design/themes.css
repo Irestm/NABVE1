@@ -1,0 +1,246 @@
+/* Full app-wide re-skins, one per DesignId (see registry.tsx) — not just the
+   central avatar. App.tsx stamps html[data-assistant-theme] with the
+   selected design's id whenever it changes; every color used across the
+   whole app (button fills, tab highlights, section corner brackets, the
+   background grid/vignette, focus rings, the state-label glow) already
+   reads from theme.css's :root custom properties, so overriding the same
+   variable names here re-themes the entire shell, not just the orb. See
+   App.css for where each variable is consumed (corner brackets read
+   --hud-line, buttons/tabs read --accent-blue, etc).
+
+   "standard" has no block — it's the original theme.css palette verbatim. */
+
+html[data-assistant-theme="sun"] {
+  --bg: #170c05;
+  --bg-elevated: #26150a;
+  --bg-panel: #2e1a0c;
+  --border: #4f2c13;
+
+  --text: #fff3e0;
+  --text-dim: #d9a76a;
+  --text-faint: #8a5f34;
+
+  --accent-blue: #ff9d4d;
+  --accent-purple: #ff5e3a;
+  --accent-green: #ffd166;
+  --accent-amber: #ffb703;
+  --accent-red: #d90429;
+
+  --glow-idle: #ffb703;
+  --glow-listening: #ffe066;
+  --glow-thinking: #fb5607;
+  --glow-speaking: #ffd60a;
+  --glow-error: #d90429;
+  --glow-paused: #6b3e1f;
+
+  --hud-line: #ff9d4d;
+  --hud-grid: rgba(255, 157, 77, 0.07);
+}
+
+html[data-assistant-theme="clown"] {
+  --bg: #150512;
+  --bg-elevated: #220a1d;
+  --bg-panel: #2a0d24;
+  --border: #4d1f40;
+
+  --text: #fff0f6;
+  --text-dim: #e6a8c9;
+  --text-faint: #8a5074;
+
+  --accent-blue: #ff3d5a;
+  --accent-purple: #ffb703;
+  --accent-green: #06d6a0;
+  --accent-amber: #ffb703;
+  --accent-red: #ff1744;
+
+  --glow-idle: #ff8a80;
+  --glow-listening: #ffd166;
+  --glow-thinking: #c77dff;
+  --glow-speaking: #ff5e78;
+  --glow-error: #ff1744;
+  --glow-paused: #5c3a4a;
+
+  --hud-line: #ff3d5a;
+  --hud-grid: rgba(255, 61, 90, 0.06);
+}
+
+html[data-assistant-theme="cloud_green"] {
+  --bg: #020e08;
+  --bg-elevated: #05180f;
+  --bg-panel: #071f14;
+  --border: #123a28;
+
+  --text: #e8fff2;
+  --text-dim: #7fd9ab;
+  --text-faint: #3f7a5c;
+
+  --accent-blue: #22c55e;
+  --accent-purple: #14b8a6;
+  --accent-green: #4ade80;
+  --accent-amber: #a3e635;
+  --accent-red: #ef4444;
+
+  --glow-idle: #22c55e;
+  --glow-listening: #34d399;
+  --glow-thinking: #14b8a6;
+  --glow-speaking: #4ade80;
+  --glow-error: #ef4444;
+  --glow-paused: #2f4b3c;
+
+  --hud-line: #22c55e;
+  --hud-grid: rgba(34, 197, 94, 0.07);
+}
+
+html[data-assistant-theme="pixel"] {
+  --bg: #020617;
+  --bg-elevated: #050e26;
+  --bg-panel: #07132f;
+  --border: #123a63;
+
+  --text: #dff4ff;
+  --text-dim: #6fc3ee;
+  --text-faint: #366792;
+
+  --accent-blue: #00e5ff;
+  --accent-purple: #33bbff;
+  --accent-green: #00e5ff;
+  --accent-amber: #7df9ff;
+  --accent-red: #ff4d6d;
+
+  --glow-idle: #00e5ff;
+  --glow-listening: #4df0ff;
+  --glow-thinking: #33bbff;
+  --glow-speaking: #ffffff;
+  --glow-error: #ff4d6d;
+  --glow-paused: #0e4a63;
+
+  --hud-line: #00e5ff;
+  --hud-grid: rgba(0, 229, 255, 0.09);
+}
+
+/* Monospace body copy (long text stays readable) + the display pixel font
+   (self-hosted, see PixelDesign.css's @font-face) reserved for short UI
+   chrome - headings/buttons/tabs/labels - where Press Start 2P's blocky
+   glyphs read as "8-bit" instead of becoming illegible at paragraph size.
+   Plus a faint scanline overlay - retro terminal touch no other theme
+   needs, so it's opted in per-theme here rather than added globally. */
+html[data-assistant-theme="pixel"] body {
+  font-family: "Courier New", ui-monospace, Consolas, monospace;
+}
+
+html[data-assistant-theme="pixel"] h1,
+html[data-assistant-theme="pixel"] h2,
+html[data-assistant-theme="pixel"] h3,
+html[data-assistant-theme="pixel"] button,
+html[data-assistant-theme="pixel"] .app-shell__state-label,
+html[data-assistant-theme="pixel"] .voice-option__label,
+html[data-assistant-theme="pixel"] .voice-option__gender {
+  font-family: "Press Start 2P", "Courier New", ui-monospace, monospace;
+  letter-spacing: 0.03em;
+  line-height: 1.6;
+}
+
+html[data-assistant-theme="pixel"] .app-tabs__button,
+html[data-assistant-theme="pixel"] .voice-lang-toggle button {
+  font-size: 0.7em;
+}
+
+html[data-assistant-theme="pixel"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999;
+  background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.18) 0px, transparent 1px, transparent 3px);
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+}
+
+/* Hard 8-bit edges everywhere: zero border-radius app-wide (cosmetic-only,
+   safe as a blanket rule) plus a targeted stepped/hard-edge box-shadow on
+   actual chrome surfaces (buttons, panels, dialogs) - NOT on the central
+   avatar or voice-level glow rings, which are state indicators rather than
+   "buttons/borders" and keep their soft glow on every theme. */
+html[data-assistant-theme="pixel"] * {
+  border-radius: 0 !important;
+}
+
+html[data-assistant-theme="pixel"] .section,
+html[data-assistant-theme="pixel"] .status-panel,
+html[data-assistant-theme="pixel"] .planner__calendar,
+html[data-assistant-theme="pixel"] .plugin-suggestion-card,
+html[data-assistant-theme="pixel"] .confirm-dialog,
+html[data-assistant-theme="pixel"] .plugin-suggestion-warning,
+html[data-assistant-theme="pixel"] .plugin-suggestion-code,
+html[data-assistant-theme="pixel"] .app-tabs,
+html[data-assistant-theme="pixel"] button,
+html[data-assistant-theme="pixel"] .voice-option,
+html[data-assistant-theme="pixel"] input,
+html[data-assistant-theme="pixel"] select {
+  box-shadow: 3px 3px 0 0 var(--border);
+}
+
+html[data-assistant-theme="pixel"] .app-tabs__button--active,
+html[data-assistant-theme="pixel"] button:hover:not(:disabled) {
+  box-shadow: 3px 3px 0 0 var(--accent-blue);
+}
+
+html[data-assistant-theme="eye"] {
+  --bg: #0a0304;
+  --bg-elevated: #160608;
+  --bg-panel: #1d080a;
+  --border: #401319;
+
+  --text: #f5e6e6;
+  --text-dim: #c98a90;
+  --text-faint: #6e3a40;
+
+  --accent-blue: #e0344a;
+  --accent-purple: #a83250;
+  --accent-green: #7a1f2c;
+  --accent-amber: #c9484f;
+  --accent-red: #ff2e4d;
+
+  --glow-idle: #e0344a;
+  --glow-listening: #ff5b76;
+  --glow-thinking: #a83250;
+  --glow-speaking: #ff8095;
+  --glow-error: #ff0022;
+  --glow-paused: #5c2129;
+
+  --hud-line: #e0344a;
+  --hud-grid: rgba(224, 52, 74, 0.06);
+}
+
+html[data-assistant-theme="cloud_calm"] {
+  --bg: #0b0e1a;
+  --bg-elevated: #12162a;
+  --bg-panel: #161b32;
+  --border: #262c4a;
+
+  --text: #e8ecfb;
+  --text-dim: #a3aed6;
+  --text-faint: #6b7399;
+
+  --accent-blue: #9db4ff;
+  --accent-purple: #c9b6ff;
+  --accent-green: #9fe8c8;
+  --accent-amber: #ffd58a;
+  --accent-red: #ff9c9c;
+
+  --glow-idle: #c7d2fe;
+  --glow-listening: #bdf7d8;
+  --glow-thinking: #c9b6ff;
+  --glow-speaking: #b8e6ff;
+  --glow-error: #ffb8ae;
+  --glow-paused: #4a5178;
+
+  --hud-line: #9db4ff;
+  --hud-grid: rgba(157, 180, 255, 0.05);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-assistant-theme="pixel"] body::after {
+    display: none;
+  }
+}

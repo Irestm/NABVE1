@@ -1,0 +1,106 @@
+.status-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+}
+
+.status-panel__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.status-panel__label {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.status-panel__value {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
+.status-panel__reveal {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.status-panel__reveal:hover:not(:disabled) {
+  border-color: var(--accent-blue);
+  color: var(--text);
+}
+
+.status-panel__reveal:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.status-panel__providers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.status-panel__provider {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-faint);
+  transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+}
+
+.status-panel__provider-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  transition: background var(--transition-fast);
+}
+
+.status-panel__provider--active {
+  border-color: var(--accent-blue);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+}
+
+.status-panel__provider--active .status-panel__provider-dot {
+  background: var(--accent-blue);
+  box-shadow: 0 0 6px var(--accent-blue);
+}
+
+.status-panel__provider--limited {
+  border-color: var(--accent-red);
+}
+
+.status-panel__provider--limited .status-panel__provider-dot {
+  background: var(--accent-red);
+}
+
+.status-panel__provider-badge {
+  font-size: 9px;
+  color: var(--accent-red);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Data / logs / secrets
+data/**/*.db
+logs/*.log
+data/voices/*.onnx
+data/voices/*.onnx.json
+# Silero TTS checkpoint — user downloads this manually per
+# core/voice/silero_tts.py, it isn't shipped in the repo.
+data/voices/*.pt
+# Playwright's persistent browser contexts (modules/ai_bridge) — contains
+# logged-in session cookies for Gemini/ChatGPT/DeepSeek/Grok, must never be committed.
+data/browser_profiles/
+# faster-whisper's Hugging Face model cache (see Dockerfile's HF_HOME)
+data/.cache/
+# Auto-generated shared secret for /api/* requests — see core/config.py's
+# _load_or_create_api_token.
+data/api_token.txt
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/dist-electron/
+frontend/dist-builder/
+frontend/release/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Local Claude Code settings — machine-specific, not for the repo.
+.claude/

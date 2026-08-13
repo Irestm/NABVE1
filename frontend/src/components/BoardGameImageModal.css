@@ -1,0 +1,66 @@
+.board-game-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.board-game-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 6, 10, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.board-game-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  animation: board-game-panel-in var(--transition-med) ease-out;
+}
+
+@keyframes board-game-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.board-game-panel__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+.board-game-panel__board {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.board-game-panel__board svg {
+  max-width: min(80vw, 480px);
+  max-height: 80vh;
+  width: 100%;
+  height: auto;
+}

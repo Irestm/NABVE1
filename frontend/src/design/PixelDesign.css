@@ -1,0 +1,167 @@
+/* Bundled locally (not a CDN link) so the theme still works offline in the
+   Electron build — self-hosted, OFL-licensed "Press Start 2P". */
+@font-face {
+  font-family: "Press Start 2P";
+  src: url("./fonts/PressStart2P-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+.pixel-design {
+  --px-a: #1fb6d8;
+  --px-b: #2ad8ff;
+  --px-c: #7de6ff;
+  --px-glow: #2ad8ff;
+  position: relative;
+  width: 132px;
+  height: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pixel-design--idle {
+  --px-a: #1fb6d8;
+  --px-b: #2ad8ff;
+  --px-c: #7de6ff;
+  --px-glow: #2ad8ff;
+}
+
+.pixel-design--listening {
+  --px-a: #17c9a6;
+  --px-b: #39fcd0;
+  --px-c: #a8fff0;
+  --px-glow: #3fe6d8;
+}
+
+.pixel-design--processing,
+.pixel-design--thinking {
+  --px-a: #6c3fd4;
+  --px-b: #a371f7;
+  --px-c: #d4b8ff;
+  --px-glow: #a371f7;
+}
+
+.pixel-design--speaking {
+  --px-a: #4fa9d6;
+  --px-b: #6fd6ff;
+  --px-c: #ffffff;
+  --px-glow: #6fd6ff;
+}
+
+.pixel-design--error {
+  --px-a: #b8302f;
+  --px-b: #ff5e5e;
+  --px-c: #ffb3b3;
+  --px-glow: #f85149;
+}
+
+.pixel-design--paused {
+  --px-a: #6b5316;
+  --px-b: #f5c518;
+  --px-c: #ffe28a;
+  --px-glow: #f5c518;
+}
+
+.pixel-design__grid {
+  position: relative;
+  width: 114px;
+  height: 114px;
+  filter: brightness(calc(0.85 + var(--amplitude, 0.14) * 0.7))
+    drop-shadow(0 0 10px color-mix(in srgb, var(--px-glow) 55%, transparent));
+  transition: filter 0.2s ease;
+}
+
+.pixel-design--paused .pixel-design__grid {
+  filter: brightness(0.55) saturate(0.7);
+}
+
+.pixel-design__cell {
+  position: absolute;
+  box-sizing: border-box;
+  background: var(--px-a);
+  border: 1px solid color-mix(in srgb, var(--bg, #060a10) 45%, transparent);
+  animation: pixel-flicker 2.6s steps(2, jump-none) infinite;
+}
+
+.pixel-design__cell--v1 {
+  background: var(--px-b);
+}
+
+.pixel-design__cell--v2 {
+  background: var(--px-c);
+}
+
+@keyframes pixel-flicker {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  45% {
+    opacity: 0.55;
+  }
+  55% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 0.75;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pixel-design__cell {
+    animation: none;
+  }
+}
+
+/* ---------- Full-screen backdrop ---------- */
+
+.pixel-backdrop {
+  position: absolute;
+  inset: 0;
+  background: #020617;
+}
+
+.pixel-backdrop__base {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #020617 0%, #050e26 60%, #020617 100%);
+}
+
+/* Two stacked checkerboards at different pixel scales — a coarse teal/navy
+   block grid plus a finer 2px dither layer blended over it — reads as a
+   low-res dithered texture instead of a smooth gradient. */
+.pixel-backdrop__dither {
+  position: absolute;
+  inset: 0;
+  image-rendering: pixelated;
+  background-image:
+    repeating-conic-gradient(
+      from 0deg,
+      rgba(0, 229, 255, 0.05) 0deg 90deg,
+      transparent 90deg 180deg
+    ),
+    repeating-conic-gradient(
+      from 45deg,
+      rgba(0, 229, 255, 0.09) 0deg 90deg,
+      transparent 90deg 180deg
+    );
+  background-size: 24px 24px, 96px 96px;
+  background-position: 0 0, 0 0;
+}
+
+.pixel-backdrop--listening .pixel-backdrop__dither,
+.pixel-backdrop--speaking .pixel-backdrop__dither {
+  background-image:
+    repeating-conic-gradient(
+      from 0deg,
+      rgba(63, 230, 216, 0.07) 0deg 90deg,
+      transparent 90deg 180deg
+    ),
+    repeating-conic-gradient(
+      from 45deg,
+      rgba(63, 230, 216, 0.12) 0deg 90deg,
+      transparent 90deg 180deg
+    );
+}

@@ -1,0 +1,270 @@
+.calm-cloud-design {
+  --cc-mid: #dbe4ff;
+  --cc-glow: #c7d2fe;
+  position: relative;
+  width: 132px;
+  height: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.calm-cloud-design--idle {
+  --cc-mid: #dbe4ff;
+  --cc-glow: #c7d2fe;
+}
+
+.calm-cloud-design--listening {
+  --cc-mid: #d7fbe8;
+  --cc-glow: #bdf7d8;
+}
+
+.calm-cloud-design--processing,
+.calm-cloud-design--thinking {
+  --cc-mid: #e3d9ff;
+  --cc-glow: #c9b6ff;
+}
+
+.calm-cloud-design--speaking {
+  --cc-mid: #dbf0ff;
+  --cc-glow: #b8e6ff;
+}
+
+.calm-cloud-design--error {
+  --cc-mid: #ffe1de;
+  --cc-glow: #ffb8ae;
+}
+
+.calm-cloud-design--paused {
+  --cc-mid: #e3e7ee;
+  --cc-glow: #c3c9d6;
+}
+
+.calm-cloud-design__halo {
+  position: absolute;
+  inset: -20px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--cc-glow) 45%, transparent), transparent 70%);
+  opacity: calc(0.5 + var(--amplitude, 0.1) * 0.2);
+  filter: blur(4px);
+  animation: cc-breathe 6s ease-in-out infinite;
+  transition: background 0.4s ease;
+}
+
+.calm-cloud-design__body {
+  position: relative;
+  width: 96px;
+  height: 56px;
+  animation: cc-bob 5s ease-in-out infinite;
+}
+
+.calm-cloud-design--paused .calm-cloud-design__body {
+  animation-duration: 9s;
+}
+
+.calm-cloud-design__puff {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffffff, var(--cc-mid) 70%);
+  box-shadow: 0 4px 14px rgba(120, 140, 200, 0.25);
+  transition: background 0.4s ease;
+}
+
+.calm-cloud-design__puff--base {
+  left: 6px;
+  top: 18px;
+  width: 84px;
+  height: 38px;
+  border-radius: 40px;
+}
+
+.calm-cloud-design__puff--1 {
+  left: 0;
+  top: 6px;
+  width: 38px;
+  height: 38px;
+}
+
+.calm-cloud-design__puff--2 {
+  left: 26px;
+  top: -8px;
+  width: 50px;
+  height: 50px;
+}
+
+.calm-cloud-design__puff--3 {
+  left: 56px;
+  top: 2px;
+  width: 40px;
+  height: 40px;
+}
+
+.calm-cloud-design__puff--4 {
+  left: 70px;
+  top: 16px;
+  width: 26px;
+  height: 26px;
+}
+
+.calm-cloud-design__spark {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0;
+  box-shadow: 0 0 6px #fff;
+  animation: cc-twinkle 3.4s ease-in-out infinite;
+}
+
+.calm-cloud-design__spark--1 {
+  top: 14px;
+  left: 20px;
+  animation-delay: 0s;
+}
+
+.calm-cloud-design__spark--2 {
+  top: 30px;
+  left: 96px;
+  animation-delay: 1.1s;
+}
+
+.calm-cloud-design__spark--3 {
+  top: 70px;
+  left: 40px;
+  animation-delay: 2.2s;
+}
+
+@keyframes cc-bob {
+  0%,
+  100% {
+    transform: translateY(0) scale(calc(1 + var(--amplitude, 0.1) * 0.12));
+  }
+  50% {
+    transform: translateY(-6px) scale(calc(1 + var(--amplitude, 0.1) * 0.12));
+  }
+}
+
+@keyframes cc-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes cc-twinkle {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .calm-cloud-design__halo,
+  .calm-cloud-design__body,
+  .calm-cloud-design__spark {
+    animation: none;
+  }
+}
+
+/* ---------- Full-screen backdrop ---------- */
+
+.calm-cloud-backdrop {
+  --sky-horizon: #4a3f78;
+  position: absolute;
+  inset: 0;
+}
+
+.calm-cloud-backdrop--listening,
+.calm-cloud-backdrop--speaking {
+  --sky-horizon: #5a4a92;
+}
+
+.calm-cloud-backdrop--processing,
+.calm-cloud-backdrop--thinking {
+  --sky-horizon: #4f3f8a;
+}
+
+.calm-cloud-backdrop--error {
+  --sky-horizon: #6b3f52;
+}
+
+.calm-cloud-backdrop--paused {
+  --sky-horizon: #322c4e;
+}
+
+/* Dusk/night sky - dark blue up top fading to a soft lilac horizon glow at
+   the bottom, keeping the app's existing dark-UI text contrast intact
+   (a literal light-blue daytime sky would fight readability everywhere). */
+.calm-cloud-backdrop__sky {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 90% 45% at 50% 100%, color-mix(in srgb, var(--sky-horizon) 55%, transparent) 0%, transparent 70%),
+    linear-gradient(180deg, #0b0e1a 0%, #12162a 45%, #1a1a35 75%, #241f3d 100%);
+  transition: background 0.6s ease;
+}
+
+.calm-cloud-backdrop__cloud {
+  position: absolute;
+  width: 140px;
+  height: 70px;
+  animation-name: cc-backdrop-drift;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+.calm-cloud-backdrop__cloud--right {
+  animation-direction: reverse;
+}
+
+.calm-cloud-backdrop__puff {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, #c9d2f0 70%);
+}
+
+.calm-cloud-backdrop__puff--a {
+  left: 0;
+  top: 18px;
+  width: 64px;
+  height: 34px;
+  border-radius: 32px;
+}
+
+.calm-cloud-backdrop__puff--b {
+  left: 22px;
+  top: 0;
+  width: 46px;
+  height: 46px;
+}
+
+.calm-cloud-backdrop__puff--c {
+  left: 58px;
+  top: 12px;
+  width: 36px;
+  height: 36px;
+}
+
+@keyframes cc-backdrop-drift {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 28px -6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .calm-cloud-backdrop__cloud {
+    animation: none;
+  }
+}

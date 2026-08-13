@@ -1,0 +1,19 @@
+.voice-waveform {
+  width: 100%;
+  height: 56px;
+  opacity: 0;
+  transform: translateY(4px) scaleY(0.85);
+  transition: opacity var(--transition-med), transform var(--transition-med);
+  pointer-events: none;
+}
+
+.voice-waveform--active {
+  opacity: 1;
+  transform: translateY(0) scaleY(1);
+}
+
+.voice-waveform canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}

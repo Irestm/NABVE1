@@ -1,0 +1,71 @@
+# Packages the Electron shell + the Python backend source tree into a
+# native installer (Windows NSIS) / portable app (Linux AppImage) — see
+# electron/backend.ts and electron/setup.ts for how the packaged app finds
+# and runs the backend at runtime (it's the extraResources copy below, run
+# through a venv that electron/setup.ts creates on first launch, not the
+# dev-checkout path used by `npm run dev`).
+appId: com.nabve1.assistant
+productName: NABVE1
+copyright: Copyright (C) NABVE1
+# electron-builder's own default output dir is also "dist", which would
+# collide with Vite's build output (frontend/dist, referenced below) —
+# kept separate so `npm run build` and `npm run package` don't clobber
+# each other.
+directories:
+  output: dist-builder
+# Deliberately narrow: only the compiled renderer (dist/) and compiled
+# Electron main/preload (dist-electron/) ship — not the .ts sources,
+# node_modules devDependencies, or anything else npm's default inclusion
+# rules would otherwise sweep in.
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - electron/setup-ui/**/*
+  - assets/**/*
+  - package.json
+# The Python backend isn't an npm package — it's copied in as raw resources
+# and run via a venv (see electron/setup.ts) rather than bundled into the
+# asar archive, since it's a separate interpreter's source tree, not JS.
+extraResources:
+  - from: ../core
+    to: backend/core
+  - from: ../modules
+    to: backend/modules
+  - from: ../requirements.txt
+    to: backend/requirements.txt
+  # Flat copy outside the asar archive so electron/setup.ts's
+  # writeLinuxDesktopEntry() can read it via process.resourcesPath at
+  # runtime — files under `files:` above end up inside app.asar, which
+  # isn't a plain filesystem path.
+  - from: assets/icons/icon.png
+    to: icon.png
+  # core/main.py serves this over HTTP for the LAN/phone thin client (the
+  # QR-code flow) at BASE_DIR/frontend/dist — BASE_DIR there resolves to
+  # this extraResources "backend" copy, not the frontend/ project directory
+  # itself, so it has to be duplicated in here too, alongside the Electron
+  # shell's own `files: dist/**/*` copy of the very same build output.
+  - from: dist
+    to: backend/frontend/dist
+# No auto-update/publish target configured — `npm run package` is meant to
+# produce a local installer/AppImage to test and hand to a user directly,
+# not push to a release feed.
+publish: null
+win:
+  target: nsis
+  icon: assets/icons/icon.png
+nsis:
+  # Installs into %LOCALAPPDATA%, not Program Files — writable by the
+  # current user without an admin prompt, which matters because
+  # electron/setup.ts creates a Python venv under app.getPath("userData")
+  # the very first time this app runs (see core/config.py's
+  # ASSISTANT_DATA_DIR/ASSISTANT_LOGS_DIR override for the matching data-side
+  # half of this same "packaged installs must stay writable" requirement).
+  perMachine: false
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+linux:
+  target: AppImage
+  icon: assets/icons/icon.png
+  category: Utility

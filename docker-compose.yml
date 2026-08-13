@@ -1,0 +1,59 @@
+services:
+  backend:
+    build:
+      context: .
+      # Baked into the image as the "appuser" account (see Dockerfile) rather
+      # than applied via a runtime `user:` override, so $HOME actually exists
+      # in /etc/passwd instead of being an unresolvable numeric UID — that
+      # gap is what broke huggingface_hub's cache path (used by faster-whisper
+      # to download the Whisper model) and Playwright's browser lookup under
+      # the previous setup. If `id -u`/`id -g` on your machine isn't 1000,
+      # run: export UID=$(id -u) GID=$(id -g)  before `docker compose up --build`.
+      args:
+        UID: "${UID:-1000}"
+        GID: "${GID:-1000}"
+    image: nabve-backend
+    container_name: nabve-backend
+    # Host networking so the backend is reachable at 127.0.0.1:8756 exactly
+    # like the native (non-docker) run, and so the LAN-IP detection used for
+    # the phone QR code (core/config.py:detect_lan_ip) sees the real interface.
+    network_mode: host
+    # Privileged so the container's D-Bus/X11/audio access isn't blocked by
+    # normal device permission checks (CAP_DAC_OVERRIDE) — needed for
+    # systemctl shutdown/reboot, keyring, notify-send and mic capture to
+    # actually reach the host. This is a deliberate trust trade-off for a
+    # single-user local assistant, not something to expose beyond localhost.
+    privileged: true
+    environment:
+      - DISPLAY=${DISPLAY}
+      - XAUTHORITY=/tmp/.Xauthority
+      - DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${UID:-1000}/bus
+    volumes:
+      # Live code mount: edit Python source on the host, the container picks
+      # it up on next restart (uvicorn/watchdog isn't hot-reload by default).
+      - .:/app
+      # X11 socket + auth cookie, so Playwright's visible browser windows
+      # (AI provider login) and pyautogui mouse/keyboard control render on
+      # your real desktop instead of failing with "cannot connect to display".
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/tmp/.Xauthority:ro
+      # Session D-Bus (notify-send, keyring/Secret Service) and system D-Bus
+      # (systemctl poweroff/reboot).
+      - /run/user/${UID:-1000}/bus:/run/user/${UID:-1000}/bus
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8756/api/status"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    # Uncomment if you've set up modules/hardware_adaptive (NVIDIA GPU,
+    # llama-cpp-python, a downloaded GGUF model) and want the container to
+    # use it instead of always falling back to modules/ai_bridge. Requires
+    # the nvidia-container-toolkit installed on the host.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
