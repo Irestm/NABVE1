@@ -15,7 +15,16 @@ logger = get_logger(__name__)
 
 PLUGINS_DIR = BASE_DIR / "modules" / "plugins"
 PENDING_DIR = PLUGINS_DIR / "_pending"
-PENDING_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    PENDING_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    # AI-assisted generation deliberately stays tied to BASE_DIR (see
+    # git_safety.py — it rolls back anything a generation run touched
+    # outside _pending/ via the real project git repo, which only makes
+    # sense against a live, writable checkout). A packaged build's BASE_DIR
+    # is a read-only mount; generation just isn't available there —
+    # process_next_ready_candidate's caller already logs and moves on.
+    logger.warning("%s is not writable; AI-assisted plugin generation is unavailable.", PENDING_DIR)
 
 INTERFACE_PATH = "modules/plugin_agent/plugin_interface.py"
 DEFAULT_TIMEOUT_SECONDS = 120

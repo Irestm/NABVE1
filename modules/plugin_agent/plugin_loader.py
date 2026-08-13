@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import re
+import shutil
 import sys
 import threading
 import time
@@ -10,17 +11,37 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from core.config import BASE_DIR
+from core.config import BASE_DIR, DATA_DIR
 from core.dispatcher import CommandDispatcher
 from core.logger import get_logger
 from modules.plugin_agent.plugin_interface import validate_plugin
 
 logger = get_logger(__name__)
 
-PLUGINS_DIR = BASE_DIR / "modules" / "plugins"
+# modules/plugins/ (source tree) ships the built-in plugins but, in a
+# packaged build, lives on a read-only mount (e.g. an AppImage's squashfs)
+# — approved/pending AI-generated plugins need a writable location, so the
+# registry actually reads/writes/watches DATA_DIR instead. _seed_bundled_plugins
+# below copies the source-tree defaults in on first run.
+_BUNDLED_PLUGINS_DIR = BASE_DIR / "modules" / "plugins"
+PLUGINS_DIR = DATA_DIR / "plugins"
 PENDING_DIR = PLUGINS_DIR / "_pending"
 PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
 PENDING_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _seed_bundled_plugins() -> None:
+    if not _BUNDLED_PLUGINS_DIR.is_dir():
+        return
+    for path in _BUNDLED_PLUGINS_DIR.glob("*.py"):
+        if path.name.startswith("_"):
+            continue
+        dest = PLUGINS_DIR / path.name
+        if not dest.exists():
+            shutil.copy2(path, dest)
+
+
+_seed_bundled_plugins()
 
 # Plugins are never allowed direct access to secrets storage, no matter what
 # an AI-generated file claims to do. Enforced here (not just at review time)

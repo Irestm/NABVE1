@@ -6,7 +6,12 @@ __pycache__/
 
 # Data / logs / secrets
 data/**/*.db
-logs/*.log
+logs/*.log*
+# modules/plugin_agent/plugin_loader.py seeds this from modules/plugins/ on
+# every startup (a packaged build's modules/plugins/ is read-only, so
+# approved/pending plugins live here instead) — pure runtime state, the
+# source of truth is modules/plugins/.
+data/plugins/
 data/voices/*.onnx
 data/voices/*.onnx.json
 # Silero TTS checkpoint — user downloads this manually per
