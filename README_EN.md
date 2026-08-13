@@ -1,5 +1,7 @@
 # NABVE — NEURAL ASSISTANT BROWSER VERSION 1
 
+GitHub: https://github.com/Irestm/NABVE1
+
 A local, single-user voice assistant ("Jarvis"): a FastAPI backend + an Electron/React interface, with hybrid AI (a local on-device model plus cloud providers as fallback) and a set of modules for controlling the computer.
 
 ---

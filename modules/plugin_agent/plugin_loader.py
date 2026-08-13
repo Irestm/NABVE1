@@ -79,19 +79,26 @@ class PluginRegistry:
     @staticmethod
     def _make_handler(file_path: Path):
         async def _handler(params: dict[str, Any]) -> dict[str, Any]:
-            # Imported here, not at module level: sandbox_runner.py is also run
-            # directly via `python -m modules.plugin_agent.sandbox_runner` inside
-            # the sandboxed subprocess this spawns. An eager top-level import here
-            # would make this module transitively import sandbox_runner under its
-            # normal dotted name before runpy's -m machinery executes it as
-            # __main__, giving Python two module objects for the same file and a
-            # "found in sys.modules ... prior to execution" warning.
+            # Imported here, not at module level: modules/plugin_agent/sandbox_runner.py
+            # is also run directly via `python -m modules.plugin_agent.sandbox_runner`
+            # (see that module's __main__ block) inside the sandboxed
+            # subprocess this spawns. Importing it eagerly at this module's
+            # top level would make `modules.plugin_agent`'s own __init__.py
+            # (which imports this file) transitively import sandbox_runner
+            # under its normal dotted name *before* runpy's -m machinery
+            # gets to execute it as __main__ in the subprocess — Python then
+            # ends up with two separate module objects for the same file and
+            # prints a "found in sys.modules ... prior to execution" warning.
+            # A deferred import here sidesteps that entirely.
             #
-            # Runs in a fresh subprocess, not in-process — see sandbox_runner.py's
-            # own docstring for why: approval (handlers.py's approve/reject flow)
-            # isn't the same as trust, and the subprocess boundary limits what a
-            # buggy or overreaching plugin can do well beyond the forbidden-import
-            # check alone.
+            # Runs in a fresh subprocess, not in-process — see
+            # sandbox_runner.py's own module docstring for why: this is
+            # AI-generated code that a human has approved (see
+            # modules/plugin_agent/handlers.py's approve/reject flow), but
+            # approval isn't the same as trust — a subprocess boundary with
+            # a timeout, a throwaway cwd, and an env-var allowlist limits
+            # what a buggy or overreaching plugin can actually do once it
+            # runs, well beyond the forbidden-import check alone.
             from modules.plugin_agent import sandbox_runner
 
             return await sandbox_runner.run_in_sandbox(file_path, params)

@@ -13,6 +13,7 @@ from core.bootstrap import compose
 from core.config import BASE_DIR, detect_lan_ip, settings
 from core.dispatcher import UnknownCommandError
 from core.logger import get_logger
+from core.message_bus import message_bus
 from core.models import (
     AIBridgeStatus,
     CommandDescriptor,
@@ -29,6 +30,10 @@ from core.models import (
     MeetingRecordingResponse,
     MeetingSummaryResponse,
     MeetingTranscriptResponse,
+    MessagingIncomingRequest,
+    MessagingIncomingResponse,
+    MessagingOutboundAckRequest,
+    MessagingOutboundItem,
     SelectVoiceRequest,
     SpeakRequest,
     SpeakResponse,
@@ -49,6 +54,8 @@ from modules.meeting_recorder.domain import RecordingStatus as MeetingRecordingS
 from modules.meeting_recorder.domain import SummaryStatus as MeetingSummaryStatus
 from modules.meeting_recorder.domain import TranscriptStatus as MeetingTranscriptStatus
 from modules.meeting_recorder.uow import MeetingRecordingUnitOfWork
+from modules.messaging import service_layer as messaging_service_layer
+from modules.messaging.uow import MessagingUnitOfWork
 
 logger = get_logger(__name__)
 
@@ -474,6 +481,61 @@ async def delete_meeting_recording(recording_id: int) -> MeetingRecordingDeleteR
     if not deleted and not pending:
         raise HTTPException(status_code=404, detail="Recording not found")
     return MeetingRecordingDeleteResponse(deleted=deleted, pending=pending)
+
+
+@app.post("/api/messaging/incoming", response_model=MessagingIncomingResponse)
+async def receive_messaging_incoming(request: MessagingIncomingRequest) -> MessagingIncomingResponse:
+    """Called by an external delivery process (e.g. a separate Telegram bot
+    project — see modules/messaging/BRIDGE.md) to hand off one inbound
+    message. NABVE1 has no client of its own for any messaging source; this
+    is the only way a message ever enters modules.messaging."""
+    pending = await asyncio.to_thread(
+        messaging_service_layer.record_incoming_message,
+        MessagingUnitOfWork(),
+        request.source,
+        request.sender_identifier,
+        request.sender_label,
+        request.text,
+    )
+    if pending is None:
+        return MessagingIncomingResponse(recorded=False)
+    await messaging_service_layer.notify_new_message(message_bus, pending)
+    assert pending.id is not None
+    return MessagingIncomingResponse(recorded=True, message_id=pending.id)
+
+
+@app.get("/api/messaging/outbound/pending", response_model=list[MessagingOutboundItem])
+async def list_messaging_outbound_pending() -> list[MessagingOutboundItem]:
+    """Polled by the external delivery process to find replies waiting to
+    be sent — see modules/messaging/BRIDGE.md."""
+    pending = await asyncio.to_thread(messaging_service_layer.list_pending_outbound, MessagingUnitOfWork())
+    return [
+        MessagingOutboundItem(
+            id=item.id,  # type: ignore[arg-type]
+            source=item.source,
+            recipient_identifier=item.recipient_identifier,
+            text=item.text,
+            created_at=item.created_at.isoformat(),  # type: ignore[union-attr]
+        )
+        for item in pending
+    ]
+
+
+@app.post("/api/messaging/outbound/{message_id}/ack")
+async def ack_messaging_outbound(message_id: int, request: MessagingOutboundAckRequest) -> dict[str, bool]:
+    """Called by the external delivery process once it has attempted to
+    send a queued reply — see modules/messaging/BRIDGE.md."""
+    if request.status not in ("sent", "failed"):
+        raise HTTPException(status_code=400, detail="status must be 'sent' or 'failed'")
+    ok = await asyncio.to_thread(
+        messaging_service_layer.mark_outbound_delivered,
+        MessagingUnitOfWork(),
+        message_id,
+        request.status == "sent",
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Outbound message not found")
+    return {"ok": True}
 
 
 _FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"

@@ -22,8 +22,9 @@ class CommunicationStyle:
     prosody_rate: float
 
 
-# Order is also the order read aloud during onboarding (see
-# onboarding.py:_ask_communication_style).
+# 5 original styles the user asked for, plus 3 more per their explicit "add
+# 3 more" request. Order is also the order read aloud during onboarding
+# (see onboarding.py:_ask_communication_style).
 COMMUNICATION_STYLES: tuple[CommunicationStyle, ...] = (
     CommunicationStyle(
         key="polite",

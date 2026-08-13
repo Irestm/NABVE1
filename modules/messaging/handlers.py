@@ -77,13 +77,12 @@ async def _handle_reply(params: dict[str, Any]) -> dict[str, Any]:
     if pending.source != "telegram":
         raise ValueError(f"Ответ пока не поддерживается для источника '{pending.source}'.")
 
-    try:
-        from modules.telegram import service_layer as telegram_service_layer
-        from modules.telegram.client import telegram_service
-    except ImportError as exc:
-        raise ValueError("Отправка сообщений недоступна в этой сборке.") from exc
-
-    await telegram_service_layer.send_message(telegram_service, pending.sender_identifier, text)
+    # NABVE1 has no Telegram client of its own — this just queues the reply
+    # for a separate bot process to actually deliver (see
+    # modules/messaging/BRIDGE.md). Queuing, not confirmed delivery, is what
+    # "replied" means below, same trust-the-send assumption the old
+    # synchronous telegram_service_layer.send_message() call made.
+    service_layer.queue_outbound_message(MessagingUnitOfWork(), pending.source, pending.sender_identifier, text)
 
     # A new message from the same contact can merge into this row (see
     # service_layer.record_incoming_message) at any point between when the

@@ -4,11 +4,14 @@ import time
 from dataclasses import dataclass, field
 
 # Conservative, hardcoded thresholds deliberately well under Groq's actual
-# free-tier rate limits (which vary by model and change without notice) —
-# the goal is to stop offering the adapter BEFORE a request gets a 429,
-# since a failed request in the critical path is itself the extra latency
-# this tier exists to avoid. In-memory only: resets on process restart,
-# which just costs one extra cautious minute, not a correctness problem.
+# free-tier rate limits (which vary by model and change over time without
+# notice) — the goal is to stop offering the adapter BEFORE a request would
+# get a 429, not react to one after the fact (a failed request in the
+# critical path is itself extra latency, the exact thing this tier exists to
+# avoid). In-memory only: resets on process restart, which just means one
+# extra cautious minute right after a restart, not a correctness problem —
+# see the plan's note that persistence is a "fuller version" item, not
+# needed for the first slice.
 _WINDOW_SECONDS = 60.0
 _MAX_REQUESTS_PER_WINDOW = 20
 

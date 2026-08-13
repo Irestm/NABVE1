@@ -26,7 +26,9 @@ def _needs_confirmation(old_email: str | None, new_email: str) -> bool:
     """True only when there WAS a previously stored, inspectable account
     (old_email is not None) AND it's a different address than the one
     just authenticated. No prior account — nothing to compare against,
-    never needs confirmation."""
+    never needs confirmation. Mirrors modules.telegram.login's
+    _needs_confirmation exactly, comparing email addresses (Gmail's own
+    unambiguous identifier) instead of a numeric Telegram user id."""
     return old_email is not None and old_email.lower() != new_email.lower()
 
 
@@ -36,7 +38,8 @@ def _inspect_existing_account(data: dict[str, Any]) -> str | None:
     account can be caught before silently overwriting it. Best-effort: any
     failure here (revoked token, network hiccup) just means "couldn't
     determine the old identity", not a hard failure of the login flow
-    itself — the new login can still proceed."""
+    itself — the new login can still proceed. Mirrors
+    modules.telegram.login._inspect_existing_session."""
     try:
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials

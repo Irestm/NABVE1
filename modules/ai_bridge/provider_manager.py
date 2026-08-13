@@ -128,9 +128,12 @@ class ProviderManager:
                     try:
                         limited = await adapter.is_limit_reached()
                     except Exception:
-                        # last_error is logged via logger.exception below when this
-                        # probe says "not limited" — but if THIS probe itself is
-                        # what's broken, log it too so it isn't left untraced.
+                        # last_error (the send_prompt failure above) is
+                        # already logged via logger.exception a few lines
+                        # below when this probe says "not limited" — but if
+                        # THIS probe is what's actually broken, that
+                        # specific failure would otherwise leave no trace
+                        # anywhere.
                         logger.debug("Could not confirm limit status for '%s'", name, exc_info=True)
                         limited = False
                     self._limit_hit[name] = limited

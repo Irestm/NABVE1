@@ -210,3 +210,30 @@ class MeetingTranscriptResponse(BaseModel):
 
 class MeetingSummaryResponse(BaseModel):
     text: str
+
+
+# --- modules/messaging bridge (see modules/messaging/BRIDGE.md) — used by
+# an external delivery process (e.g. a separate Telegram bot project), not
+# by the frontend. ---
+class MessagingIncomingRequest(BaseModel):
+    source: str
+    sender_identifier: str
+    sender_label: str
+    text: str
+
+
+class MessagingIncomingResponse(BaseModel):
+    recorded: bool
+    message_id: int | None = None
+
+
+class MessagingOutboundItem(BaseModel):
+    id: int
+    source: str
+    recipient_identifier: str
+    text: str
+    created_at: str
+
+
+class MessagingOutboundAckRequest(BaseModel):
+    status: str  # "sent" or "failed"

@@ -25,8 +25,9 @@ class GmailHistoryExpired(Exception):
 
 
 def get_oauth_client_credentials() -> tuple[str, str]:
-    """App-identity credentials (env vars, not keyring): these identify the
-    OAuth *application*, not any individual user."""
+    """App-identity credentials (env vars, not keyring) — mirrors
+    modules.telegram.client's ASSISTANT_TELEGRAM_API_ID/_API_HASH split:
+    these identify the OAuth *application*, not any individual user."""
     client_id = os.environ.get("ASSISTANT_GMAIL_CLIENT_ID")
     client_secret = os.environ.get("ASSISTANT_GMAIL_CLIENT_SECRET")
     if not client_id or not client_secret:
@@ -100,8 +101,9 @@ def credentials_to_blob(creds: Any) -> str:
 
 def ensure_credentials() -> Any:
     """Loads the stored credentials, refreshing (and re-persisting) the
-    access token if it has expired. Raises RuntimeError with "run the
-    login helper" guidance if nothing is stored yet."""
+    access token if it has expired. Raises RuntimeError with the same
+    "run the login helper" guidance as modules.telegram.client's
+    equivalent if nothing is stored yet."""
     from google.auth.transport.requests import Request
 
     creds = _load_stored_credentials()

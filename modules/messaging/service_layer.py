@@ -3,7 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from core.message_bus import MessageBus
-from modules.messaging.domain import PendingMessage, PendingMessageStatus, WatchedContact
+from modules.messaging.domain import (
+    OutboundMessage,
+    OutboundStatus,
+    PendingMessage,
+    PendingMessageStatus,
+    WatchedContact,
+)
 from modules.messaging.events import MessageReceived
 from modules.messaging.uow import MessagingUnitOfWork
 
@@ -98,6 +104,33 @@ def mark_replied(uow: MessagingUnitOfWork, message_id: int) -> bool:
         uow.messages.update(message)
         uow.commit()
         return True
+
+
+def queue_outbound_message(uow: MessagingUnitOfWork, source: str, recipient_identifier: str, text: str) -> int:
+    """Writes a reply for the external delivery process to pick up — see
+    modules/messaging/BRIDGE.md. NABVE1's job ends at this insert; it
+    never talks to Telegram (or any other outbound channel) itself."""
+    with uow:
+        message_id = uow.outbound.add(
+            OutboundMessage(source=source, recipient_identifier=recipient_identifier, text=text)
+        )
+        uow.commit()
+    return message_id
+
+
+def list_pending_outbound(uow: MessagingUnitOfWork) -> list[OutboundMessage]:
+    """Polled by the external bot process — see modules/messaging/BRIDGE.md."""
+    with uow:
+        return uow.outbound.list_pending()
+
+
+def mark_outbound_delivered(uow: MessagingUnitOfWork, message_id: int, delivered: bool) -> bool:
+    """Called by the external bot process after it attempts delivery."""
+    with uow:
+        status = OutboundStatus.SENT if delivered else OutboundStatus.FAILED
+        ok = uow.outbound.mark_delivered(message_id, status)
+        uow.commit()
+        return ok
 
 
 def snooze(uow: MessagingUnitOfWork, message_id: int, minutes: int) -> bool:

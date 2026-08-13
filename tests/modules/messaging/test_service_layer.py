@@ -128,6 +128,29 @@ def test_check_due_snoozes_flips_status_and_publishes(tmp_path) -> None:
     assert [m.status for m in [service_layer.list_pending(uow)[0]]] == [PendingMessageStatus.PENDING]
 
 
+def test_queue_outbound_message_then_list_pending(tmp_path) -> None:
+    uow = _uow(tmp_path)
+    message_id = service_layer.queue_outbound_message(uow, "telegram", "ira", "привет!")
+
+    pending = service_layer.list_pending_outbound(uow)
+    assert [m.id for m in pending] == [message_id]
+    assert pending[0].recipient_identifier == "ira"
+    assert pending[0].text == "привет!"
+
+
+def test_mark_outbound_delivered_removes_it_from_pending(tmp_path) -> None:
+    uow = _uow(tmp_path)
+    message_id = service_layer.queue_outbound_message(uow, "telegram", "ira", "привет!")
+
+    assert service_layer.mark_outbound_delivered(uow, message_id, delivered=True) is True
+    assert service_layer.list_pending_outbound(uow) == []
+
+
+def test_mark_outbound_delivered_unknown_message_returns_false(tmp_path) -> None:
+    uow = _uow(tmp_path)
+    assert service_layer.mark_outbound_delivered(uow, 9999, delivered=False) is False
+
+
 def test_check_due_snoozes_ignores_not_yet_due(tmp_path) -> None:
     uow = _uow(tmp_path)
     service_layer.add_watched_contact(uow, "telegram", "@ira")

@@ -11,6 +11,12 @@ class PendingMessageStatus(str, Enum):
     SNOOZED = "snoozed"
 
 
+class OutboundStatus(str, Enum):
+    PENDING = "pending"
+    SENT = "sent"
+    FAILED = "failed"
+
+
 @dataclass
 class WatchedContact:
     source: str  # only "telegram" this round, kept as a plain string (not
@@ -37,3 +43,20 @@ class PendingMessage:
     received_at: datetime | None = None
     status: PendingMessageStatus = PendingMessageStatus.PENDING
     snooze_until: datetime | None = None
+
+
+@dataclass
+class OutboundMessage:
+    """A reply queued for an external process to actually deliver — NABVE1
+    has no Telegram client of its own (see modules/messaging/BRIDGE.md), so
+    _handle_reply in handlers.py just writes a row here instead of sending
+    anything itself. A separate bot process polls for PENDING rows, sends
+    them, and flips status to SENT/FAILED."""
+
+    source: str
+    recipient_identifier: str
+    text: str
+    id: int | None = None
+    created_at: datetime | None = None
+    status: OutboundStatus = OutboundStatus.PENDING
+    sent_at: datetime | None = None

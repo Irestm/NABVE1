@@ -142,10 +142,15 @@ class BrowserProviderAdapter(ABC):
         if self._context is None:
             self.profile_dir.mkdir(parents=True, exist_ok=True)
             self._playwright = await async_playwright().start()
-            # Requires self._auth_marker (login already succeeded) before even
-            # trying headless — see class docstring for why that's opt-in only.
-            # force_headed=True (from reveal()) always launches headed regardless,
-            # for re-logging in after a session expires.
+            # Tried running headless once send_prompt had ever succeeded
+            # (self._auth_marker) to eliminate the window entirely instead of
+            # just hiding it — confirmed on Gemini specifically that it
+            # detects and blocks headless Chromium even with a fully valid,
+            # already-authenticated session (prompt box never renders), so
+            # that's opt-in only now via ASSISTANT_AI_BRIDGE_TRY_HEADLESS=1,
+            # in case that ever changes or doesn't apply to some other
+            # provider. force_headed=True (from reveal()) always launches
+            # headed regardless, for re-logging in after a session expires.
             try_headless_env = os.environ.get("ASSISTANT_AI_BRIDGE_TRY_HEADLESS") == "1"
             headless = not force_headed and try_headless_env and self._auth_marker.exists()
             self._headless = headless
@@ -158,10 +163,16 @@ class BrowserProviderAdapter(ABC):
             if not headless:
                 launch_kwargs["args"] = ["--window-size=480,360"]
                 if not force_headed:
-                    # A window merely minimized/unfocused on the real display was
-                    # confirmed to fail the same way headless does (Gemini's page
-                    # never finishes rendering) — Xvfb (a real, focused compositor
-                    # invisible to the user) is what actually solves both problems.
+                    # Real headed rendering (Gemini requires it) without it
+                    # ever touching the user's actual screen: point the
+                    # browser subprocess at a hidden Xvfb display instead of
+                    # the real one. A window that's launched on the real
+                    # display but merely minimized/unfocused was confirmed
+                    # the hard way to fail the same way headless does —
+                    # Gemini's page never finishes rendering — so Xvfb (a
+                    # real, focused compositor the browser is never aware is
+                    # invisible to the user) is what actually solves both
+                    # problems at once.
                     display = await virtual_display.get_display()
                     if display is not None:
                         launch_kwargs["env"] = {**os.environ, "DISPLAY": display}

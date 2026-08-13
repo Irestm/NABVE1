@@ -68,7 +68,8 @@ class GmailPoller:
         try:
             creds = gmail_client.ensure_credentials()
         except RuntimeError:
-            # Not configured yet: nothing to poll until
+            # Not configured yet — same silent degrade as TelegramWatcher
+            # with no stored session: nothing to poll until
             # python -m modules.gmail.login has been run once.
             return
         except Exception:

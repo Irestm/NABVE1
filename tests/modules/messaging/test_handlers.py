@@ -56,16 +56,20 @@ def test_watch_contact_cyrillic_identifier_still_allowed_for_gmail() -> None:
     assert result["identifier"] == "ира@example.com"
 
 
-def test_reply_raises_when_telegram_unavailable() -> None:
+def test_reply_queues_outbound_message_and_marks_replied() -> None:
     asyncio.run(handlers._handle_watch_contact({"identifier": "@ira"}))
     db_path_uow = handlers.MessagingUnitOfWork()
     pending = service_layer.record_incoming_message(db_path_uow, "telegram", "@ira", "Ира", "привет")
     assert pending is not None
 
-    with pytest.raises(ValueError):
-        asyncio.run(handlers._handle_reply({"message_id": pending.id, "text": "привет!"}))
-    # Still pending — a failed send attempt must not mark it replied.
-    assert len(service_layer.list_pending(db_path_uow)) == 1
+    result = asyncio.run(handlers._handle_reply({"message_id": pending.id, "text": "привет!"}))
+
+    assert result["message_id"] == pending.id
+    assert service_layer.list_pending(db_path_uow) == []  # marked replied, no longer pending
+    queued = service_layer.list_pending_outbound(db_path_uow)
+    assert len(queued) == 1
+    assert queued[0].recipient_identifier == "ira"
+    assert queued[0].text == "привет!"
 
 
 def test_reply_to_gmail_source_raises() -> None:
