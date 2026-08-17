@@ -36,4 +36,9 @@ contextBridge.exposeInMainWorld("assistantAPI", {
   setRecordingActive: (active: boolean) => {
     ipcRenderer.send("meeting-recording-active-changed", active);
   },
+  // components/CustomCommandsPanel.tsx's launch_app "Обзор…" button — see
+  // main.ts's ipcMain.handle("pick-executable", ...). Two-way/promise-
+  // returning (invoke, not send) since the renderer needs the chosen path
+  // back, unlike setRecordingActive above.
+  pickExecutablePath: () => ipcRenderer.invoke("pick-executable") as Promise<string | null>,
 });

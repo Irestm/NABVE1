@@ -15,12 +15,27 @@ rich>=13.0
 # click/move_mouse/type_text/press_key require tkinter at runtime:
 #   Linux:   sudo apt-get install python3-tk python3-dev
 #   Windows: bundled with the standard python.org installer
-# list_windows/focus_window on Linux require the wmctrl CLI:
+# list_windows/focus_window/hide_window/close_window on Linux require the wmctrl CLI:
 #   sudo apt-get install wmctrl
-# get_active_window on Linux additionally requires the xdotool CLI:
+# get_active_window/hide_window/close_window on Linux additionally require the xdotool CLI:
 #   sudo apt-get install xdotool
+# set_volume/change_volume/get_volume/mute/unmute/toggle_mute on Linux require pactl
+# (PulseAudio/PipeWire) or amixer (ALSA) — usually already present, otherwise:
+#   sudo apt-get install pulseaudio-utils
+# switch_keyboard_layout on Linux requires setxkbmap (X11) — usually already present
+# with any X server — or gsettings (GNOME, incl. Wayland) as fallback.
+# change_system_locale and delete_folder(force_admin=True) on Linux require localectl
+# (systemd, usually already present) and pkexec or sudo for privilege escalation.
+# See core/os_adapter/linux.py's module docstring for Wayland limitations on
+# hide_window/close_window(app_name=None) and switch_keyboard_layout.
 pyautogui>=0.9.54
 pygetwindow>=0.0.9 ; sys_platform == 'win32'
+# Windows-only volume control (Windows Core Audio API binding) — set_volume/
+# change_volume/get_volume/mute/unmute/toggle_mute on Windows. comtypes is
+# pycaw's own COM dependency, pinned here explicitly since it's required at
+# import time, not merely transitive.
+pycaw>=20240210 ; sys_platform == 'win32'
+comtypes>=1.2 ; sys_platform == 'win32'
 
 # --- core/os_adapter/screenshot.py, modules/ui_automation/ocr_adapter.py (implemented) ---
 # OCR vision fallback for modules/ui_automation, tried only when neither CDP
@@ -101,6 +116,16 @@ keyring>=25.2
 # core/voice/proactive_announcer.py) — no network calls, works on any OS.
 psutil>=5.9
 
+# --- modules/hardware_adaptive/command_classifier.py (implemented) ---
+# Fast, fully local, CPU-only classification of system commands (volume,
+# windows, filesystem, language, battery, updates) — tried before ever
+# spending time/quota on modules/ai_bridge's external AI providers. Uses the
+# multilingual paraphrase-multilingual-MiniLM-L12-v2 model (~470MB,
+# downloaded from HuggingFace on first use and cached locally after that —
+# needs network access once). torch is already a hard dependency above (for
+# Silero TTS), so this only adds the sentence-transformers wrapper itself.
+sentence-transformers>=3.0
+
 # --- modules/hardware_adaptive (implemented, lazy-imported, optional) ---
 # Only needed if this machine has an NVIDIA/CUDA GPU with >=4GB VRAM (see
 # modules/hardware_adaptive/model_tiers.py); otherwise all AI requests use
@@ -128,6 +153,23 @@ watchdog>=4.0
 # Draughts uses py-draughts's own pure-Python SimpleEngine, no system binary.
 chess>=1.11
 py-draughts>=1.9
+
+# --- modules/wordpress_bridge (implemented, lazy-imported) ---
+# docx -> HTML for the draft body (python-docx above only gives plain text,
+# no structure/formatting).
+mammoth>=1.8
+# PDF text extraction for the draft body.
+pypdf>=4.0
+# Draft preparation in wp-admin reuses playwright (already a dependency
+# above, via modules/ai_bridge) with a visible, non-headless browser.
+
+# --- modules/figma_control (implemented, lazy-imported) ---
+# Fallback path only (modules/figma_control/screen_fallback.py) — the
+# primary path is the Figma Plugin API over WebSocket (figma_plugin/),
+# which needs nothing here. find_icon_on_screen's template matching needs
+# OpenCV; -headless (no Qt/GUI bindings) is enough since this only ever
+# calls matchTemplate/imread/cvtColor on already-captured screenshots.
+opencv-python-headless>=4.9
 
 # --- dev/test only ---
 pytest>=8.0

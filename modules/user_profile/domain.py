@@ -18,15 +18,55 @@ COMMUNICATION_STYLE_KEY = "communication_style"
 # modules/user_profile/onboarding.py._ask_stop_word and
 # core/voice/pipeline.py._wait_for_wake_or_pause.
 STOP_WORD_KEY = "stop_word"
+# Custom activation phrase, added to core/voice/wake_word.py's
+# DEFAULT_WAKE_PHRASES rather than replacing them — see
+# core/voice/wake_word.py.resolve_wake_phrases, the only reader, and
+# core/voice/pipeline.py._wait_for_wake_or_pause, which re-reads this fact
+# every pass for the same reason STOP_WORD_KEY does (see its own comment).
+WAKE_PHRASE_KEY = "wake_phrase"
+# "1"/"0" — whether launch_app custom commands (modules/custom_commands)
+# require spoken yes/no confirmation before running, and text_instruction
+# custom commands require it before their stored instruction is substituted
+# back into the normal command pipeline. Off by default: these are the
+# user's own personal shortcuts authored through their own settings UI, not
+# third-party input, so gating every use behind a confirmation prompt would
+# defeat the point of a quick voice shortcut for most users. See
+# modules/custom_commands/dispatcher.py's _requires_confirmation.
+CUSTOM_COMMANDS_REQUIRE_CONFIRMATION_KEY = "custom_commands_require_confirmation"
 # "1"/"0" (stored as a string, like ONBOARDING_COMPLETE_KEY) — whether a
 # short synthesized breath/inhale sound plays before every spoken reply.
 # See core/voice/sound_effects.py and core/voice/tts.py.
 BREATH_EFFECT_KEY = "breath_effect_enabled"
+# "1"/"0" — whether a configurable silence is prepended before playback
+# starts. Paired with DELAY_SECONDS_KEY (stringified float, seconds). See
+# core/voice/tts_effects.py and core/voice/tts.py.
+DELAY_EFFECT_ENABLED_KEY = "delay_effect_enabled"
+DELAY_SECONDS_KEY = "delay_seconds"
+# "none" | "tunnel" | "robotic" — mutually exclusive voice-distortion effect
+# applied to the whole synthesized reply. See core/voice/tts_effects.py.
+VOICE_FX_MODE_KEY = "voice_fx_mode"
+# Stringified int 0-100 — the assistant's own TTS output gain, independent
+# of the OS mixer level (core/dispatcher.py's set_volume/change_volume).
+# See core/voice/tts.py's get_assistant_volume/set_assistant_volume.
+ASSISTANT_VOLUME_KEY = "assistant_volume"
 # Free-text "about me" blob from the settings panel's Профиль tab, plus the
 # structured facts service_layer.save_about_me pulls out of it via
 # core/voice/fact_extraction.py's rule-based extractor — see that function
 # for why extraction is duplicated here instead of only on spoken utterances.
 ABOUT_ME_KEY = "about_me"
+# "male" | "female" — which gendered form of address (сэр/мэм) the assistant
+# uses. Currently drives core/voice/confirmation_phrase.py's
+# get_confirmation_phrase() only. See modules/user_profile/handlers.py's
+# generic profile_set/profile_get for how the settings UI reads/writes this
+# like any other fact.
+GENDER_KEY = "gender"
+DEFAULT_GENDER = "male"
+# "1"/"0" — whether a short Jarvis-style confirmation phrase ("Да, сэр"/"Да,
+# мэм", chosen by core/voice/confirmation_phrase.get_confirmation_phrase) is
+# spoken before executing any recognized command (system command, custom
+# command, plugin, Figma/Blender command, ...) — not before plain
+# conversational answers. See core/voice/pipeline.py's _handle_command.
+CONFIRMATION_PHRASE_ENABLED_KEY = "confirmation_phrase_enabled"
 
 # Episodic facts older than this are eligible for eviction even if the total
 # count is under the cap — see service_layer.evict_stale_facts.

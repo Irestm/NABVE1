@@ -46,3 +46,42 @@
   accent-color: var(--accent-blue);
   cursor: pointer;
 }
+
+.personality-panel__delay-row {
+  align-items: center;
+  gap: 8px;
+}
+
+.personality-panel__delay-row input[type="number"] {
+  width: 5em;
+}
+
+.personality-panel__unit {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-width: 2.5em;
+}
+
+.personality-panel__radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.personality-panel__radio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.personality-panel__radio input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-blue);
+  cursor: pointer;
+}

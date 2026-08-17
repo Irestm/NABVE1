@@ -8,6 +8,7 @@ interface CentralOrbProps {
 
 const SPIN_DURATION_SECONDS: Record<AssistantState, number> = {
   idle: 22,
+  background_listening: 26,
   listening: 7,
   processing: 5,
   thinking: 3.5,

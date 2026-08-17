@@ -1,15 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getProfileFact, listCommunicationStyles, setProfileFact } from "../api/client";
 import type { CommunicationStyle } from "../types";
 import "./PersonalityPanel.css";
 
 // Matches modules/user_profile/domain.py's COMMUNICATION_STYLE_KEY/
-// STOP_WORD_KEY/BREATH_EFFECT_KEY string values exactly - these are stable,
-// already-established fact keys, not something this panel invents.
-// (assistant_name lives in components/SettingsPanel.tsx's "Профиль" tab now.)
+// BREATH_EFFECT_KEY/DELAY_EFFECT_ENABLED_KEY/DELAY_SECONDS_KEY/
+// VOICE_FX_MODE_KEY/ASSISTANT_VOLUME_KEY/CONFIRMATION_PHRASE_ENABLED_KEY
+// string values exactly - these are
+// stable, already-established fact keys, not something this panel invents.
+// (assistant_name lives in components/SettingsPanel.tsx's "Профиль" tab;
+// стоп-слово/активационная фраза/фразы трея moved to
+// components/CustomCommandsPanel.tsx's "Системные команды" section, so
+// they're no longer read/written here.)
 const COMMUNICATION_STYLE_KEY = "communication_style";
-const STOP_WORD_KEY = "stop_word";
 const BREATH_EFFECT_KEY = "breath_effect_enabled";
+const DELAY_EFFECT_ENABLED_KEY = "delay_effect_enabled";
+const DELAY_SECONDS_KEY = "delay_seconds";
+const VOICE_FX_MODE_KEY = "voice_fx_mode";
+const CONFIRMATION_PHRASE_ENABLED_KEY = "confirmation_phrase_enabled";
+const ASSISTANT_VOLUME_KEY = "assistant_volume";
+const DEFAULT_DELAY_SECONDS = "0.3";
+const DEFAULT_ASSISTANT_VOLUME = 100;
+type VoiceFxMode = "none" | "tunnel" | "robotic";
 const DEFAULT_STYLE_KEY = "polite";
 // Matches modules/user_profile/communication_styles.py's MAX_SELECTED_STYLES.
 const MAX_SELECTED_STYLES = 3;
@@ -40,11 +52,21 @@ export function PersonalityPanel(): JSX.Element {
   const [selectedStyles, setSelectedStyles] = useState<string[]>([DEFAULT_STYLE_KEY]);
   const [savingStyles, setSavingStyles] = useState(false);
 
-  const [stopWord, setStopWord] = useState<string>("");
-  const [stopWordInput, setStopWordInput] = useState<string>("");
-
   const [breathEffect, setBreathEffect] = useState(false);
   const [savingBreathEffect, setSavingBreathEffect] = useState(false);
+
+  const [delayEffect, setDelayEffect] = useState(false);
+  const [delaySeconds, setDelaySeconds] = useState(DEFAULT_DELAY_SECONDS);
+  const [savingDelayEffect, setSavingDelayEffect] = useState(false);
+
+  const [voiceFxMode, setVoiceFxMode] = useState<VoiceFxMode>("none");
+  const [savingVoiceFxMode, setSavingVoiceFxMode] = useState(false);
+
+  const [confirmationPhrase, setConfirmationPhrase] = useState(false);
+  const [savingConfirmationPhrase, setSavingConfirmationPhrase] = useState(false);
+
+  const [assistantVolume, setAssistantVolume] = useState(DEFAULT_ASSISTANT_VOLUME);
+  const [savingAssistantVolume, setSavingAssistantVolume] = useState(false);
 
   const [error, setError] = useState<string>("");
   const [loaded, setLoaded] = useState(false);
@@ -67,20 +89,29 @@ export function PersonalityPanel(): JSX.Element {
     async function load(): Promise<void> {
       attempt += 1;
       try {
-        const [availableStyles, style, word, breath] = await Promise.all([
-          listCommunicationStyles(),
-          getProfileFact(COMMUNICATION_STYLE_KEY),
-          getProfileFact(STOP_WORD_KEY),
-          getProfileFact(BREATH_EFFECT_KEY),
-        ]);
+        const [availableStyles, style, breath, delayOn, delaySecondsFact, fxMode, volume, confirmPhrase] =
+          await Promise.all([
+            listCommunicationStyles(),
+            getProfileFact(COMMUNICATION_STYLE_KEY),
+            getProfileFact(BREATH_EFFECT_KEY),
+            getProfileFact(DELAY_EFFECT_ENABLED_KEY),
+            getProfileFact(DELAY_SECONDS_KEY),
+            getProfileFact(VOICE_FX_MODE_KEY),
+            getProfileFact(ASSISTANT_VOLUME_KEY),
+            getProfileFact(CONFIRMATION_PHRASE_ENABLED_KEY),
+          ]);
         if (cancelled) {
           return;
         }
         setStyles(availableStyles);
         setSelectedStyles(parseStyleKeys(style));
-        setStopWord(word ?? "");
-        setStopWordInput(word ?? "");
         setBreathEffect(breath === "1");
+        setDelayEffect(delayOn === "1");
+        setDelaySeconds(delaySecondsFact ?? DEFAULT_DELAY_SECONDS);
+        setVoiceFxMode(fxMode === "tunnel" || fxMode === "robotic" ? fxMode : "none");
+        setConfirmationPhrase(confirmPhrase === "1");
+        const parsedVolume = volume ? Number(volume) : DEFAULT_ASSISTANT_VOLUME;
+        setAssistantVolume(Number.isFinite(parsedVolume) ? parsedVolume : DEFAULT_ASSISTANT_VOLUME);
         setLoaded(true);
       } catch (error) {
         if (cancelled) {
@@ -122,20 +153,6 @@ export function PersonalityPanel(): JSX.Element {
     }
   }
 
-  async function handleSaveStopWord(): Promise<void> {
-    const trimmed = stopWordInput.trim();
-    if (!trimmed) {
-      return;
-    }
-    try {
-      await setProfileFact(STOP_WORD_KEY, trimmed);
-      setStopWord(trimmed);
-    } catch (error) {
-      console.error("Failed to save the stop word:", error);
-      setError("Не удалось сохранить стоп-слово.");
-    }
-  }
-
   async function handleToggleBreathEffect(): Promise<void> {
     const next = !breathEffect;
     setSavingBreathEffect(true);
@@ -149,6 +166,80 @@ export function PersonalityPanel(): JSX.Element {
     } finally {
       setSavingBreathEffect(false);
     }
+  }
+
+  async function handleToggleDelayEffect(): Promise<void> {
+    const next = !delayEffect;
+    setSavingDelayEffect(true);
+    setError("");
+    try {
+      await setProfileFact(DELAY_EFFECT_ENABLED_KEY, next ? "1" : "0");
+      setDelayEffect(next);
+    } catch (error) {
+      console.error("Failed to save the delay-effect setting:", error);
+      setError("Не удалось сохранить настройку задержки.");
+    } finally {
+      setSavingDelayEffect(false);
+    }
+  }
+
+  async function handleSaveDelaySeconds(): Promise<void> {
+    const clamped = Math.min(3.0, Math.max(0.3, Number(delaySeconds) || 0.3));
+    const value = clamped.toFixed(1);
+    setDelaySeconds(value);
+    try {
+      await setProfileFact(DELAY_SECONDS_KEY, value);
+    } catch (error) {
+      console.error("Failed to save the delay duration:", error);
+      setError("Не удалось сохранить длительность задержки.");
+    }
+  }
+
+  async function handleToggleConfirmationPhrase(): Promise<void> {
+    const next = !confirmationPhrase;
+    setSavingConfirmationPhrase(true);
+    setError("");
+    try {
+      await setProfileFact(CONFIRMATION_PHRASE_ENABLED_KEY, next ? "1" : "0");
+      setConfirmationPhrase(next);
+    } catch (error) {
+      console.error("Failed to save the confirmation-phrase setting:", error);
+      setError("Не удалось сохранить настройку подтверждения.");
+    } finally {
+      setSavingConfirmationPhrase(false);
+    }
+  }
+
+  async function handleVoiceFxModeChange(mode: VoiceFxMode): Promise<void> {
+    setSavingVoiceFxMode(true);
+    setError("");
+    try {
+      await setProfileFact(VOICE_FX_MODE_KEY, mode);
+      setVoiceFxMode(mode);
+    } catch (error) {
+      console.error("Failed to save the voice-fx setting:", error);
+      setError("Не удалось сохранить голосовой эффект.");
+    } finally {
+      setSavingVoiceFxMode(false);
+    }
+  }
+
+  const volumeSaveTimeout = useRef<number | null>(null);
+
+  function handleAssistantVolumeChange(value: number): void {
+    setAssistantVolume(value);
+    if (volumeSaveTimeout.current !== null) {
+      window.clearTimeout(volumeSaveTimeout.current);
+    }
+    volumeSaveTimeout.current = window.setTimeout(() => {
+      setSavingAssistantVolume(true);
+      setProfileFact(ASSISTANT_VOLUME_KEY, String(value))
+        .catch((error) => {
+          console.error("Failed to save the assistant volume:", error);
+          setError("Не удалось сохранить громкость.");
+        })
+        .finally(() => setSavingAssistantVolume(false));
+    }, 300);
   }
 
   return (
@@ -182,24 +273,6 @@ export function PersonalityPanel(): JSX.Element {
       </div>
 
       <div className="personality-panel__field">
-        <span className="personality-panel__label">Стоп-слово</span>
-        <div className="row">
-          <input
-            type="text"
-            value={stopWordInput}
-            onChange={(event) => setStopWordInput(event.target.value)}
-            placeholder="Слово для паузы и возобновления"
-          />
-          <button
-            onClick={() => void handleSaveStopWord()}
-            disabled={!stopWordInput.trim() || stopWordInput.trim() === stopWord}
-          >
-            Сохранить
-          </button>
-        </div>
-      </div>
-
-      <div className="personality-panel__field">
         <span className="personality-panel__label">Звуковые эффекты</span>
         <label className="personality-panel__checkbox">
           <input
@@ -210,6 +283,89 @@ export function PersonalityPanel(): JSX.Element {
           />
           Звук вдоха перед ответом
         </label>
+
+        <label className="personality-panel__checkbox">
+          <input
+            type="checkbox"
+            checked={delayEffect}
+            disabled={savingDelayEffect}
+            onChange={() => void handleToggleDelayEffect()}
+          />
+          Затяжка в ответе
+        </label>
+
+        <label className="personality-panel__checkbox">
+          <input
+            type="checkbox"
+            checked={confirmationPhrase}
+            disabled={savingConfirmationPhrase}
+            onChange={() => void handleToggleConfirmationPhrase()}
+          />
+          Подтверждение перед выполнением (Да, сэр / Да, мэм)
+        </label>
+        <p className="status-detail">Фраза зависит от пола, указанного в профиле</p>
+        {delayEffect && (
+          <div className="row personality-panel__delay-row">
+            <input
+              type="number"
+              min={0.3}
+              max={3.0}
+              step={0.1}
+              value={delaySeconds}
+              onChange={(event) => setDelaySeconds(event.target.value)}
+              onBlur={() => void handleSaveDelaySeconds()}
+            />
+            <span className="personality-panel__unit">сек</span>
+          </div>
+        )}
+
+        <div className="personality-panel__radio-group">
+          <label className="personality-panel__radio">
+            <input
+              type="radio"
+              name="voice-fx-mode"
+              checked={voiceFxMode === "none"}
+              disabled={savingVoiceFxMode}
+              onChange={() => void handleVoiceFxModeChange("none")}
+            />
+            Без эффекта
+          </label>
+          <label className="personality-panel__radio">
+            <input
+              type="radio"
+              name="voice-fx-mode"
+              checked={voiceFxMode === "tunnel"}
+              disabled={savingVoiceFxMode}
+              onChange={() => void handleVoiceFxModeChange("tunnel")}
+            />
+            Голос как в тоннеле
+          </label>
+          <label className="personality-panel__radio">
+            <input
+              type="radio"
+              name="voice-fx-mode"
+              checked={voiceFxMode === "robotic"}
+              disabled={savingVoiceFxMode}
+              onChange={() => void handleVoiceFxModeChange("robotic")}
+            />
+            Роботизированный голос
+          </label>
+        </div>
+      </div>
+
+      <div className="personality-panel__field">
+        <span className="personality-panel__label">Громкость голоса NABVE</span>
+        <div className="row">
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={assistantVolume}
+            disabled={savingAssistantVolume}
+            onChange={(event) => handleAssistantVolumeChange(Number(event.target.value))}
+          />
+          <span className="personality-panel__unit">{assistantVolume}%</span>
+        </div>
       </div>
     </div>
   );

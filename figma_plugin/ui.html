@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Jarvis Voice Control</title>
+</head>
+<body>
+<!--
+  Figma's plugin "main" sandbox (code.ts, compiled to code.js) runs in a
+  restricted QuickJS-based environment that has the figma.* Plugin API but
+  no WebSocket (and no fetch, before networkAccess existed). A real
+  WebSocket object only exists in this UI iframe, which is a normal browser
+  context — so this page's only job is to own the socket and relay raw JSON
+  messages between it and the sandbox via postMessage. All command
+  interpretation and figma.* calls happen in code.ts, not here.
+
+  Kept invisible (figma.showUI(__html__, { visible: false }) in code.ts) —
+  this is a background relay, not something the user needs to see or click.
+-->
+<script>
+  // Must match core/config.py's Settings.port / api_token on the machine
+  // running Jarvis (see figma_plugin/README.md for where to find the
+  // token — data/api_token.txt next to the running backend, or the
+  // ASSISTANT_API_TOKEN env var if that's set). Loopback only, same as
+  // every other client of this backend.
+  const WS_HOST = "127.0.0.1";
+  const WS_PORT = 8756;
+  const WS_TOKEN = "REPLACE_WITH_YOUR_ASSISTANT_API_TOKEN";
+
+  const RECONNECT_DELAY_MS = 3000;
+  let socket = null;
+
+  function connect() {
+    const url = `ws://${WS_HOST}:${WS_PORT}/ws/figma_plugin?token=${encodeURIComponent(WS_TOKEN)}`;
+    socket = new WebSocket(url);
+
+    socket.onopen = () => {
+      parent.postMessage({ pluginMessage: { type: "ws-status", connected: true } }, "*");
+    };
+
+    socket.onclose = () => {
+      parent.postMessage({ pluginMessage: { type: "ws-status", connected: false } }, "*");
+      setTimeout(connect, RECONNECT_DELAY_MS);
+    };
+
+    socket.onerror = () => {
+      // onclose always fires right after onerror for a WebSocket, which
+      // already schedules the reconnect above — nothing extra to do here.
+    };
+
+    socket.onmessage = (event) => {
+      let payload;
+      try {
+        payload = JSON.parse(event.data);
+      } catch (malformedMessage) {
+        console.error("Dropping malformed WS message from Jarvis:", malformedMessage, event.data);
+        return;
+      }
+      parent.postMessage({ pluginMessage: { type: "ws-command", payload } }, "*");
+    };
+  }
+
+  // Messages coming FROM code.ts (command results to forward to Jarvis).
+  window.onmessage = (event) => {
+    const message = event.data.pluginMessage;
+    if (!message || message.type !== "ws-send") return;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(message.payload));
+    } else {
+      console.error("Dropping result: WS socket is not open (readyState=" + (socket && socket.readyState) + ")");
+    }
+  };
+
+  connect();
+</script>
+</body>
+</html>

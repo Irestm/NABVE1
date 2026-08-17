@@ -106,6 +106,12 @@ class Settings:
     # simply not sent, nothing else about this app changes.
     telegram_notify_bot_token: str | None = os.environ.get("TELEGRAM_NOTIFY_BOT_TOKEN") or None
     telegram_notify_chat_id: str | None = os.environ.get("TELEGRAM_NOTIFY_CHAT_ID") or None
+    # Where the Jarvis Voice Control Blender addon's local HTTP server (see
+    # blender_addon/server.py) listens — always loopback by default since
+    # Blender runs on the same machine as this backend. See
+    # modules/blender_control/ws_client.py.
+    blender_host: str = os.environ.get("ASSISTANT_BLENDER_HOST", "127.0.0.1")
+    blender_port: int = int(os.environ.get("ASSISTANT_BLENDER_PORT", "8766"))
 
 
 settings = Settings()
@@ -153,11 +159,18 @@ def detect_lan_ip() -> str:
     local interface would route to that address."""
     import socket
 
+    # Deferred import, like `socket` above: core/logger.py itself imports
+    # `settings` from this module, so a module-level import here would be
+    # circular — safe as a local import since by call time both modules are
+    # already fully loaded.
+    from core.logger import get_logger
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.connect(("8.8.8.8", 80))
         return sock.getsockname()[0]
-    except OSError:
+    except OSError as no_route_available:
+        get_logger(__name__).debug("Could not detect LAN IP, falling back to loopback: %s", no_route_available, exc_info=True)
         return "127.0.0.1"
     finally:
         sock.close()

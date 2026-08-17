@@ -120,7 +120,8 @@ def commit_enabled_plugin(path: Path) -> None:
         return
     try:
         rel = path.relative_to(BASE_DIR)
-    except ValueError:
+    except ValueError as path_outside_base_dir:
+        logger.debug("Not committing %s: outside BASE_DIR: %s", path, path_outside_base_dir, exc_info=True)
         return
     _run_git("add", str(rel), check=False)
     _run_git("commit", "-m", f"plugin_agent: enable plugin {rel.name}", check=False)

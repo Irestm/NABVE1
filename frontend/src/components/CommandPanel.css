@@ -1,0 +1,86 @@
+.command-panel {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+}
+
+.command-panel__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.command-panel__button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 14px 8px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  text-align: center;
+  font-size: 12px;
+  transition: border-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.command-panel__button:hover:not(:disabled) {
+  border-color: var(--accent-blue);
+  color: var(--text);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent-blue) 35%, transparent);
+}
+
+.command-panel__button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.command-panel__result {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--accent-green);
+}
+
+.command-panel__form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.command-panel__form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.command-panel__form-field input,
+.command-panel__form-field select {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.command-panel__slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.command-panel__slider-row input[type="range"] {
+  flex: 1;
+}
+
+.command-panel__slider-value {
+  min-width: 2.5em;
+  text-align: right;
+  color: var(--text);
+}

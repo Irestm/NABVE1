@@ -16,6 +16,9 @@ from core.logger import get_logger
 from core.voice import ai_router, voice_preference
 from modules.app_catalog import resolver as app_resolver
 from modules.calendar import extraction as calendar_extraction
+from modules.custom_commands import dispatcher as custom_commands_registry
+from modules.custom_commands.domain import ActionType
+from modules.hardware_adaptive import command_classifier
 from modules.media import query_correction as media_query_correction
 from modules.media import youtube as media_youtube
 from modules.task_orchestrator import announce as task_orchestrator_announce
@@ -90,7 +93,7 @@ def synthesize_speech(text: str, language: str, speaker: str | None = None) -> s
     try:
         samples, sample_rate = _tts.synthesize(text, language, speaker=speaker)
     except RuntimeError as exc:
-        logger.error("TTS synthesis failed: %s", exc)
+        logger.exception("TTS synthesis failed: %s", exc)
         return None
     if samples.size == 0:
         return None
@@ -103,6 +106,18 @@ def synthesize_speech(text: str, language: str, speaker: str | None = None) -> s
         wav_file.setframerate(sample_rate)
         wav_file.writeframes(pcm16.tobytes())
     return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+async def transcribe_uploaded_audio(audio_bytes: bytes, filename: str, language: str | None = None) -> str:
+    """Decode+transcribe half of process_voice_query, pulled out standalone
+    for callers that don't need the full interpret/dispatch pipeline —
+    currently modules.quizlet_clone's voice-mode game routes (core/main.py),
+    which compare the transcription against a flashcard's definition
+    instead of resolving it as a command."""
+    suffix = Path(filename).suffix
+    audio = await asyncio.to_thread(_decode_uploaded_audio, audio_bytes, suffix)
+    transcription = await asyncio.to_thread(_stt.transcribe, audio, language)
+    return transcription.text.strip()
 
 
 def list_voices() -> tuple[list[dict[str, str]], str]:
@@ -127,11 +142,62 @@ async def _resolve_and_dispatch(
     process_text_query (text typed directly into the desktop UI) — kept in
     one place so the two entry points can't drift on how a command actually
     gets resolved. Returns (reply_text, status, token)."""
-    command = interpret(text, input_language) or match_plugin_command(text)
+    # Custom commands (modules/custom_commands) are checked before even the
+    # rule-based interpret() here too, same priority core/voice/pipeline.py's
+    # live mic loop gives them (see that method's own comment) — previously
+    # this endpoint never checked them at all, so a custom trigger phrase
+    # only ever worked from the desktop mic, never from the phone/LAN thin
+    # client or the typed-text box that both call into this function.
+    text_to_interpret = text
     reply_text: str | None = None
+    command: Command | None = None
 
-    if command is None:
-        command, reply_text = await ai_router.resolve_free_text(text, dispatcher.list_commands())
+    custom_match = custom_commands_registry.match(text)
+    if custom_match is not None:
+        needs_confirmation = (
+            custom_match.action_type in (ActionType.LAUNCH_APP, ActionType.TEXT_INSTRUCTION)
+            and custom_commands_registry.requires_confirmation()
+        )
+        if needs_confirmation:
+            # Confirming out loud needs the live mic loop's own follow-up
+            # turn (core/voice/pipeline.py's _confirm_custom_command) — this
+            # stateless request/response endpoint has nowhere to hold that,
+            # same reasoning as start_board_game/messaging_reply below.
+            # Refusing here keeps the confirmation gate meaningful instead
+            # of silently bypassing it from the phone/LAN/typed-text paths —
+            # checked for TEXT_INSTRUCTION here too, before the
+            # substitute-and-continue branch below ever gets a chance to
+            # skip the gate entirely.
+            reply_text = (
+                f"Команда «{custom_match.trigger_phrase}» требует подтверждения — "
+                "выполните её через голосового ассистента на компьютере."
+            )
+        elif custom_match.action_type is ActionType.TEXT_INSTRUCTION:
+            # Same substitute-and-continue-once handling as core/voice/pipeline.py:
+            # a TEXT_INSTRUCTION command is a personal shortcut for a longer
+            # request, never dispatched directly (see
+            # modules/custom_commands/dispatcher.py's register_one docstring).
+            text_to_interpret = custom_match.action_payload.get("instruction", "")
+        else:
+            command = Command(name=custom_commands_registry.dispatcher_command_name(custom_match.id), params={})
+
+    if command is None and reply_text is None:
+        command = interpret(text_to_interpret, input_language) or match_plugin_command(text_to_interpret)
+
+    if command is None and reply_text is None:
+        # Same fast, fully local system-command filter as core/voice/pipeline.py's
+        # mic loop — see modules/hardware_adaptive/command_classifier.py.
+        # Offloaded to a thread (unlike interpret()/match_plugin_command above,
+        # which are cheap regex): the embedding encode is ~20-30ms of real CPU
+        # work, and this function runs on the shared FastAPI event loop, not
+        # pipeline.py's own dedicated voice-loop thread — blocking it here
+        # would stall every other in-flight request for that long. Same
+        # to_thread treatment modules.hardware_adaptive.local_ai already gives
+        # its own CPU-bound local-model calls.
+        command = await asyncio.to_thread(command_classifier.match_system_command, text_to_interpret)
+
+    if command is None and reply_text is None:
+        command, reply_text = await ai_router.resolve_free_text(text_to_interpret, dispatcher.list_commands())
 
     if command is not None and command.name == "schedule_event":
         # No multi-turn "what and when?" here either (see open_app/open_media

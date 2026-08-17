@@ -60,7 +60,8 @@ def find_forbidden_import(source: str) -> str | None:
     load time."""
     try:
         tree = ast.parse(source)
-    except SyntaxError:
+    except SyntaxError as unparseable_source:
+        logger.debug("Could not parse plugin source for import scan: %s", unparseable_source, exc_info=True)
         return None
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

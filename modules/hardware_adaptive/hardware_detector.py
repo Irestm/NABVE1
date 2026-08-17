@@ -35,8 +35,8 @@ def _detect_ram_gb() -> int:
                 if line.startswith("MemTotal:"):
                     kib = int(line.split()[1])
                     return round(kib / (1024 * 1024))
-    except OSError:
-        pass
+    except OSError as no_proc_meminfo:
+        logger.debug("Could not read /proc/meminfo: %s", no_proc_meminfo, exc_info=True)
 
     if platform.system() == "Windows":
         try:
@@ -94,8 +94,8 @@ def _detect_cpu_model() -> str:
                 for line in cpuinfo:
                     if line.lower().startswith("model name"):
                         return line.split(":", 1)[1].strip()
-        except OSError:
-            pass
+        except OSError as no_proc_cpuinfo:
+            logger.debug("Could not read /proc/cpuinfo: %s", no_proc_cpuinfo, exc_info=True)
     return platform.processor() or platform.uname().processor or "unknown"
 
 

@@ -36,3 +36,11 @@ def type_text(text: str) -> None:
 def press_key(key: str) -> None:
     pyautogui = _require_pyautogui()
     pyautogui.press(key)
+
+
+def hotkey(*keys: str) -> None:
+    """Presses `keys` together (e.g. hotkey("ctrl", "w")) — used where there
+    is no OS-level API for the action, only the keyboard shortcut a human
+    would press (see core/os_adapter/{windows,linux}.py's close_tab)."""
+    pyautogui = _require_pyautogui()
+    pyautogui.hotkey(*keys)

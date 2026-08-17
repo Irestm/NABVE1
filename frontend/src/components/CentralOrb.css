@@ -15,6 +15,16 @@
   --glow-strength: 0.45;
 }
 
+/* Waiting for the activation phrase ("привет"/"эй джарвис"/custom) — see
+   AssistantState.BACKGROUND_LISTENING. Quieter than idle on purpose: this
+   is the assistant's normal always-on resting state (running 24/7 in the
+   background), so it should read as "alive but not paying attention to
+   you" rather than draw the eye the way an active state does. */
+.central-orb--background_listening {
+  --glow: var(--glow-idle);
+  --glow-strength: 0.3;
+}
+
 .central-orb--listening {
   --glow: var(--glow-listening);
   --glow-strength: 0.8;
@@ -151,6 +161,14 @@
    read as "dormant, waiting" without feeling alarming or urgent. */
 .central-orb--paused .central-orb__core {
   animation: orb-pulse 3.2s ease-in-out infinite;
+}
+
+/* Slower and shallower than paused's own pulse — paused is a deliberate,
+   attention-worthy "waiting on you" state; background listening is just
+   the assistant quietly idling until its phrase is said, so it shouldn't
+   compete for attention the way paused does. */
+.central-orb--background_listening .central-orb__core {
+  animation: orb-pulse 5s ease-in-out infinite;
 }
 
 @keyframes orb-spin {

@@ -2,26 +2,35 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from core.bootstrap import compose
-from core.config import BASE_DIR, detect_lan_ip, settings
+from core.command_ui_metadata import COMMAND_UI_METADATA
+from core.config import BASE_DIR, DATA_DIR, detect_lan_ip, settings
 from core.dispatcher import UnknownCommandError
 from core.logger import get_logger
 from core.message_bus import message_bus
 from core.models import (
     AIBridgeStatus,
+    CommandButtonDescriptor,
     CommandDescriptor,
+    CommandParamField,
     CommandRequest,
     CommandResponse,
     ConfirmRequest,
+    CustomCommandListResponse,
+    CustomCommandResponse,
+    GameAnswerRequest,
+    GameStartRequest,
+    GameStateResponse,
     ImageRequest,
     LanUrlResponse,
+    LibrarySetResponse,
     MeetingRecordingChunkResponse,
     MeetingRecordingCreateRequest,
     MeetingRecordingCreateResponse,
@@ -34,20 +43,36 @@ from core.models import (
     MessagingIncomingResponse,
     MessagingOutboundAckRequest,
     MessagingOutboundItem,
+    QuizletAuthStatus,
+    QuizletLibraryResponse,
+    SaveStudySetRequest,
     SelectVoiceRequest,
     SpeakRequest,
     SpeakResponse,
     StatusResponse,
+    StudySetListResponse,
+    StudySetResponse,
+    TermResponse,
     TextQueryRequest,
     UIVisibilityRequest,
+    VoiceGameAnswerResponse,
+    VoiceGameStartResponse,
     VoiceLoopStatus,
     VoiceOptionsResponse,
     VoiceQueryResponse,
+    WordPressJobStatusResponse,
+    WordPressUploadResponse,
 )
 from core.state import state_manager
 from core.voice import web_pipeline
-from modules.ai_bridge import virtual_display
+from modules.ai_bridge import provider_auth, virtual_display
 from modules.ai_bridge.provider_manager import get_provider_manager
+from modules.custom_commands import dispatcher as custom_commands_registry
+from modules.custom_commands import service_layer as custom_commands_service_layer
+from modules.custom_commands.domain import ActionType
+from modules.custom_commands.uow import CustomCommandsUnitOfWork
+from modules.figma_control.ws_server import WEBSOCKET_PATH as FIGMA_WEBSOCKET_PATH
+from modules.figma_control.ws_server import figma_ws_server
 from modules.meeting_recorder import service_layer as meeting_service_layer
 from modules.meeting_recorder.domain import Recording as MeetingRecording
 from modules.meeting_recorder.domain import RecordingStatus as MeetingRecordingStatus
@@ -56,6 +81,12 @@ from modules.meeting_recorder.domain import TranscriptStatus as MeetingTranscrip
 from modules.meeting_recorder.uow import MeetingRecordingUnitOfWork
 from modules.messaging import service_layer as messaging_service_layer
 from modules.messaging.uow import MessagingUnitOfWork
+from modules.quizlet_clone import game_modes as quizlet_game_modes
+from modules.quizlet_clone import quizlet_auth, quizlet_scraper
+from modules.quizlet_clone import service_layer as quizlet_service_layer
+from modules.quizlet_clone.models import GameMode as QuizletGameMode
+from modules.quizlet_clone.storage import QuizletUnitOfWork as QuizletCloneUnitOfWork
+from modules.wordpress_bridge import service_layer as wordpress_service_layer
 
 logger = get_logger(__name__)
 
@@ -101,6 +132,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     gmail_poller.stop()
     await get_provider_manager().close_all()
     virtual_display.stop()
+    await quizlet_auth.get_session().close()
     logger.info("Assistant core service shutting down")
 
 
@@ -147,6 +179,36 @@ async def list_commands() -> list[CommandDescriptor]:
     return dispatcher.list_commands()
 
 
+@app.get("/api/commands/ui", response_model=list[CommandButtonDescriptor])
+async def list_command_buttons() -> list[CommandButtonDescriptor]:
+    """Curated subset of list_commands() with label/icon/params_schema for
+    the frontend's button-panel alternative to voice input (see
+    core/command_ui_metadata.py) — commands with no UI metadata (open_app,
+    click, type_text, ...) are omitted rather than shown with guessed
+    params."""
+    buttons: list[CommandButtonDescriptor] = []
+    for descriptor in dispatcher.list_commands():
+        meta = COMMAND_UI_METADATA.get(descriptor.name)
+        if meta is None:
+            continue
+        params_schema = (
+            [CommandParamField(**field.__dict__) for field in meta.params_schema]
+            if meta.params_schema
+            else None
+        )
+        buttons.append(
+            CommandButtonDescriptor(
+                name=descriptor.name,
+                label=meta.label,
+                icon=meta.icon,
+                dangerous=descriptor.dangerous,
+                description=descriptor.description,
+                params_schema=params_schema,
+            )
+        )
+    return buttons
+
+
 @app.post("/api/command", response_model=CommandResponse)
 async def run_command(request: CommandRequest) -> CommandResponse:
     try:
@@ -160,9 +222,19 @@ async def confirm_command(request: ConfirmRequest) -> CommandResponse:
     return await dispatcher.confirm(request.token, request.approved)
 
 
+@app.websocket(FIGMA_WEBSOCKET_PATH)
+async def figma_plugin_socket(websocket: WebSocket) -> None:
+    # No require_api_token middleware coverage here — Starlette's
+    # @app.middleware("http") only wraps HTTP requests, not WebSocket
+    # handshakes — so figma_ws_server.handle_connection does its own token
+    # check (see that method's docstring) before accepting the connection.
+    await figma_ws_server.handle_connection(websocket)
+
+
 @app.get("/api/ai_bridge/status", response_model=AIBridgeStatus)
 async def get_ai_bridge_status() -> AIBridgeStatus:
-    return AIBridgeStatus(**get_provider_manager().status())
+    logged_in = await provider_auth.get_logged_in_map()
+    return AIBridgeStatus(**get_provider_manager().status(), logged_in=logged_in)
 
 
 @app.get("/api/ui/visibility_request", response_model=UIVisibilityRequest)
@@ -218,6 +290,48 @@ async def voice_query(
         raise HTTPException(
             status_code=500, detail="Internal error while processing the voice query."
         ) from None
+    return result
+
+
+_WORDPRESS_UPLOAD_DIR = DATA_DIR / "wordpress_uploads"
+
+
+@app.post("/api/wordpress/upload", response_model=WordPressUploadResponse)
+async def wordpress_upload(
+    site_url: str = Form(...),
+    rewrite_with_ai: bool = Form(False),
+    files: list[UploadFile] = File(...),
+) -> WordPressUploadResponse:
+    """Called directly from JavaScript running in wp-admin (see
+    wordpress-plugin/) — the browser making the request is on the user's own
+    LAN, same as the thin voice client (see LanQrPanel.tsx/detect_lan_ip),
+    so this doesn't need the WordPress server itself to reach out to the
+    backend. Kicks off content_processor -> wp_draft_publisher as a
+    background task and returns a job_id immediately; the plugin polls
+    GET /api/wordpress/upload/{job_id} for the result."""
+    job = wordpress_service_layer.create_job(site_url)
+    job_dir = _WORDPRESS_UPLOAD_DIR / job.job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_paths: list[str] = []
+    for upload in files:
+        destination = job_dir / (upload.filename or "upload")
+        data = await upload.read()
+        destination.write_bytes(data)
+        saved_paths.append(str(destination))
+
+    asyncio.create_task(wordpress_service_layer.run_upload_job(job.job_id, saved_paths, rewrite_with_ai=rewrite_with_ai))
+    return WordPressUploadResponse(job_id=job.job_id)
+
+
+@app.get("/api/wordpress/upload/{job_id}", response_model=WordPressJobStatusResponse)
+async def wordpress_upload_status(job_id: str) -> WordPressJobStatusResponse:
+    job = wordpress_service_layer.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}")
+    return WordPressJobStatusResponse(
+        job_id=job.job_id, status=job.status.value, message=job.message, edit_url=job.edit_url
+    )
     return VoiceQueryResponse(
         transcribed_text=result.transcribed_text,
         reply_text=result.reply_text,
@@ -225,6 +339,323 @@ async def voice_query(
         audio_wav_base64=result.audio_wav_base64,
         status=result.status,
         token=result.token,
+    )
+
+
+def _custom_command_to_response(command: Any) -> CustomCommandResponse:
+    return CustomCommandResponse(
+        id=command.id,
+        trigger_phrase=command.trigger_phrase,
+        action_type=command.action_type.value,
+        action_payload=command.action_payload,
+        created_at=command.created_at.isoformat() if command.created_at else "",
+    )
+
+
+@app.get("/api/custom_commands", response_model=CustomCommandListResponse)
+async def list_custom_commands() -> CustomCommandListResponse:
+    commands = custom_commands_service_layer.get_all_commands(CustomCommandsUnitOfWork())
+    return CustomCommandListResponse(commands=[_custom_command_to_response(c) for c in commands])
+
+
+@app.post("/api/custom_commands", response_model=CustomCommandResponse)
+async def create_or_update_custom_command(
+    trigger_phrase: str = Form(...),
+    action_type: str = Form(...),
+    command_id: str | None = Form(None),
+    url: str | None = Form(None),
+    executable_path: str | None = Form(None),
+    instruction: str | None = Form(None),
+    media_type: str | None = Form(None),
+    file: UploadFile | None = File(None),
+) -> CustomCommandResponse:
+    """Create (command_id omitted) or update (command_id set) a custom
+    command — see modules/custom_commands/. A single multipart route
+    handles every action_type (rather than one JSON route + one upload
+    route) since the frontend's create/edit form is one component either
+    way and only two of the five action types actually attach a file — see
+    modules/custom_commands/service_layer.py's create_command/
+    update_command for where the file is actually copied under
+    DATA_DIR/custom_commands/attachments/{command_id}/ (never the
+    version-controlled modules/custom_commands/ tree)."""
+    try:
+        parsed_type = ActionType(action_type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unknown action_type: {action_type}") from None
+
+    payload: dict[str, Any] = {}
+    if parsed_type is ActionType.OPEN_LINK:
+        if not url:
+            raise HTTPException(status_code=400, detail="url is required for open_link")
+        payload["url"] = url
+    elif parsed_type is ActionType.LAUNCH_APP:
+        if not executable_path:
+            raise HTTPException(status_code=400, detail="executable_path is required for launch_app")
+        payload["executable_path"] = executable_path
+    elif parsed_type is ActionType.TEXT_INSTRUCTION:
+        if not instruction:
+            raise HTTPException(status_code=400, detail="instruction is required for text_instruction")
+        payload["instruction"] = instruction
+    elif parsed_type in (ActionType.PLAY_AUDIO, ActionType.OPEN_MEDIA):
+        if parsed_type is ActionType.OPEN_MEDIA:
+            if media_type not in ("photo", "video"):
+                raise HTTPException(status_code=400, detail="media_type must be 'photo' or 'video'")
+            payload["media_type"] = media_type
+        if file is None:
+            # Editing an existing command's trigger phrase/type without
+            # re-attaching a file — keep the file it already has instead of
+            # silently dropping it.
+            existing = command_id and custom_commands_service_layer.get_command(
+                CustomCommandsUnitOfWork(), command_id
+            )
+            if not existing or "file_path" not in existing.action_payload:
+                raise HTTPException(status_code=400, detail="file is required")
+            payload["file_path"] = existing.action_payload["file_path"]
+
+    attachment: tuple[str, bytes] | None = None
+    if file is not None:
+        attachment = (file.filename or "attachment", await file.read())
+
+    uow = CustomCommandsUnitOfWork()
+    if command_id:
+        command = custom_commands_service_layer.update_command(
+            uow, command_id, trigger_phrase, parsed_type, payload, attachment=attachment
+        )
+        if command is None:
+            raise HTTPException(status_code=404, detail=f"Unknown custom command: {command_id}")
+    else:
+        command = custom_commands_service_layer.create_command(
+            uow, trigger_phrase, parsed_type, payload, attachment=attachment
+        )
+
+    custom_commands_registry.refresh()
+    return _custom_command_to_response(command)
+
+
+@app.delete("/api/custom_commands/{command_id}")
+async def delete_custom_command(command_id: str) -> dict[str, bool]:
+    removed = custom_commands_service_layer.delete_command(CustomCommandsUnitOfWork(), command_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Unknown custom command: {command_id}")
+    custom_commands_registry.refresh()
+    return {"removed": True}
+
+
+def _quizlet_term_to_response(term: Any) -> TermResponse:
+    return TermResponse(
+        id=term.id,
+        term=term.term,
+        definition=term.definition,
+        times_seen=term.times_seen,
+        times_correct=term.times_correct,
+        times_wrong=term.times_wrong,
+        learned=term.learned,
+    )
+
+
+def _quizlet_set_to_response(study_set: Any) -> StudySetResponse:
+    return StudySetResponse(
+        id=study_set.id,
+        title=study_set.title,
+        source=study_set.source.value,
+        quizlet_set_id=study_set.quizlet_set_id,
+        created_at=study_set.created_at.isoformat() if study_set.created_at else "",
+        progress_percent=study_set.progress_percent,
+        attempts_count=study_set.attempts_count,
+        terms=[_quizlet_term_to_response(t) for t in study_set.terms],
+    )
+
+
+@app.get("/api/quizlet/status", response_model=QuizletAuthStatus)
+async def get_quizlet_status() -> QuizletAuthStatus:
+    return QuizletAuthStatus(logged_in=await quizlet_auth.is_logged_in())
+
+
+@app.get("/api/quizlet/sets", response_model=StudySetListResponse)
+async def list_quizlet_sets() -> StudySetListResponse:
+    sets = quizlet_service_layer.list_sets(QuizletCloneUnitOfWork())
+    return StudySetListResponse(sets=[_quizlet_set_to_response(s) for s in sets])
+
+
+@app.post("/api/quizlet/sets", response_model=StudySetResponse)
+async def save_quizlet_set(request: SaveStudySetRequest) -> StudySetResponse:
+    """Create (set_id omitted) or fully replace (set_id set) a manually
+    entered study set — JSON counterpart of POST /api/custom_commands's
+    create-or-update-by-optional-id shape, without that route's multipart/
+    file handling (no attachments here)."""
+    pairs = [(t.term.strip(), t.definition.strip()) for t in request.terms if t.term.strip() and t.definition.strip()]
+    if not pairs:
+        raise HTTPException(status_code=400, detail="At least one non-empty term/definition pair is required")
+
+    uow = QuizletCloneUnitOfWork()
+    if request.set_id:
+        study_set = quizlet_service_layer.update_set(uow, request.set_id, request.title, pairs)
+        if study_set is None:
+            raise HTTPException(status_code=404, detail=f"Unknown study set: {request.set_id}")
+    else:
+        study_set = quizlet_service_layer.create_manual_set(uow, request.title, pairs)
+    return _quizlet_set_to_response(study_set)
+
+
+@app.delete("/api/quizlet/sets/{set_id}")
+async def delete_quizlet_set(set_id: str) -> dict[str, bool]:
+    removed = quizlet_service_layer.delete_set(QuizletCloneUnitOfWork(), set_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Unknown study set: {set_id}")
+    return {"removed": True}
+
+
+@app.get("/api/quizlet/library", response_model=QuizletLibraryResponse)
+async def list_quizlet_library() -> QuizletLibraryResponse:
+    session = quizlet_auth.get_session()
+    if not await session.is_logged_in():
+        raise HTTPException(status_code=409, detail="Сначала войдите в Quizlet.")
+    try:
+        library = await quizlet_scraper.list_library_sets(session)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    local_sets = quizlet_service_layer.list_sets(QuizletCloneUnitOfWork())
+    local_by_quizlet_id = {s.quizlet_set_id: s for s in local_sets if s.quizlet_set_id}
+    return QuizletLibraryResponse(
+        sets=[
+            LibrarySetResponse(
+                quizlet_set_id=item.quizlet_set_id,
+                title=item.title,
+                term_count=item.term_count,
+                already_imported=item.quizlet_set_id in local_by_quizlet_id,
+                local_set_id=(
+                    local_by_quizlet_id[item.quizlet_set_id].id if item.quizlet_set_id in local_by_quizlet_id else None
+                ),
+            )
+            for item in library
+        ]
+    )
+
+
+def _parse_quizlet_game_mode(mode: str) -> QuizletGameMode:
+    try:
+        return QuizletGameMode(mode)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unknown game mode: {mode}") from None
+
+
+@app.post("/api/quizlet/game/start", response_model=GameStateResponse)
+async def start_quizlet_game(request: GameStartRequest) -> GameStateResponse:
+    mode = _parse_quizlet_game_mode(request.mode)
+    if mode is QuizletGameMode.VOICE:
+        raise HTTPException(status_code=400, detail="Голосовой режим запускается через /api/quizlet/voice/start")
+
+    distractor_pool: list[str] | None = None
+    if mode is QuizletGameMode.TEST:
+        # Fallback distractor pool for sets with fewer than 4 terms of their
+        # own — pulled from every other local set (ТЗ п.3's "генерация
+        # неверных вариантов ... случайный выбор определений из того же
+        # набора", extended to other sets only when this one alone can't
+        # supply 3 distractors — see game_modes.TestSession).
+        all_sets = quizlet_service_layer.list_sets(QuizletCloneUnitOfWork())
+        distractor_pool = [t.definition for s in all_sets if s.id != request.set_id for t in s.terms]
+
+    try:
+        session_id, state = quizlet_game_modes.start(
+            QuizletCloneUnitOfWork(), request.set_id, mode, distractor_pool=distractor_pool
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return GameStateResponse(session_id=session_id, state=state)
+
+
+@app.get("/api/quizlet/game/{session_id}", response_model=GameStateResponse)
+async def get_quizlet_game_state(session_id: str) -> GameStateResponse:
+    try:
+        state = quizlet_game_modes.get_state(session_id)
+    except quizlet_game_modes.UnknownSessionError:
+        raise HTTPException(status_code=404, detail=f"Unknown game session: {session_id}") from None
+    return GameStateResponse(session_id=session_id, state=state)
+
+
+@app.post("/api/quizlet/game/{session_id}/answer", response_model=GameStateResponse)
+async def answer_quizlet_game(session_id: str, request: GameAnswerRequest) -> GameStateResponse:
+    try:
+        state = quizlet_game_modes.answer(QuizletCloneUnitOfWork(), session_id, request.payload)
+    except quizlet_game_modes.UnknownSessionError:
+        raise HTTPException(status_code=404, detail=f"Unknown game session: {session_id}") from None
+    except (ValueError, quizlet_game_modes.GameOverError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return GameStateResponse(session_id=session_id, state=state)
+
+
+@app.post("/api/quizlet/voice/start", response_model=VoiceGameStartResponse)
+async def start_quizlet_voice_game(request: GameStartRequest) -> VoiceGameStartResponse:
+    """Голосовой режим (ТЗ п.3), implemented as a stateful turn-based HTTP
+    flow rather than a spoken trigger phrase inside core/voice/pipeline.py's
+    always-on wake-word mic loop: that loop only reacts to the desktop's own
+    microphone via a fixed set of rule-matched phrases (see
+    VoiceAssistantLoop._resolve_board_game's docstring on why board games
+    and messaging replies are scoped to it specifically) and launching a
+    second concurrent capture from the same device would contend for the
+    mic. Here the browser records each answer instead (the same
+    MediaRecorder flow VoiceRecorder.tsx already uses for
+    POST /api/voice/query), and turn state lives server-side in
+    modules.quizlet_clone.game_modes, keyed by session_id, across requests —
+    so this stays a stateless-per-request endpoint despite the multi-turn
+    game underneath."""
+    try:
+        session_id, state = quizlet_game_modes.start(QuizletCloneUnitOfWork(), request.set_id, QuizletGameMode.VOICE)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    term_text = state.get("term")
+    audio_b64 = await asyncio.to_thread(web_pipeline.synthesize_speech, term_text, "ru") if term_text else None
+    return VoiceGameStartResponse(
+        session_id=session_id,
+        finished=state.get("finished", False),
+        term_text=term_text,
+        term_audio_base64=audio_b64,
+        remaining=state.get("remaining", 0),
+        total=state.get("total", 0),
+    )
+
+
+@app.post("/api/quizlet/voice/answer", response_model=VoiceGameAnswerResponse)
+async def answer_quizlet_voice_game(
+    session_id: str = Form(...), audio: UploadFile = File(...), language: str | None = Form(None)
+) -> VoiceGameAnswerResponse:
+    data = await audio.read()
+    try:
+        transcribed_text = await web_pipeline.transcribe_uploaded_audio(data, audio.filename or "audio.webm", language)
+    except web_pipeline.InvalidAudioError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        result = quizlet_game_modes.answer_spoken(QuizletCloneUnitOfWork(), session_id, transcribed_text)
+    except quizlet_game_modes.UnknownSessionError:
+        raise HTTPException(status_code=404, detail=f"Unknown game session: {session_id}") from None
+    except (ValueError, quizlet_game_modes.GameOverError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    correct = bool(result.get("correct"))
+    result_text = "Верно!" if correct else f"Неверно. Правильный ответ: {result.get('expected_definition', '')}"
+    result_audio_b64 = await asyncio.to_thread(web_pipeline.synthesize_speech, result_text, "ru")
+
+    finished = bool(result.get("finished"))
+    next_term_text = None if finished else result.get("term")
+    next_term_audio_b64 = (
+        await asyncio.to_thread(web_pipeline.synthesize_speech, next_term_text, "ru") if next_term_text else None
+    )
+
+    return VoiceGameAnswerResponse(
+        session_id=session_id,
+        transcribed_text=transcribed_text,
+        correct=correct,
+        answered_term=result.get("answered_term", ""),
+        expected_definition=result.get("expected_definition", ""),
+        result_audio_base64=result_audio_b64,
+        finished=finished,
+        next_term_text=next_term_text,
+        next_term_audio_base64=next_term_audio_b64,
+        remaining=result.get("remaining", 0),
+        total=result.get("total", 0),
     )
 
 

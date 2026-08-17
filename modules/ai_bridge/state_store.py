@@ -18,23 +18,37 @@ class StateStore:
         self._db_path = db_path
         self._lock = threading.Lock()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
-            )
+        conn = self._connect()
+        try:
+            with conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+                )
+        finally:
+            conn.close()
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self._db_path)
 
     def get(self, key: str) -> str | None:
-        with self._lock, self._connect() as conn:
-            row = conn.execute("SELECT value FROM state WHERE key = ?", (key,)).fetchone()
-            return row[0] if row else None
+        with self._lock:
+            conn = self._connect()
+            try:
+                with conn:
+                    row = conn.execute("SELECT value FROM state WHERE key = ?", (key,)).fetchone()
+                    return row[0] if row else None
+            finally:
+                conn.close()
 
     def set(self, key: str, value: str) -> None:
-        with self._lock, self._connect() as conn:
-            conn.execute(
-                "INSERT INTO state (key, value) VALUES (?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (key, value),
-            )
+        with self._lock:
+            conn = self._connect()
+            try:
+                with conn:
+                    conn.execute(
+                        "INSERT INTO state (key, value) VALUES (?, ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (key, value),
+                    )
+            finally:
+                conn.close()

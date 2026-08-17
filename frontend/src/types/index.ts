@@ -1,5 +1,6 @@
 export type AssistantState =
   | "idle"
+  | "background_listening"
   | "listening"
   | "processing"
   | "thinking"
@@ -19,6 +20,7 @@ export interface AIBridgeStatus {
   order: ProviderName[];
   last_reset_date: string;
   limit_reached: Record<string, boolean>;
+  logged_in: Record<string, boolean>;
 }
 
 export interface UIVisibilityRequest {
@@ -46,6 +48,24 @@ export interface CommandDescriptor {
   description: string;
 }
 
+export interface CommandParamField {
+  name: string;
+  type: "number" | "text" | "select";
+  label: string;
+  min: number | null;
+  max: number | null;
+  options: string[] | null;
+}
+
+export interface CommandButtonDescriptor {
+  name: string;
+  label: string;
+  icon: string;
+  dangerous: boolean;
+  description: string;
+  params_schema: CommandParamField[] | null;
+}
+
 export interface CommunicationStyle {
   key: string;
   label: string;
@@ -70,6 +90,18 @@ export interface PluginSuggestion {
   requires_manual_review: boolean;
   created_at: string;
   last_seen: string;
+}
+
+// Matches core/models.py's CustomCommandResponse and
+// modules/custom_commands/domain.py's ActionType exactly.
+export type CustomCommandActionType = "open_link" | "play_audio" | "open_media" | "launch_app" | "text_instruction";
+
+export interface CustomCommand {
+  id: string;
+  trigger_phrase: string;
+  action_type: CustomCommandActionType;
+  action_payload: Record<string, string>;
+  created_at: string;
 }
 
 export interface VoiceQueryResponse {
@@ -116,6 +148,15 @@ export interface AssistantWindowAPI {
   // frontend/src/meeting/meetingRecorder.ts. No-op outside Electron (the
   // whole object is undefined there — see platform/electronAdapter.ts).
   setRecordingActive?: (active: boolean) => void;
+  // Opens a native "choose an executable" file dialog on the machine
+  // running the Electron main process (see frontend/electron/main.ts's
+  // "pick-executable" ipcMain.handle) and resolves to the chosen absolute
+  // path, or null if cancelled. Undefined outside Electron — a plain
+  // browser/LAN thin client can't browse the assistant host's filesystem,
+  // so components/CustomCommandsPanel.tsx falls back to manual path entry
+  // when this is absent. Used only for the launch_app custom-command
+  // form's "Обзор…" button.
+  pickExecutablePath?: () => Promise<string | null>;
 }
 
 export type MeetingRecordingStatus = "uploading" | "processing" | "ready" | "error";
@@ -136,6 +177,96 @@ export interface MeetingRecording {
   transcript_error: string | null;
   summary_status: MeetingSummaryStatus;
   summary_error: string | null;
+}
+
+// Matches core/models.py's SetSource-derived `source` string and
+// modules/quizlet_clone/models.py's SetSource/GameMode enums exactly.
+export type StudySetSource = "quizlet_import" | "manual";
+export type GameMode = "flashcards" | "learn" | "match" | "test" | "voice";
+
+export interface QuizletAuthStatus {
+  logged_in: boolean;
+}
+
+export interface StudySetTerm {
+  id: string;
+  term: string;
+  definition: string;
+  times_seen: number;
+  times_correct: number;
+  times_wrong: number;
+  learned: boolean;
+}
+
+export interface StudySet {
+  id: string;
+  title: string;
+  source: StudySetSource;
+  quizlet_set_id: string | null;
+  created_at: string;
+  progress_percent: number;
+  attempts_count: number;
+  terms: StudySetTerm[];
+}
+
+export interface QuizletLibrarySet {
+  quizlet_set_id: string;
+  title: string;
+  term_count: number;
+  already_imported: boolean;
+  local_set_id: string | null;
+}
+
+// The shape of `state` varies by mode (see modules/quizlet_clone/game_modes.py's
+// per-session state() methods) — kept loosely typed here rather than one
+// strict interface per mode, and narrowed with optional fields the
+// game-mode components read defensively.
+export interface QuizletGameState {
+  mode: GameMode;
+  finished: boolean;
+  index?: number;
+  total?: number;
+  remaining?: number;
+  score?: number;
+  flipped?: boolean;
+  term?: string;
+  term_id?: string;
+  definition?: string;
+  type?: "input" | "choice";
+  options?: string[];
+  tiles?: { tile_id: string; text: string; kind: "term" | "definition"; matched: boolean }[];
+  matched_count?: number;
+  elapsed_seconds?: number | null;
+  last_attempt?: { first_tile_id: string; second_tile_id: string; correct: boolean } | null;
+  last_answer?: { term_id: string; correct: boolean; correct_definition: string } | null;
+}
+
+export interface QuizletGameStateResponse {
+  session_id: string;
+  state: QuizletGameState;
+}
+
+export interface QuizletVoiceGameStartResponse {
+  session_id: string;
+  finished: boolean;
+  term_text: string | null;
+  term_audio_base64: string | null;
+  remaining: number;
+  total: number;
+}
+
+export interface QuizletVoiceGameAnswerResponse {
+  session_id: string;
+  transcribed_text: string;
+  correct: boolean;
+  answered_term: string;
+  expected_definition: string;
+  result_audio_base64: string | null;
+  finished: boolean;
+  next_term_text: string | null;
+  next_term_audio_base64: string | null;
+  remaining: number;
+  total: number;
 }
 
 declare global {

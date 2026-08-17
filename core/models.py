@@ -16,6 +16,14 @@ class AssistantState(str, Enum):
     # First-run "getting acquainted" interview — see
     # modules/user_profile/onboarding.py and core/voice/pipeline.py.
     ONBOARDING = "onboarding"
+    # Waiting for the activation phrase ("привет"/"эй джарвис"/custom — see
+    # core/voice/wake_word.py.resolve_wake_phrases), before a command turn
+    # starts. Set at the top of every non-paused pass through
+    # core/voice/pipeline.py._wait_for_wake_or_pause; once the phrase is
+    # heard the loop moves on to LISTENING (the same "actively listening for
+    # a command" state as pressing "Начать разговор"), so this exists only
+    # to give the background-waiting phase its own distinct CentralOrb look.
+    BACKGROUND_LISTENING = "background_listening"
     # The user said their configured stop word (see
     # modules/user_profile/onboarding.py._ask_stop_word) — the assistant
     # ignores the wake word and everything else until the same word is said
@@ -59,6 +67,24 @@ class CommandDescriptor(BaseModel):
     description: str
 
 
+class CommandParamField(BaseModel):
+    name: str
+    type: str
+    label: str
+    min: float | None = None
+    max: float | None = None
+    options: list[str] | None = None
+
+
+class CommandButtonDescriptor(BaseModel):
+    name: str
+    label: str
+    icon: str
+    dangerous: bool
+    description: str
+    params_schema: list[CommandParamField] | None = None
+
+
 class VoiceLoopStatus(BaseModel):
     running: bool
 
@@ -68,6 +94,7 @@ class AIBridgeStatus(BaseModel):
     order: list[str]
     last_reset_date: str
     limit_reached: dict[str, bool]
+    logged_in: dict[str, bool] = {}
 
 
 class UIVisibilityRequest(BaseModel):
@@ -237,3 +264,115 @@ class MessagingOutboundItem(BaseModel):
 
 class MessagingOutboundAckRequest(BaseModel):
     status: str  # "sent" or "failed"
+
+
+class WordPressUploadResponse(BaseModel):
+    job_id: str
+
+
+class WordPressJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    message: str
+    edit_url: str | None = None
+
+
+class CustomCommandResponse(BaseModel):
+    id: str
+    trigger_phrase: str
+    action_type: str
+    action_payload: dict[str, Any]
+    created_at: str
+
+
+class CustomCommandListResponse(BaseModel):
+    commands: list[CustomCommandResponse]
+
+
+class QuizletAuthStatus(BaseModel):
+    logged_in: bool
+
+
+class TermPairRequest(BaseModel):
+    term: str
+    definition: str
+
+
+class SaveStudySetRequest(BaseModel):
+    set_id: str | None = None
+    title: str
+    terms: list[TermPairRequest]
+
+
+class TermResponse(BaseModel):
+    id: str
+    term: str
+    definition: str
+    times_seen: int
+    times_correct: int
+    times_wrong: int
+    learned: bool
+
+
+class StudySetResponse(BaseModel):
+    id: str
+    title: str
+    source: str
+    quizlet_set_id: str | None
+    created_at: str
+    progress_percent: int
+    attempts_count: int
+    terms: list[TermResponse]
+
+
+class StudySetListResponse(BaseModel):
+    sets: list[StudySetResponse]
+
+
+class LibrarySetResponse(BaseModel):
+    quizlet_set_id: str
+    title: str
+    term_count: int
+    already_imported: bool
+    local_set_id: str | None
+
+
+class QuizletLibraryResponse(BaseModel):
+    sets: list[LibrarySetResponse]
+
+
+class GameStartRequest(BaseModel):
+    set_id: str
+    mode: str
+
+
+class GameStateResponse(BaseModel):
+    session_id: str
+    state: dict[str, Any]
+
+
+class GameAnswerRequest(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class VoiceGameStartResponse(BaseModel):
+    session_id: str
+    finished: bool
+    term_text: str | None
+    term_audio_base64: str | None
+    remaining: int
+    total: int
+
+
+class VoiceGameAnswerResponse(BaseModel):
+    session_id: str
+    transcribed_text: str
+    correct: bool
+    answered_term: str
+    expected_definition: str
+    result_audio_base64: str | None
+    finished: bool
+    next_term_text: str | None
+    next_term_audio_base64: str | None
+    remaining: int
+    total: int

@@ -45,9 +45,11 @@ class BargeInMonitor:
         buffer = RollingAudioBuffer(self._settings, window_seconds=_WINDOW_SECONDS)
         try:
             buffer.start()
-        except Exception:
+        except Exception as mic_unavailable:
             logger.debug(
-                "Barge-in mic capture unavailable; interruption disabled for this reply", exc_info=True
+                "Barge-in mic capture unavailable; interruption disabled for this reply: %s",
+                mic_unavailable,
+                exc_info=True,
             )
             return
 
@@ -58,8 +60,8 @@ class BargeInMonitor:
                     continue
                 try:
                     result = self._stt.transcribe(window, language)
-                except Exception:
-                    logger.debug("Barge-in transcription failed", exc_info=True)
+                except Exception as transcription_failed:
+                    logger.debug("Barge-in transcription failed: %s", transcription_failed, exc_info=True)
                     continue
                 if is_stop_command(result.text, language):
                     interrupted.set()

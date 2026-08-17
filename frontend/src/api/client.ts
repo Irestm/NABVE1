@@ -1,15 +1,25 @@
 import type {
   AIBridgeStatus,
   CalendarEvent,
+  CommandButtonDescriptor,
   CommandDescriptor,
   CommandResponse,
   CommunicationStyle,
+  CustomCommand,
+  CustomCommandActionType,
+  GameMode,
   ImageRequest,
   LanUrlResponse,
   MeetingRecording,
   PluginSuggestion,
+  QuizletAuthStatus,
+  QuizletGameStateResponse,
+  QuizletLibrarySet,
+  QuizletVoiceGameAnswerResponse,
+  QuizletVoiceGameStartResponse,
   SpeakResponse,
   StatusResponse,
+  StudySet,
   VoiceOptionsResponse,
   VoiceQueryResponse,
 } from "../types";
@@ -98,6 +108,10 @@ export function getStatus(): Promise<StatusResponse> {
 
 export function listCommands(): Promise<CommandDescriptor[]> {
   return requestJson<CommandDescriptor[]>("/api/commands");
+}
+
+export function listCommandButtons(): Promise<CommandButtonDescriptor[]> {
+  return requestJson<CommandButtonDescriptor[]>("/api/commands/ui");
 }
 
 export function runCommand(
@@ -264,6 +278,70 @@ export function selectVoice(speaker: string): Promise<VoiceOptionsResponse> {
   });
 }
 
+export async function listCustomCommands(): Promise<CustomCommand[]> {
+  const response = await requestJson<{ commands: CustomCommand[] }>("/api/custom_commands");
+  return response.commands;
+}
+
+// Matches core/main.py's create_or_update_custom_command Form fields —
+// commandId omitted means create, set means update. One multipart route
+// handles every action_type (only play_audio/open_media actually attach
+// a file), see that route's own docstring for why.
+export interface SaveCustomCommandInput {
+  commandId?: string | undefined;
+  triggerPhrase: string;
+  actionType: CustomCommandActionType;
+  url?: string | undefined;
+  executablePath?: string | undefined;
+  instruction?: string | undefined;
+  mediaType?: "photo" | "video" | undefined;
+  file?: File | null;
+}
+
+export async function saveCustomCommand(input: SaveCustomCommandInput): Promise<CustomCommand> {
+  const form = new FormData();
+  form.append("trigger_phrase", input.triggerPhrase);
+  form.append("action_type", input.actionType);
+  if (input.commandId) {
+    form.append("command_id", input.commandId);
+  }
+  if (input.url) {
+    form.append("url", input.url);
+  }
+  if (input.executablePath) {
+    form.append("executable_path", input.executablePath);
+  }
+  if (input.instruction) {
+    form.append("instruction", input.instruction);
+  }
+  if (input.mediaType) {
+    form.append("media_type", input.mediaType);
+  }
+  if (input.file) {
+    form.append("file", input.file);
+  }
+
+  const response = await fetch(`${BASE_URL}/api/custom_commands`, {
+    method: "POST",
+    body: form,
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Saving the custom command failed with status ${response.status}`);
+  }
+  return (await response.json()) as CustomCommand;
+}
+
+export async function deleteCustomCommand(commandId: string): Promise<void> {
+  const response = await fetch(`${BASE_URL}/api/custom_commands/${encodeURIComponent(commandId)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Deleting the custom command failed with status ${response.status}`);
+  }
+}
+
 export async function createMeetingRecording(contextLabel?: string | null): Promise<number> {
   const response = await requestJson<{ id: number }>("/api/meetings/recordings", {
     method: "POST",
@@ -336,4 +414,103 @@ export async function deleteMeetingRecording(
     throw new Error(`Delete failed with status ${response.status}`);
   }
   return (await response.json()) as { deleted: boolean; pending: boolean };
+}
+
+// --- modules/quizlet_clone ---------------------------------------------
+
+export function getQuizletStatus(): Promise<QuizletAuthStatus> {
+  return requestJson<QuizletAuthStatus>("/api/quizlet/status");
+}
+
+// Login/logout/import go through the generic dispatcher (like
+// ai_bridge_provider_login/logout above) rather than dedicated REST
+// routes — see modules/quizlet_clone/handlers.py.
+export function quizletLogin(): Promise<CommandResponse> {
+  return runCommand("quizlet_login");
+}
+
+export function quizletLogout(): Promise<CommandResponse> {
+  return runCommand("quizlet_logout");
+}
+
+export function quizletImportSet(quizletSetId: string, title: string): Promise<CommandResponse> {
+  return runCommand("quizlet_import_set", { quizlet_set_id: quizletSetId, title });
+}
+
+export async function listQuizletLibrary(): Promise<QuizletLibrarySet[]> {
+  const response = await requestJson<{ sets: QuizletLibrarySet[] }>("/api/quizlet/library");
+  return response.sets;
+}
+
+export async function listStudySets(): Promise<StudySet[]> {
+  const response = await requestJson<{ sets: StudySet[] }>("/api/quizlet/sets");
+  return response.sets;
+}
+
+export function saveStudySet(
+  setId: string | undefined,
+  title: string,
+  terms: { term: string; definition: string }[],
+): Promise<StudySet> {
+  return requestJson<StudySet>("/api/quizlet/sets", {
+    method: "POST",
+    body: JSON.stringify({ set_id: setId ?? null, title, terms }),
+  });
+}
+
+export async function deleteStudySet(setId: string): Promise<void> {
+  const response = await fetch(`${BASE_URL}/api/quizlet/sets/${encodeURIComponent(setId)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Deleting the study set failed with status ${response.status}`);
+  }
+}
+
+export function startQuizletGame(setId: string, mode: GameMode): Promise<QuizletGameStateResponse> {
+  return requestJson<QuizletGameStateResponse>("/api/quizlet/game/start", {
+    method: "POST",
+    body: JSON.stringify({ set_id: setId, mode }),
+  });
+}
+
+export function getQuizletGameState(sessionId: string): Promise<QuizletGameStateResponse> {
+  return requestJson<QuizletGameStateResponse>(`/api/quizlet/game/${encodeURIComponent(sessionId)}`);
+}
+
+export function answerQuizletGame(
+  sessionId: string,
+  payload: Record<string, unknown>,
+): Promise<QuizletGameStateResponse> {
+  return requestJson<QuizletGameStateResponse>(`/api/quizlet/game/${encodeURIComponent(sessionId)}/answer`, {
+    method: "POST",
+    body: JSON.stringify({ payload }),
+  });
+}
+
+export function startQuizletVoiceGame(setId: string): Promise<QuizletVoiceGameStartResponse> {
+  return requestJson<QuizletVoiceGameStartResponse>("/api/quizlet/voice/start", {
+    method: "POST",
+    body: JSON.stringify({ set_id: setId, mode: "voice" }),
+  });
+}
+
+export async function answerQuizletVoiceGame(
+  sessionId: string,
+  audio: Blob,
+  filename = "answer.webm",
+): Promise<QuizletVoiceGameAnswerResponse> {
+  const form = new FormData();
+  form.append("session_id", sessionId);
+  form.append("audio", audio, filename);
+  const response = await fetch(`${BASE_URL}/api/quizlet/voice/answer`, {
+    method: "POST",
+    body: form,
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Voice answer failed with status ${response.status}`);
+  }
+  return (await response.json()) as QuizletVoiceGameAnswerResponse;
 }

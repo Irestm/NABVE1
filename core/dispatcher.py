@@ -236,6 +236,141 @@ async def _handle_focus_window(params: dict[str, Any]) -> dict[str, Any]:
     return {"title": title}
 
 
+def _parse_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "1", "yes", "да")
+
+
+async def _handle_set_volume(params: dict[str, Any]) -> dict[str, Any]:
+    percent = params.get("percent")
+    if percent is None:
+        raise ValueError("Missing required parameter 'percent'")
+    adapter = get_os_adapter()
+    await asyncio.to_thread(adapter.set_volume, int(percent))
+    return {"percent": int(percent), "message": f"Громкость установлена на {int(percent)} процентов."}
+
+
+async def _handle_change_volume(params: dict[str, Any]) -> dict[str, Any]:
+    delta_percent = params.get("delta_percent")
+    if delta_percent is None:
+        raise ValueError("Missing required parameter 'delta_percent'")
+    adapter = get_os_adapter()
+    await asyncio.to_thread(adapter.change_volume, int(delta_percent))
+    new_level = await asyncio.to_thread(adapter.get_volume)
+    return {"percent": new_level, "message": f"Громкость: {new_level} процентов."}
+
+
+async def _handle_get_volume(_params: dict[str, Any]) -> dict[str, Any]:
+    adapter = get_os_adapter()
+    percent = await asyncio.to_thread(adapter.get_volume)
+    return {"percent": percent, "message": f"Текущая громкость: {percent} процентов."}
+
+
+async def _handle_mute(_params: dict[str, Any]) -> dict[str, Any]:
+    adapter = get_os_adapter()
+    await asyncio.to_thread(adapter.mute)
+    return {"muted": True, "message": "Звук выключен."}
+
+
+async def _handle_unmute(_params: dict[str, Any]) -> dict[str, Any]:
+    adapter = get_os_adapter()
+    await asyncio.to_thread(adapter.unmute)
+    return {"muted": False, "message": "Звук включён."}
+
+
+async def _handle_toggle_mute(_params: dict[str, Any]) -> dict[str, Any]:
+    adapter = get_os_adapter()
+    muted = await asyncio.to_thread(adapter.toggle_mute)
+    return {"muted": muted, "message": "Звук выключен." if muted else "Звук включён."}
+
+
+async def _handle_minimize_window(params: dict[str, Any]) -> dict[str, Any]:
+    app_name = params.get("app_name") or None
+    adapter = get_os_adapter()
+    ok = await asyncio.to_thread(adapter.hide_window, app_name)
+    if not ok:
+        raise RuntimeError(f"Could not find window matching '{app_name}'" if app_name else "No active window")
+    return {"app_name": app_name}
+
+
+async def _handle_close_os_window(params: dict[str, Any]) -> dict[str, Any]:
+    app_name = params.get("app_name") or None
+    adapter = get_os_adapter()
+    ok = await asyncio.to_thread(adapter.close_window, app_name)
+    if not ok:
+        raise RuntimeError(f"Could not find window matching '{app_name}'" if app_name else "No active window")
+    return {"app_name": app_name}
+
+
+async def _handle_close_browser_tab(_params: dict[str, Any]) -> dict[str, Any]:
+    adapter = get_os_adapter()
+    await asyncio.to_thread(adapter.close_tab)
+    return {}
+
+
+async def _handle_create_folder(params: dict[str, Any]) -> dict[str, Any]:
+    path = params.get("path")
+    if not path:
+        raise ValueError("Missing required parameter 'path'")
+    adapter = get_os_adapter()
+    return await asyncio.to_thread(adapter.create_folder, path)
+
+
+async def _handle_move_folder(params: dict[str, Any]) -> dict[str, Any]:
+    source = params.get("source")
+    destination = params.get("destination")
+    if not source or not destination:
+        raise ValueError("Missing required parameters 'source' and 'destination'")
+    adapter = get_os_adapter()
+    return await asyncio.to_thread(adapter.move_folder, source, destination)
+
+
+async def _handle_delete_folder(params: dict[str, Any]) -> dict[str, Any]:
+    path = params.get("path")
+    if not path:
+        raise ValueError("Missing required parameter 'path'")
+    force_admin = _parse_bool(params.get("force_admin", False))
+    adapter = get_os_adapter()
+    result = await asyncio.to_thread(adapter.delete_folder, path, force_admin)
+    result["message"] = f"Папка {path} удалена."
+    return result
+
+
+async def _handle_switch_keyboard_layout(params: dict[str, Any]) -> dict[str, Any]:
+    language_code = params.get("language_code")
+    if not language_code:
+        raise ValueError("Missing required parameter 'language_code'")
+    adapter = get_os_adapter()
+    return await asyncio.to_thread(adapter.switch_keyboard_layout, language_code)
+
+
+async def _handle_change_system_locale(params: dict[str, Any]) -> dict[str, Any]:
+    language_code = params.get("language_code")
+    if not language_code:
+        raise ValueError("Missing required parameter 'language_code'")
+    adapter = get_os_adapter()
+    return await asyncio.to_thread(adapter.change_system_locale, language_code)
+
+
+async def _handle_get_battery_status(_params: dict[str, Any]) -> dict[str, Any]:
+    adapter = get_os_adapter()
+    status = await asyncio.to_thread(adapter.get_battery_status)
+    if status.get("percent") is None:
+        status["message"] = status.get("message", "На этом устройстве нет батареи.")
+    else:
+        charging = " (заряжается)" if status.get("is_charging") else ""
+        status["message"] = f"Заряд батареи: {status['percent']} процентов{charging}."
+    return status
+
+
+async def _handle_check_system_updates(_params: dict[str, Any]) -> dict[str, Any]:
+    adapter = get_os_adapter()
+    result = await asyncio.to_thread(adapter.check_system_updates)
+    result.setdefault("message", result.get("details", ""))
+    return result
+
+
 def build_dispatcher(confirmation_ttl_seconds: int = 60) -> CommandDispatcher:
     dispatcher = CommandDispatcher(confirmation_ttl_seconds=confirmation_ttl_seconds)
     dispatcher.register(
@@ -303,5 +438,97 @@ def build_dispatcher(confirmation_ttl_seconds: int = 60) -> CommandDispatcher:
         _handle_list_capabilities,
         dangerous=False,
         description="Describe what this assistant can do, as a human-readable summary (optional language).",
+    )
+    dispatcher.register(
+        "set_volume",
+        _handle_set_volume,
+        dangerous=False,
+        description="Set system volume to an exact level (percent, 0-100).",
+    )
+    dispatcher.register(
+        "change_volume",
+        _handle_change_volume,
+        dangerous=False,
+        description="Change system volume relative to its current level (delta_percent, can be negative).",
+    )
+    dispatcher.register(
+        "get_volume",
+        _handle_get_volume,
+        dangerous=False,
+        description="Report the current system volume level.",
+    )
+    dispatcher.register("mute", _handle_mute, dangerous=False, description="Mute system audio.")
+    dispatcher.register("unmute", _handle_unmute, dangerous=False, description="Unmute system audio.")
+    dispatcher.register(
+        "toggle_mute", _handle_toggle_mute, dangerous=False, description="Toggle system audio mute on/off."
+    )
+    dispatcher.register(
+        "minimize_window",
+        _handle_minimize_window,
+        dangerous=False,
+        description="Minimize the active window, or a specific app's window (optional app_name).",
+    )
+    dispatcher.register(
+        "close_os_window",
+        _handle_close_os_window,
+        dangerous=False,
+        description=(
+            "Gracefully close the active window, or a specific app's window (optional app_name) — "
+            "not the assistant's own UI window (see show_window/hide_window for that)."
+        ),
+    )
+    dispatcher.register(
+        "close_browser_tab",
+        _handle_close_browser_tab,
+        dangerous=False,
+        description="Close the current browser tab (sends Ctrl+W to whatever has focus).",
+    )
+    dispatcher.register(
+        "create_folder",
+        _handle_create_folder,
+        dangerous=False,
+        description="Create a folder at the given path (path).",
+    )
+    dispatcher.register(
+        "move_folder",
+        _handle_move_folder,
+        dangerous=False,
+        description="Move a file or folder from source to destination (source, destination).",
+    )
+    dispatcher.register(
+        "delete_folder",
+        _handle_delete_folder,
+        dangerous=True,
+        description=(
+            "Permanently delete a folder or file and everything in it (path, optional force_admin). "
+            "Irreversible — always requires spoken confirmation before running."
+        ),
+    )
+    dispatcher.register(
+        "switch_keyboard_layout",
+        _handle_switch_keyboard_layout,
+        dangerous=False,
+        description="Switch the active keyboard input layout (language_code: ru/uk/en).",
+    )
+    dispatcher.register(
+        "change_system_locale",
+        _handle_change_system_locale,
+        dangerous=True,
+        description=(
+            "Change the whole system locale (language_code: ru/uk/en) — heavier than "
+            "switch_keyboard_layout, needs elevated privileges and a logout/restart to fully apply."
+        ),
+    )
+    dispatcher.register(
+        "get_battery_status",
+        _handle_get_battery_status,
+        dangerous=False,
+        description="Report battery charge percent, charging state, and estimated time remaining.",
+    )
+    dispatcher.register(
+        "check_system_updates",
+        _handle_check_system_updates,
+        dangerous=False,
+        description="Check (never install) whether OS updates are available and how many.",
     )
     return dispatcher

@@ -133,13 +133,23 @@ class RollingAudioBuffer:
 
     def start(self) -> None:
         sd = require_sounddevice()
-        self._stream = sd.InputStream(
+        stream = sd.InputStream(
             samplerate=self._settings.sample_rate,
             channels=1,
             dtype="float32",
             callback=self._callback,
         )
-        self._stream.start()  # type: ignore[attr-defined]
+        # Only assign to self._stream once .start() has actually succeeded —
+        # InputStream's constructor already opens the PortAudio handle, so a
+        # failure here (device busy, unplugged, ...) still needs the handle
+        # closed instead of leaked; a caller catching this exception never
+        # gets a chance to call stop() on a stream that was never assigned.
+        try:
+            stream.start()
+        except Exception:
+            stream.close()
+            raise
+        self._stream = stream
 
     def stop(self) -> None:
         if self._stream is not None:

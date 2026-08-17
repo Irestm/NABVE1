@@ -29,6 +29,21 @@ _NOT_UNDERSTOOD: dict[str, str] = {
     "en": "I didn't understand that command.",
 }
 
+# Spoken before the window actually disappears/reappears (see
+# core/voice/pipeline.py._wait_for_wake_or_pause's tray_hide/tray_show
+# branches) - kept deliberately short since this fires every time the
+# tray-hide phrase is used, not just once.
+_TRAY_HIDE_ACK: dict[str, str] = {
+    "ru": "Хорошо, ухожу в фон.",
+    "uk": "Добре, йду у фон.",
+    "en": "Okay, going to the background.",
+}
+_TRAY_SHOW_ACK: dict[str, str] = {
+    "ru": "Возвращаюсь.",
+    "uk": "Повертаюся.",
+    "en": "Coming back.",
+}
+
 
 _GENERIC_EXECUTED_MESSAGE = "Command executed."
 
@@ -47,3 +62,11 @@ def localize_response(response: CommandResponse, language: str) -> str:
 
 def not_understood(language: str) -> str:
     return _NOT_UNDERSTOOD.get(language, _NOT_UNDERSTOOD["en"])
+
+
+def tray_hide_ack(language: str) -> str:
+    return _TRAY_HIDE_ACK.get(language, _TRAY_HIDE_ACK["en"])
+
+
+def tray_show_ack(language: str) -> str:
+    return _TRAY_SHOW_ACK.get(language, _TRAY_SHOW_ACK["en"])

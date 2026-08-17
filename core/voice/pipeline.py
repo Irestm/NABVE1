@@ -8,7 +8,7 @@ from core.dispatcher import CommandDispatcher
 from core.logger import get_logger
 from core.models import AssistantState, CommandStatus
 from core.state import state_manager
-from core.voice import ai_router, audio_io, wake_word
+from core.voice import ai_router, audio_io, confirmation_phrase, wake_word
 from core.voice.barge_in import BargeInMonitor
 from core.voice.config import VoiceSettings, voice_settings
 from core.voice.intent import Command, interpret, is_affirmative, is_resign_command, is_stop_command
@@ -17,15 +17,17 @@ from core.voice.language import resolve_language, resolve_response_language
 from core.voice.phrase_matching import fuzzy_contains_phrase
 from core.voice.plugin_match import match_plugin_command
 from core.voice.fact_extraction import extract_facts
-from core.voice.responses import localize_response, not_understood
+from core.voice.responses import localize_response, not_understood, tray_hide_ack, tray_show_ack
 from core.voice.stt import SpeechToText
 from core.voice.tts import TextToSpeech
-from core.voice.wake_word import WakeWordDetector, get_wake_word_detector
 from modules.app_catalog import resolver as app_resolver
 from modules.board_games import announce as board_games_announce
 from modules.board_games import service_layer as board_games_service_layer
 from modules.board_games.domain import GameKind
 from modules.calendar import extraction as calendar_extraction
+from modules.custom_commands import dispatcher as custom_commands
+from modules.custom_commands.domain import ActionType, CustomCommand
+from modules.hardware_adaptive import command_classifier
 from modules.media import query_correction as media_query_correction
 from modules.media import recommender as media_recommender
 from modules.media import youtube as media_youtube
@@ -36,10 +38,13 @@ from modules.messaging.duration import parse_duration_minutes
 from modules.messaging.uow import MessagingUnitOfWork
 from modules.task_orchestrator import announce as task_orchestrator_announce
 from modules.task_orchestrator import service_layer as task_orchestrator_service_layer
+from modules.tray_hide import detector as tray_hide_detector
+from modules.tray_hide.config import HIDE_PHRASE_KEY, SHOW_PHRASE_KEY
 from modules.ui_automation import announce as ui_announce
 from modules.ui_automation import service_layer as ui_service_layer
+from modules.ui_control import service_layer as ui_control_service_layer
 from modules.user_profile import service_layer as profile_service_layer
-from modules.user_profile.domain import STOP_WORD_KEY
+from modules.user_profile.domain import STOP_WORD_KEY, WAKE_PHRASE_KEY
 from modules.user_profile.onboarding import run_onboarding
 from modules.user_profile.uow import ProfileUnitOfWork
 
@@ -132,7 +137,7 @@ class _SentenceStreamSpeaker:
         try:
             samples, sample_rate = await asyncio.to_thread(self._tts.synthesize, sentence, self._language)
         except RuntimeError as exc:
-            logger.error("TTS failed: %s", exc)
+            logger.exception("TTS failed: %s", exc)
             return
         if not samples.size:
             return
@@ -197,7 +202,7 @@ class VoiceAssistantLoop:
         try:
             samples, sample_rate = tts.synthesize(text, language)
         except RuntimeError as exc:
-            logger.error("TTS failed: %s", exc)
+            logger.exception("TTS failed: %s", exc)
             return False
         if samples.size == 0:
             return False
@@ -225,7 +230,10 @@ class VoiceAssistantLoop:
             logger.exception("Onboarding failed")
         state_manager.set_state(AssistantState.IDLE)
 
-    def _wait_for_wake_or_pause(self, wake_detector: WakeWordDetector) -> bool:
+    def _ack_language(self) -> str:
+        return self._settings.response_language_override or self._settings.fallback_language
+
+    def _wait_for_wake_or_pause(self, tts: TextToSpeech) -> bool:
         """Blocks until the wake word is heard (returns True, caller should
         proceed to _handle_command) or the whole loop should stop (returns
         False — self._stop_event fired).
@@ -238,19 +246,38 @@ class VoiceAssistantLoop:
         stop word for the first time via the personality settings panel (see
         modules/user_profile/handlers.py's profile_set) had no effect at all
         until the whole assistant was restarted: this method had already
-        captured "no stop word" and never looked again.
+        captured "no stop word" and never looked again. The tray hide/show
+        phrases (modules/tray_hide) and the custom activation phrase
+        (WAKE_PHRASE_KEY) are re-read the same way and for the same reason.
 
         If a stop word is configured, it's listened for in the same pass as
-        the wake word (see core/voice/wake_word.py's listen_for_phrases,
-        which can't go through `wake_detector` itself — the Porcupine
-        backend is a fixed offline keyword engine and can't recognize an
-        arbitrary user-chosen phrase at all, so this always uses the
-        STT-based listener once a stop word exists). Hearing it toggles
-        self._paused_event and keeps looping internally instead of
-        returning — pausing doesn't stop the thread, it just makes this
-        method ignore the wake word until the same phrase is heard again."""
+        the wake word (see core/voice/wake_word.py's listen_for_phrases).
+        Hearing it toggles self._paused_event and keeps looping internally
+        instead of returning — pausing doesn't stop the thread, it just
+        makes this method ignore the wake word until the same phrase is
+        heard again.
+
+        The tray hide/show phrases (modules/tray_hide) are folded into this
+        exact same listen_for_phrases pass too, unconditionally (unlike the
+        stop word, which only joins the pass once configured) —
+        modules/tray_hide always has at least its default phrases, and
+        hearing either one must work regardless of whether a stop word
+        happens to be set. As a result this method no longer has a "fast
+        path" that skips the STT-based listener for a plain single-phrase
+        wake detector (see core/voice/wake_word.py's WakeWordDetector /
+        get_wake_word_detector, e.g. the Porcupine backend): the arbitrary
+        user-chosen tray phrases can only be recognized via STT, so the
+        wake word rides along in the same pass rather than needing a second,
+        independent listening stream on the same microphone. This is the
+        single background audio stream both the wake-word and tray-hide
+        detection share; hearing "hide" or "show" never returns from this
+        method (the UI is not a voice command turn), it just requests the
+        window visibility change and keeps listening."""
         while not self._stop_event.is_set():
             stop_word = profile_service_layer.get_fact(ProfileUnitOfWork(), STOP_WORD_KEY)
+            hide_phrase = profile_service_layer.get_fact(ProfileUnitOfWork(), HIDE_PHRASE_KEY)
+            show_phrase = profile_service_layer.get_fact(ProfileUnitOfWork(), SHOW_PHRASE_KEY)
+            custom_wake_phrase = profile_service_layer.get_fact(ProfileUnitOfWork(), WAKE_PHRASE_KEY)
 
             if self._paused_event.is_set():
                 if not stop_word:
@@ -270,20 +297,31 @@ class VoiceAssistantLoop:
                     logger.info("Stop word heard again; resuming")
                 continue
 
-            if not stop_word:
-                return wake_detector.listen(self._stop_event)
+            # Explicit "waiting for the activation phrase" state, distinct
+            # from the LISTENING state _handle_command sets once "wake" is
+            # actually heard below — see AssistantState.BACKGROUND_LISTENING
+            # and CentralOrb.tsx, which renders the two noticeably
+            # differently (quiet background pulse vs. active listening).
+            state_manager.set_state(AssistantState.BACKGROUND_LISTENING, "Жду активационную фразу")
 
             # model_size=whisper_model_size (the bigger command tier, not
             # the fast wake-tier default): see wake_word.listen_for_phrases
-            # for why an arbitrary user-chosen stop word needs the more
-            # accurate model to be recognized reliably. This does make wake-
-            # word detection itself a bit slower too, since both phrases are
-            # checked in the same STT pass — but only for users who've
-            # actually configured a stop word, and reliably honoring a pause
-            # request matters more here than shaving time off wake latency.
+            # for why an arbitrary user-chosen phrase (stop word, tray
+            # hide/show, custom activation phrase) needs the more accurate
+            # model to be recognized reliably. This does make wake-word
+            # detection itself a bit slower than the fast single-word path
+            # — but reliably honoring a pause/hide/show/wake request matters
+            # more here than shaving time off wake latency.
+            phrases: dict[str, str | tuple[str, ...]] = {
+                "wake": wake_word.resolve_wake_phrases(self._settings, custom_wake_phrase),
+                "tray_hide": tray_hide_detector.hide_phrases(hide_phrase),
+                "tray_show": tray_hide_detector.show_phrases(show_phrase),
+            }
+            if stop_word:
+                phrases["pause"] = stop_word
             heard = wake_word.listen_for_phrases(
                 self._settings,
-                {"wake": self._settings.wake_word, "pause": stop_word},
+                phrases,
                 self._stop_event,
                 model_size=self._settings.whisper_model_size,
             )
@@ -293,11 +331,18 @@ class VoiceAssistantLoop:
                 self._paused_event.set()
                 state_manager.set_state(AssistantState.PAUSED, "Скажите стоп-слово ещё раз, чтобы продолжить")
                 logger.info("Stop word heard; pausing")
+            elif heard == "tray_hide":
+                self._speak_safely(tts, tray_hide_ack(self._ack_language()), self._ack_language())
+                ui_control_service_layer.hide_window(state_manager)
+                logger.info("Tray-hide phrase heard; hiding window")
+            elif heard == "tray_show":
+                self._speak_safely(tts, tray_show_ack(self._ack_language()), self._ack_language())
+                ui_control_service_layer.show_window(state_manager)
+                logger.info("Tray-show phrase heard; showing window")
 
         return False
 
     def _run(self) -> None:
-        wake_detector = get_wake_word_detector(self._settings)
         command_stt = SpeechToText(self._settings)
         tts = TextToSpeech(self._settings)
 
@@ -311,7 +356,7 @@ class VoiceAssistantLoop:
         while not self._stop_event.is_set():
             if not listen_immediately:
                 try:
-                    detected = self._wait_for_wake_or_pause(wake_detector)
+                    detected = self._wait_for_wake_or_pause(tts)
                 except Exception:
                     # continue (not return): a transient failure here — a
                     # brief audio-device hiccup, a one-off STT error — used
@@ -1115,6 +1160,36 @@ class VoiceAssistantLoop:
         except Exception:
             logger.exception("Fact extraction failed for utterance")
 
+    def _confirm_custom_command(
+        self, trigger_phrase: str, command_stt: SpeechToText, tts: TextToSpeech, response_language: str
+    ) -> tuple[bool, bool]:
+        """One-shot spoken yes/no for a matched custom command
+        (modules/custom_commands), asked only when
+        CUSTOM_COMMANDS_REQUIRE_CONFIRMATION_KEY is enabled and only for
+        launch_app/text_instruction (see that profile-fact's own comment
+        for why those two specifically). Same shape as
+        _resolve_open_app_target's "did you mean X?".
+
+        This checks the setting itself fresh on every call rather than
+        relying on CommandDispatcher's dangerous=True/token mechanism
+        (which modules/custom_commands/dispatcher.py deliberately does NOT
+        use for this) — see that module's register_one for why: the
+        setting can be toggled without touching any individual custom
+        command, so a cached dangerous flag would go stale until the next
+        unrelated CRUD action re-registered it.
+
+        Returns (approved, interrupted) — interrupted True only if the
+        question itself got barge-in-cut off mid-sentence."""
+        state_manager.set_state(AssistantState.SPEAKING)
+        question = f"Выполнить «{trigger_phrase}»?"
+        if self._speak_safely(tts, question, response_language):
+            return False, True
+
+        state_manager.set_state(AssistantState.LISTENING, "Жду подтверждения")
+        confirm_audio = audio_io.record_until_silence(self._settings, self._stop_event)
+        confirm_result = command_stt.transcribe(confirm_audio)
+        return is_affirmative(confirm_result.text, response_language), False
+
     def _handle_command(self, command_stt: SpeechToText, tts: TextToSpeech) -> bool:
         """Returns True if the user barge-in-interrupted the spoken reply
         with a stop phrase — see VoiceAssistantLoop._run, which then skips
@@ -1135,27 +1210,105 @@ class VoiceAssistantLoop:
 
         self._learn_facts(result.text, decision.resolved)
 
-        command = interpret(result.text, decision.resolved)
-        if command is not None and command.name in ("messaging_reply", "messaging_snooze"):
-            # "ответь"/"отложи" are common phrase-openers for plenty of non-
-            # messaging requests too ("ответь, который час", "отложи это на
-            # потом" as a throwaway remark) — _MESSAGING_REPLY_PATTERNS/
-            # _MESSAGING_SNOOZE_PATTERNS in intent.py match on the verb
-            # alone, with no way to check for an actual pending message from
-            # a regex. Only claim the utterance as one of these commands
-            # when there's really something to act on; otherwise treat it
-            # exactly as if interpret() hadn't matched at all, so it still
-            # gets a chance at plugin matching / a real AI answer instead of
-            # a flat "Нет ожидающих сообщений." dead end.
-            if not messaging_service_layer.list_pending(MessagingUnitOfWork()):
-                command = None
-        if command is None:
-            command = match_plugin_command(result.text)
-        if command is None:
-            command, interrupted = self._classify_via_ai_bridge(result.text, command_stt, tts, response_language)
+        # Custom commands (modules/custom_commands) are checked before even
+        # the rule-based interpret() — a user-authored trigger phrase is
+        # meant to be an unconditional personal shortcut, so it must win
+        # over generic built-in interpretation too, not just over the AI
+        # fallback. This does mean a carelessly chosen trigger phrase could
+        # shadow a built-in command; that's the same accepted trade-off
+        # modules/plugin_agent's trigger phrases already carry today, not a
+        # new risk category.
+        text_to_interpret = result.text
+        custom_match = custom_commands.match(result.text)
+        if custom_match is not None:
+            # launch_app runs an arbitrary stored executable path and
+            # text_instruction can trigger anything the AI/command pipeline
+            # is capable of — both optionally gated behind one spoken
+            # yes/no first. open_link/play_audio/open_media just open
+            # something, same risk tier as the existing open_app command,
+            # so they're never gated here. Off by default — see
+            # modules/user_profile/domain.py's
+            # CUSTOM_COMMANDS_REQUIRE_CONFIRMATION_KEY.
+            needs_confirmation = (
+                custom_match.action_type in (ActionType.LAUNCH_APP, ActionType.TEXT_INSTRUCTION)
+                and custom_commands.requires_confirmation()
+            )
+            if needs_confirmation:
+                approved, interrupted = self._confirm_custom_command(
+                    custom_match.trigger_phrase, command_stt, tts, response_language
+                )
+                if interrupted:
+                    state_manager.set_state(AssistantState.IDLE)
+                    return True
+                if not approved:
+                    state_manager.set_state(AssistantState.SPEAKING)
+                    self._speak_safely(tts, "Хорошо, не выполняю.", response_language)
+                    state_manager.set_state(AssistantState.IDLE)
+                    return False
+
+            if custom_match.action_type is ActionType.TEXT_INSTRUCTION:
+                # A TEXT_INSTRUCTION custom command is a personal shortcut
+                # for a longer spoken request — e.g. a trigger phrase
+                # "напиши маме" standing in for "напиши в телеграм маме что
+                # я задержусь". Substitute the stored instruction in place
+                # of what was actually said and let it flow through the
+                # normal chain below exactly once — custom_match is cleared
+                # so it isn't re-checked against custom commands again,
+                # guarding against an instruction that itself happens to
+                # match another trigger phrase turning into an alias loop.
+                text_to_interpret = custom_match.action_payload.get("instruction", "")
+                custom_match = None
+
+        if custom_match is not None:
+            command: Command | None = Command(
+                name=custom_commands.dispatcher_command_name(custom_match.id), params={}
+            )
+        else:
+            command = interpret(text_to_interpret, decision.resolved)
+            if command is not None and command.name in ("messaging_reply", "messaging_snooze"):
+                # "ответь"/"отложи" are common phrase-openers for plenty of non-
+                # messaging requests too ("ответь, который час", "отложи это на
+                # потом" as a throwaway remark) — _MESSAGING_REPLY_PATTERNS/
+                # _MESSAGING_SNOOZE_PATTERNS in intent.py match on the verb
+                # alone, with no way to check for an actual pending message from
+                # a regex. Only claim the utterance as one of these commands
+                # when there's really something to act on; otherwise treat it
+                # exactly as if interpret() hadn't matched at all, so it still
+                # gets a chance at plugin matching / a real AI answer instead of
+                # a flat "Нет ожидающих сообщений." dead end.
+                if not messaging_service_layer.list_pending(MessagingUnitOfWork()):
+                    command = None
             if command is None:
+                command = match_plugin_command(text_to_interpret)
+            if command is None:
+                # Fast, fully local system-command filter (volume, windows,
+                # filesystem, language, battery, updates) — tried before ever
+                # spending time/quota on an external AI provider. See
+                # modules/hardware_adaptive/command_classifier.py's module
+                # docstring for why this sits here, between plugin matching and
+                # the AI classifier.
+                command = command_classifier.match_system_command(text_to_interpret)
+            if command is None:
+                command, interrupted = self._classify_via_ai_bridge(
+                    text_to_interpret, command_stt, tts, response_language
+                )
+                if command is None:
+                    state_manager.set_state(AssistantState.IDLE)
+                    return interrupted
+
+        # `command` is now a real command about to be resolved/dispatched —
+        # as opposed to a plain conversational answer, which
+        # _classify_via_ai_bridge already speaks and returns from above
+        # without ever reaching here. This is the single choke point every
+        # command type passes through (system command, custom command,
+        # plugin match, Figma/Blender command, ...), so it's also the right
+        # place for the Jarvis-style "Да, сэр"/"Да, мэм" acknowledgement —
+        # see modules/user_profile/domain.py's CONFIRMATION_PHRASE_ENABLED_KEY.
+        if confirmation_phrase.is_enabled():
+            state_manager.set_state(AssistantState.SPEAKING)
+            if self._speak_safely(tts, confirmation_phrase.get_confirmation_phrase(), response_language):
                 state_manager.set_state(AssistantState.IDLE)
-                return interrupted
+                return True
 
         try:
             if command.name == "open_app":

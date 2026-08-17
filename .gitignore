@@ -33,6 +33,12 @@ frontend/dist-electron/
 frontend/dist-builder/
 frontend/release/
 
+# figma_plugin — code.js is a build artifact (npm run build); see that
+# directory's README.md. Not shipped in the repo since Figma reloads it
+# fresh from source each time anyway.
+figma_plugin/node_modules/
+figma_plugin/code.js
+
 # Editors / OS
 .idea/
 .vscode/

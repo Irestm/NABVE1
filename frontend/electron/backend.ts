@@ -74,6 +74,15 @@ export async function startBackend(): Promise<ChildProcess | null> {
     process.stdout.write(`[backend] exited with code ${code}\n`);
     backendProcess = null;
   });
+  // Without a listener, a spawn failure (missing/corrupt venv interpreter,
+  // EACCES, ...) fires Node's EventEmitter "error" event with nothing
+  // attached, which throws and crashes the whole Electron main process —
+  // see electron/setup.ts's runCommand for the same handler shape used
+  // there.
+  child.on("error", (error: Error) => {
+    process.stderr.write(`[backend] failed to start: ${String(error)}\n`);
+    backendProcess = null;
+  });
 
   backendProcess = child;
   return child;

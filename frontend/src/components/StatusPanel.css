@@ -53,54 +53,8 @@
   cursor: default;
 }
 
-.status-panel__providers {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.status-panel__provider {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  font-size: 11px;
-  color: var(--text-faint);
-  transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
-}
-
-.status-panel__provider-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-faint);
-  transition: background var(--transition-fast);
-}
-
-.status-panel__provider--active {
-  border-color: var(--accent-blue);
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
-}
-
-.status-panel__provider--active .status-panel__provider-dot {
-  background: var(--accent-blue);
-  box-shadow: 0 0 6px var(--accent-blue);
-}
-
-.status-panel__provider--limited {
-  border-color: var(--accent-red);
-}
-
-.status-panel__provider--limited .status-panel__provider-dot {
-  background: var(--accent-red);
-}
-
-.status-panel__provider-badge {
-  font-size: 9px;
-  color: var(--accent-red);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.status-panel__provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
 }

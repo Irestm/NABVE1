@@ -1,0 +1,112 @@
+.custom-commands-panel {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  gap: 16px;
+}
+
+.custom-commands-panel__group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.custom-commands-panel__subheading {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.custom-commands-panel__list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.custom-commands-panel__add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--accent-blue);
+  color: #04070c;
+  border: none;
+  cursor: pointer;
+  transition: box-shadow var(--transition-fast);
+}
+
+.custom-commands-panel__add:hover {
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent-blue) 55%, transparent);
+}
+
+.custom-commands-panel__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.custom-commands-panel__card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.custom-commands-panel__card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.custom-commands-panel__card-phrase {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.custom-commands-panel__card-meta {
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.custom-commands-panel__card-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+.custom-commands-panel__card-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.custom-commands-panel__card-actions button:hover:not(:disabled) {
+  border-color: var(--accent-blue);
+  color: var(--text);
+}
+
+.custom-commands-panel__card-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

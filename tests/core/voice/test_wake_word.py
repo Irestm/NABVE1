@@ -116,3 +116,64 @@ def test_listen_for_any_pins_language_to_fallback_language(monkeypatch) -> None:
 
     assert result == "pause"
     assert stt.calls == [settings.fallback_language]
+
+
+def test_listen_for_any_matches_any_variant_in_a_phrase_tuple(monkeypatch) -> None:
+    # modules/tray_hide passes a tuple of interchangeable phrases (defaults
+    # plus an optional custom one) under a single name - any one of them
+    # heard should count as that name matching.
+    settings = VoiceSettings()
+    stt = _RecordingSTT("скройся")
+
+    windows = iter([np.ones(1, dtype=np.float32), np.zeros(0, dtype=np.float32)])
+    monkeypatch.setattr(
+        wake_word_module.RollingAudioBuffer,
+        "read_window",
+        lambda self, timeout: next(windows, np.zeros(0, dtype=np.float32)),
+    )
+    monkeypatch.setattr(wake_word_module.RollingAudioBuffer, "start", lambda self: None)
+    monkeypatch.setattr(wake_word_module.RollingAudioBuffer, "stop", lambda self: None)
+
+    stop_event = threading.Event()
+    result = wake_word_module._listen_for_any(
+        stt, settings, {"tray_hide": ("спрячься", "скройся", "уйди в трей")}, stop_event
+    )
+
+    assert result == "tray_hide"
+
+
+# --- resolve_wake_phrases ----------------------------------------------------
+
+
+def test_resolve_wake_phrases_returns_defaults_plus_settings_wake_word_when_no_custom_phrase() -> None:
+    settings = VoiceSettings()
+
+    phrases = wake_word_module.resolve_wake_phrases(settings, None)
+
+    assert set(wake_word_module.DEFAULT_WAKE_PHRASES) <= set(phrases)
+    assert settings.wake_word in phrases
+
+
+def test_resolve_wake_phrases_adds_custom_phrase_without_dropping_defaults() -> None:
+    settings = VoiceSettings()
+
+    phrases = wake_word_module.resolve_wake_phrases(settings, "джарвис проснись")
+
+    assert "джарвис проснись" in phrases
+    assert set(wake_word_module.DEFAULT_WAKE_PHRASES) <= set(phrases)
+
+
+def test_resolve_wake_phrases_deduplicates_case_and_whitespace_insensitively() -> None:
+    settings = VoiceSettings()
+
+    phrases = wake_word_module.resolve_wake_phrases(settings, "  Привет  ")
+
+    assert phrases.count("привет") + phrases.count("Привет") + phrases.count("  Привет  ") == 1
+
+
+def test_resolve_wake_phrases_ignores_blank_custom_phrase() -> None:
+    settings = VoiceSettings()
+
+    phrases = wake_word_module.resolve_wake_phrases(settings, "   ")
+
+    assert phrases == wake_word_module.resolve_wake_phrases(settings, None)

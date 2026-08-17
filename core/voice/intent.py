@@ -295,6 +295,25 @@ def is_resign_command(text: str, language: str) -> bool:
     return fuzzy_matches_any(normalized, RESIGN_PHRASES.get(language, set()))
 
 
+# Trigger words for modules.figma_control (see that module's
+# command_parser.py for the actual action/params parsing — this only
+# decides whether an utterance should be routed there at all).
+# Deliberately broad and unanchored, and checked last (right before the
+# equally-broad _OPEN_APP_PATTERNS) since a Figma voice command can start
+# with many different verbs ("создай", "выдели", "покрась", "сгруппируй",
+# "выровняй", "удали слой", "отмени", ...) that aren't worth enumerating
+# here when command_parser.py already knows how to parse each of them.
+# Extend this set as real usage surfaces gaps or false positives.
+_FIGMA_TRIGGER_WORDS: dict[str, tuple[str, ...]] = {
+    "ru": ("в фигме", "в figma", "фигма", "фигму", "слой", "фрейм", "прямоугольник"),
+    "en": ("in figma", "figma", "layer", "frame", "rectangle"),
+}
+
+
+def _mentions_figma(normalized: str, language: str) -> bool:
+    return any(word in normalized for word in _FIGMA_TRIGGER_WORDS.get(language, ()))
+
+
 def _normalize(text: str) -> str:
     return re.sub(r"[^\w\s']", "", text, flags=re.UNICODE).strip().lower()
 
@@ -384,6 +403,9 @@ def interpret(text: str, language: str) -> Command | None:
             return Command(
                 name="messaging_watch_contact", params={"raw_text": watch_match.group(1).strip()}
             )
+
+    if _mentions_figma(normalized, language):
+        return Command(name="figma_command", params={"text": text})
 
     pattern = _OPEN_APP_PATTERNS.get(language)
     if pattern:

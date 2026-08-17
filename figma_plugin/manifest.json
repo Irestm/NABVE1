@@ -1,0 +1,14 @@
+{
+  "name": "Jarvis Voice Control",
+  "id": "jarvis-figma-control-local",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "capabilities": [],
+  "networkAccess": {
+    "allowedDomains": ["http://127.0.0.1:8756", "ws://127.0.0.1:8756"],
+    "devAllowedDomains": ["http://127.0.0.1:*", "ws://127.0.0.1:*"],
+    "reasoning": "Connects to the local Jarvis assistant backend (modules/figma_control) over a loopback WebSocket so voice commands can drive the Figma document. Never leaves the local machine."
+  }
+}

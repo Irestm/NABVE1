@@ -7,8 +7,37 @@ import numpy as np
 
 from core.voice.audio_io import RollingAudioBuffer, require_sounddevice
 from core.voice.config import VoiceSettings
-from core.voice.phrase_matching import fuzzy_contains_phrase
+from core.voice.phrase_matching import fuzzy_matches_any
 from core.voice.stt import SpeechToText
+
+# Natural variations of the default Russian wake phrase, so "Привет!" said
+# plainly, "Привет, Джарвис" and "Эй, Джарвис" all activate the assistant
+# without the user needing to know one exact configured string. See
+# resolve_wake_phrases, the only place this is read.
+DEFAULT_WAKE_PHRASES: tuple[str, ...] = ("привет", "привет джарвис", "эй джарвис", "привет набве")
+
+
+def resolve_wake_phrases(settings: VoiceSettings, custom_phrase: str | None) -> tuple[str, ...]:
+    """The full set of phrases that should activate the assistant:
+    DEFAULT_WAKE_PHRASES, settings.wake_word (kept for backwards
+    compatibility with anyone already relying on the older single-word
+    ASSISTANT_WAKE_WORD env var), and the user's own custom phrase from the
+    "Активационная фраза" settings field if they've set one — same
+    default-plus-custom shape as modules/tray_hide/detector.py's
+    hide_phrases/show_phrases. Added to the defaults, not replacing them, so
+    setting a custom phrase never silently disables "привет"/"эй джарвис"
+    for a user who forgets they set one. Deduplicated
+    (case/whitespace-insensitively) since settings.wake_word's default,
+    "ассистент", or a custom phrase may coincide with a default entry."""
+    seen: set[str] = set()
+    phrases: list[str] = []
+    for phrase in (*DEFAULT_WAKE_PHRASES, settings.wake_word, custom_phrase or ""):
+        normalized = phrase.strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        phrases.append(phrase.strip())
+    return tuple(phrases)
 
 
 class WakeWordDetector(ABC):
@@ -18,15 +47,21 @@ class WakeWordDetector(ABC):
 
 
 def _listen_for_any(
-    stt: SpeechToText, settings: VoiceSettings, phrases: dict[str, str], stop_event: threading.Event
+    stt: SpeechToText,
+    settings: VoiceSettings,
+    phrases: dict[str, str | tuple[str, ...]],
+    stop_event: threading.Event,
 ) -> str | None:
     """Polls the mic in settings.wake_word_check_interval_seconds-spaced
     2s windows, transcribing each and fuzzy-matching against every phrase in
-    `phrases` (name -> phrase text), until one matches or `stop_event` is
-    set. Returns the matching name, or None if `stop_event` fired first.
-    Shared by KeywordWakeWordDetector.listen and listen_for_phrases so
-    checking multiple phrases (e.g. the wake word and a configured stop
-    word) costs one STT pass per window instead of one per phrase.
+    `phrases` (name -> phrase text, or name -> a tuple of interchangeable
+    phrase variants — e.g. modules/tray_hide's default/custom hide-phrase
+    list, all of which should count as the same "name" matching), until one
+    matches or `stop_event` is set. Returns the matching name, or None if
+    `stop_event` fired first. Shared by KeywordWakeWordDetector.listen and
+    listen_for_phrases so checking multiple phrases (e.g. the wake word and
+    a configured stop word) costs one STT pass per window instead of one per
+    phrase.
 
     Transcription is pinned to settings.fallback_language rather than left
     on Whisper's own per-window autodetect: a short 2s window containing
@@ -52,7 +87,8 @@ def _listen_for_any(
                 continue
             result = stt.transcribe(window, settings.fallback_language)
             for name, phrase in phrases.items():
-                if fuzzy_contains_phrase(result.text, phrase):
+                variants = (phrase,) if isinstance(phrase, str) else phrase
+                if fuzzy_matches_any(result.text, variants):
                     return name
         return None
     finally:
@@ -123,7 +159,7 @@ _phrase_stt_by_size: dict[str, SpeechToText] = {}
 
 def listen_for_phrases(
     settings: VoiceSettings,
-    phrases: dict[str, str],
+    phrases: dict[str, str | tuple[str, ...]],
     stop_event: threading.Event,
     *,
     model_size: str | None = None,

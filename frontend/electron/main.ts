@@ -1,10 +1,10 @@
-import { app, BrowserWindow, Tray, desktopCapturer, dialog, ipcMain, session, shell } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, shell } from "electron";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { startBackend, stopBackend } from "./backend";
 import { getSetupLogPath, needsSetup, runSetup } from "./setup";
 import { createSetupWindow, sendSetupError, sendSetupProgress } from "./setupWindow";
-import { createTray } from "./tray";
+import { createTray, TrayHandle } from "./tray";
 import { BACKEND_BASE_URL, DEV_SERVER_URL } from "./config";
 
 // Electron's app.getPath("userData") (used by electron/setup.ts for the
@@ -53,7 +53,7 @@ if (!app.requestSingleInstanceLock()) {
   const UI_VISIBILITY_POLL_INTERVAL_MS = 1000;
 
   let mainWindow: BrowserWindow | null = null;
-  let tray: Tray | null = null;
+  let trayHandle: TrayHandle | null = null;
   let visibilityPollTimer: NodeJS.Timeout | null = null;
   let isQuitting = false;
   // Set via the "meeting-recording-active-changed" IPC message the preload
@@ -64,6 +64,25 @@ if (!app.requestSingleInstanceLock()) {
 
   ipcMain.on("meeting-recording-active-changed", (_event, active: boolean) => {
     meetingRecordingActive = Boolean(active);
+  });
+
+  // components/CustomCommandsPanel.tsx's launch_app "Обзор…" button (see
+  // preload.ts's pickExecutablePath) — the first invoke/handle (two-way,
+  // promise-returning) IPC pair in this app; everything else here is
+  // fire-and-forget ipcMain.on/send. No file-type filter: an "executable"
+  // is platform-dependent (a .exe on Windows, no extension at all on
+  // Linux, an .app bundle on macOS), so this just lets the user pick any
+  // file/bundle rather than guessing a filter that would exclude valid
+  // choices on some platform.
+  ipcMain.handle("pick-executable", async () => {
+    const options: Electron.OpenDialogOptions = { properties: ["openFile"] };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+    return result.filePaths[0];
   });
 
   function confirmQuitDuringActiveRecording(): boolean {
@@ -236,6 +255,12 @@ if (!app.requestSingleInstanceLock()) {
       }
       await new Promise((resolve) => setTimeout(resolve, BACKEND_READY_POLL_INTERVAL_MS));
     }
+    // Falls through to showing the window anyway (see this function's own
+    // comment above) — App.tsx's own /api/status poll will then surface
+    // "Нет связи с ядром ассистента" to the user. This log line is only so
+    // the reason is visible in the packaged app's own log file, not just
+    // inferred from the frontend's generic connection error.
+    process.stderr.write(`[main] Backend did not become ready within ${BACKEND_READY_TIMEOUT_MS}ms\n`);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-inner-declarations
@@ -257,8 +282,10 @@ if (!app.requestSingleInstanceLock()) {
           if (body.action === "show") {
             mainWindow.show();
             mainWindow.focus();
+            trayHandle?.setHiddenIndicator(false);
           } else if (body.action === "hide") {
             mainWindow.hide();
+            trayHandle?.setHiddenIndicator(true);
           }
         })
         .catch(() => {
@@ -270,7 +297,7 @@ if (!app.requestSingleInstanceLock()) {
   async function launchNormally(): Promise<void> {
     await startBackend();
     mainWindow = createStatusWindow();
-    tray = createTray(mainWindow, setAlwaysOnTop);
+    trayHandle = createTray(mainWindow, setAlwaysOnTop);
     startUiVisibilityPolling();
     registerMeetingDisplayMediaHandler();
 
@@ -308,13 +335,24 @@ if (!app.requestSingleInstanceLock()) {
     await attempt();
   }
 
-  app.whenReady().then(async () => {
-    if (app.isPackaged && (await needsSetup())) {
-      await runSetupFlow();
-    } else {
-      await launchNormally();
-    }
-  });
+  app
+    .whenReady()
+    .then(async () => {
+      if (app.isPackaged && (await needsSetup())) {
+        await runSetupFlow();
+      } else {
+        await launchNormally();
+      }
+    })
+    .catch((error: unknown) => {
+      // Without this .catch(), a failure here (including backend.ts's
+      // startBackend spawn error) becomes an unhandled promise rejection —
+      // no dialog, no window, the app just appears to do nothing.
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[main] Fatal error during startup: ${message}\n`);
+      dialog.showErrorBox("NABVE1 failed to start", message);
+      app.quit();
+    });
 
   // Fired on the original (first) instance when the user launches the icon
   // again while it's already running — bring the existing window forward
@@ -340,7 +378,7 @@ if (!app.requestSingleInstanceLock()) {
       clearInterval(visibilityPollTimer);
       visibilityPollTimer = null;
     }
-    tray?.destroy();
+    trayHandle?.tray.destroy();
     stopBackend();
   });
 

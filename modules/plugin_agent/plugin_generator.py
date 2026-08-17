@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -59,29 +60,40 @@ def build_generation_prompt(gap_candidate: dict[str, Any]) -> str:
     )
 
 
+_DEFAULT_ALLOWED_TOOLS = "Read Glob Grep Write(modules/plugins/_pending/**) Edit(modules/plugins/_pending/**)"
+_DEFAULT_DISALLOWED_TOOLS = "Bash WebFetch WebSearch"
+
+
 def invoke_claude_code(
     prompt: str,
     *,
     cwd: Path = BASE_DIR,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    permission_mode: str | None = "acceptEdits",
+    allowed_tools: str | None = _DEFAULT_ALLOWED_TOOLS,
+    disallowed_tools: str | None = _DEFAULT_DISALLOWED_TOOLS,
 ) -> subprocess.CompletedProcess[str]:
-    argv = [
-        "claude",
-        "-p",
-        prompt,
-        "--output-format",
-        "json",
-        "--permission-mode",
-        "acceptEdits",
+    """The single point of truth for shelling out to the Claude Code CLI for
+    any code-generation task in this project (plugin generation here, and
+    modules.wordpress_bridge.php_fixer for PHP fixes). Defaults match
+    plugin_agent's own original scoping exactly, so existing callers are
+    unaffected; other callers override permission_mode/allowed_tools/
+    disallowed_tools for their own safety boundary — e.g. php_fixer passes
+    permission_mode=None and allowed_tools=None (no tool use, no file writes
+    at all) since a WordPress install isn't part of this repo and there's no
+    directory equivalent to modules/plugins/_pending/ to scope writes to."""
+    argv = ["claude", "-p", prompt, "--output-format", "json"]
+    if permission_mode:
+        argv += ["--permission-mode", permission_mode]
+    if allowed_tools:
         # Best-effort scoping so the CLI itself avoids touching anything but
-        # the pending dir; git_safety.enforce_pending_only() is the actual
-        # authority and rolls back anything that slips past this anyway.
-        "--allowedTools",
-        "Read Glob Grep Write(modules/plugins/_pending/**) Edit(modules/plugins/_pending/**)",
-        "--disallowedTools",
-        "Bash WebFetch WebSearch",
-    ]
-    logger.info("Invoking Claude Code CLI for plugin generation (timeout=%ss)", timeout_seconds)
+        # what's allowed; git_safety.enforce_pending_only() (for plugin
+        # generation specifically) is the actual authority and rolls back
+        # anything that slips past this anyway.
+        argv += ["--allowedTools", allowed_tools]
+    if disallowed_tools:
+        argv += ["--disallowedTools", disallowed_tools]
+    logger.info("Invoking Claude Code CLI (timeout=%ss)", timeout_seconds)
     try:
         completed = subprocess.run(
             argv,
@@ -240,3 +252,46 @@ def generate_plugin_for_candidate(
         safety_report=safety_report,
         rolled_back_files=diff_result["rolled_back"],
     )
+
+
+def get_claude_auth_status() -> dict[str, Any]:
+    """Backs the "Подключение Claude для генерации кода" settings section
+    (and php_fixer.py's availability check) — a cheap, read-only probe of
+    whether the Claude Code CLI on this machine is already authenticated
+    (e.g. from a PyCharm session), so the user never has to log in twice."""
+    try:
+        completed = subprocess.run(
+            ["claude", "auth", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {"loggedIn": False, "error": "Claude Code CLI ('claude') not found on PATH."}
+    except subprocess.TimeoutExpired:
+        return {"loggedIn": False, "error": "Claude Code CLI did not respond in time."}
+
+    try:
+        status: dict[str, Any] = json.loads(completed.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return {"loggedIn": False, "error": completed.stderr.strip() or "Could not parse 'claude auth status'."}
+    status.setdefault("loggedIn", False)
+    return status
+
+
+def start_claude_login() -> None:
+    """Fire-and-forget: `claude auth login` runs its own interactive OAuth
+    flow (opens the system browser itself) — this just starts the process
+    detached from the backend and returns immediately. The frontend is
+    expected to poll get_claude_auth_status() afterwards until loggedIn
+    flips true."""
+    try:
+        subprocess.Popen(
+            ["claude", "auth", "login"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("Claude Code CLI ('claude') not found on PATH.") from exc

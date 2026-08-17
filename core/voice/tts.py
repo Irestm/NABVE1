@@ -11,9 +11,20 @@ from core.voice.config import VoiceSettings
 from core.voice.silero_tts import SAMPLE_RATE as SILERO_SAMPLE_RATE
 from core.voice.silero_tts import SileroVoice, resolve_silero_speaker, resolve_voice_prosody_rate
 from core.voice.sound_effects import BREATH_MARKER, generate_breath_sound
+from core.voice.tts_effects import (
+    apply_response_delay,
+    robotic_voice_effect,
+    tunnel_voice_effect,
+)
 from modules.user_profile import service_layer
 from modules.user_profile.communication_styles import get_current_style
-from modules.user_profile.domain import BREATH_EFFECT_KEY
+from modules.user_profile.domain import (
+    ASSISTANT_VOLUME_KEY,
+    BREATH_EFFECT_KEY,
+    DELAY_EFFECT_ENABLED_KEY,
+    DELAY_SECONDS_KEY,
+    VOICE_FX_MODE_KEY,
+)
 from modules.user_profile.uow import ProfileUnitOfWork
 
 logger = get_logger(__name__)
@@ -23,9 +34,65 @@ logger = get_logger(__name__)
 # to feel like a delay.
 _BREATH_GAP_SECONDS = 0.08
 
+_DEFAULT_DELAY_SECONDS = 0.3
+_DEFAULT_ASSISTANT_VOLUME = 100
+
 
 def _breath_effect_enabled() -> bool:
     return service_layer.get_fact(ProfileUnitOfWork(), BREATH_EFFECT_KEY) == "1"
+
+
+def _apply_delay_if_enabled(samples: np.ndarray, sample_rate: int) -> np.ndarray:
+    if service_layer.get_fact(ProfileUnitOfWork(), DELAY_EFFECT_ENABLED_KEY) != "1":
+        return samples
+    raw_seconds = service_layer.get_fact(ProfileUnitOfWork(), DELAY_SECONDS_KEY)
+    try:
+        seconds = float(raw_seconds) if raw_seconds else _DEFAULT_DELAY_SECONDS
+    except ValueError as corrupted_delay_setting:
+        logger.debug(
+            "Could not parse stored %s=%r, using default: %s",
+            DELAY_SECONDS_KEY,
+            raw_seconds,
+            corrupted_delay_setting,
+        )
+        seconds = _DEFAULT_DELAY_SECONDS
+    return apply_response_delay(samples, sample_rate, seconds)
+
+
+def _apply_voice_fx(samples: np.ndarray, sample_rate: int) -> np.ndarray:
+    mode = service_layer.get_fact(ProfileUnitOfWork(), VOICE_FX_MODE_KEY)
+    if mode == "tunnel":
+        return tunnel_voice_effect(samples, sample_rate)
+    if mode == "robotic":
+        return robotic_voice_effect(samples, sample_rate)
+    return samples
+
+
+def get_assistant_volume() -> int:
+    """The assistant's own TTS output gain (0-100), independent of the OS
+    mixer level set via core/dispatcher.py's set_volume/change_volume."""
+    raw = service_layer.get_fact(ProfileUnitOfWork(), ASSISTANT_VOLUME_KEY)
+    if not raw:
+        return _DEFAULT_ASSISTANT_VOLUME
+    try:
+        return max(0, min(100, int(raw)))
+    except ValueError as corrupted_volume_setting:
+        logger.debug(
+            "Could not parse stored %s=%r, using default: %s", ASSISTANT_VOLUME_KEY, raw, corrupted_volume_setting
+        )
+        return _DEFAULT_ASSISTANT_VOLUME
+
+
+def set_assistant_volume(percent: int) -> None:
+    clamped = max(0, min(100, percent))
+    service_layer.set_fact(ProfileUnitOfWork(), ASSISTANT_VOLUME_KEY, str(clamped))
+
+
+def _apply_assistant_volume(samples: np.ndarray) -> np.ndarray:
+    percent = get_assistant_volume()
+    if percent == 100 or samples.size == 0:
+        return samples
+    return np.clip(samples * (percent / 100.0), -1.0, 1.0).astype(np.float32)
 
 
 def _apply_prosody_rate(samples: np.ndarray, rate: float) -> np.ndarray:
@@ -143,10 +210,15 @@ class TextToSpeech:
         effective_rate = style.prosody_rate * voice_rate
 
         if _breath_effect_enabled() and BREATH_MARKER in text:
-            return self._synthesize_with_breath_markers(text, language, speaker, effective_rate)
+            samples, sample_rate = self._synthesize_with_breath_markers(text, language, speaker, effective_rate)
+        else:
+            samples, sample_rate = self._synthesize_raw(text, language, speaker)
+            samples = _apply_prosody_rate(samples, effective_rate)
 
-        samples, sample_rate = self._synthesize_raw(text, language, speaker)
-        return _apply_prosody_rate(samples, effective_rate), sample_rate
+        samples = _apply_delay_if_enabled(samples, sample_rate)
+        samples = _apply_voice_fx(samples, sample_rate)
+        samples = _apply_assistant_volume(samples)
+        return samples, sample_rate
 
     def _synthesize_with_breath_markers(
         self, text: str, language: str, speaker: str | None, effective_rate: float

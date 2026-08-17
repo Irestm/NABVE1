@@ -11,15 +11,18 @@ from core.voice.announcements import ReminderAnnouncer
 from core.voice.pipeline import VoiceAssistantLoop
 from core.voice.proactive_announcer import ProactiveAnnouncer
 from modules.ai_bridge import register_commands as register_ai_bridge_commands
+from modules.blender_control import register_commands as register_blender_control_commands
 from modules.calendar import reminder_checker, register_commands as register_calendar_commands
 from modules.calendar.events import ReminderDue
 from modules.calendar.notifier import ReminderChecker
 from modules.cmd_executor import register_commands as register_cmd_executor_commands
 from modules.crm_transcribe import register_commands as register_crm_transcribe_commands
+from modules.custom_commands import register_commands as register_custom_commands_commands
+from modules.figma_control import register_commands as register_figma_control_commands
 from modules.files import register_commands as register_files_commands
 from modules.gmail import gmail_poller
 from modules.gmail.poller import GmailPoller
-from modules.hardware_adaptive import hardware_monitor, register_commands as register_hardware_adaptive_commands
+from modules.hardware_adaptive import command_classifier, hardware_monitor, register_commands as register_hardware_adaptive_commands
 from modules.hardware_adaptive.events import HardwareAlertRaised
 from modules.hardware_adaptive.system_monitor import HardwareMonitor
 from modules.media import register_commands as register_media_commands
@@ -33,11 +36,13 @@ from modules.password_manager import register_commands as register_password_mana
 from modules.plugin_agent import register_commands as register_plugin_agent_commands
 from modules.plugin_agent import shutdown as shutdown_plugin_agent
 from modules.plugin_agent.events import PluginCandidateReadyForReview
+from modules.quizlet_clone import register_commands as register_quizlet_clone_commands
 from modules.search import register_commands as register_search_commands
 from modules.task_orchestrator import register_commands as register_task_orchestrator_commands
 from modules.ui_automation import register_commands as register_ui_automation_commands
 from modules.ui_control import register_commands as register_ui_control_commands
 from modules.user_profile import register_commands as register_user_profile_commands
+from modules.wordpress_bridge import register_commands as register_wordpress_bridge_commands
 
 
 @dataclass
@@ -86,7 +91,18 @@ def compose(bus: MessageBus = message_bus) -> Composed:
     dispatcher = build_dispatcher(settings.confirmation_ttl_seconds)
     voice_loop = VoiceAssistantLoop(dispatcher)
 
+    # Starts loading the local embedding model + precomputing its command
+    # catalog on a background thread now, so it's already warm by the time
+    # the first voice command arrives (see command_classifier.match_system_command,
+    # used by core/voice/pipeline.py and core/voice/web_pipeline.py) instead
+    # of paying the ~1-2s model-load cost on that first real request.
+    command_classifier.warm_up()
+
     register_files_commands(dispatcher)
+    register_custom_commands_commands(dispatcher)
+    register_quizlet_clone_commands(dispatcher)
+    register_figma_control_commands(dispatcher)
+    register_blender_control_commands(dispatcher)
     register_crm_transcribe_commands(dispatcher)
     register_ai_bridge_commands(dispatcher)
     register_search_commands(dispatcher)
@@ -100,6 +116,7 @@ def compose(bus: MessageBus = message_bus) -> Composed:
     register_media_commands(dispatcher)
     register_ui_automation_commands(dispatcher)
     register_messaging_commands(dispatcher)
+    register_wordpress_bridge_commands(dispatcher)
     # Registered last is not load-bearing: dispatcher.list_commands() (what
     # modules.task_orchestrator.service_layer.build_plan offers the planner
     # as candidate steps) is only ever called later, at an actual voice

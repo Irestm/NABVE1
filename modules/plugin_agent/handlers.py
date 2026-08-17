@@ -13,6 +13,7 @@ from modules.plugin_agent.plugin_loader import (
     init_plugin_loader,
     start_hot_reload,
 )
+from modules.plugin_agent.plugin_generator import get_claude_auth_status, start_claude_login
 from modules.plugin_agent.promotion_worker import GapPromotionWorker
 from modules.plugin_agent.uow import PluginAgentUnitOfWork
 
@@ -79,6 +80,15 @@ async def _handle_reject(params: dict[str, Any]) -> dict[str, Any]:
     return {"suggestion_id": suggestion_id}
 
 
+async def _handle_claude_cli_status(_params: dict[str, Any]) -> dict[str, Any]:
+    return await asyncio.to_thread(get_claude_auth_status)
+
+
+async def _handle_claude_cli_login(_params: dict[str, Any]) -> dict[str, Any]:
+    await asyncio.to_thread(start_claude_login)
+    return {"message": "Открываю вход в Claude в браузере — завершите его там."}
+
+
 def register_commands(dispatcher: CommandDispatcher) -> None:
     global _hot_reload_observer
     init_plugin_loader(dispatcher)
@@ -108,6 +118,18 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         _handle_reject,
         dangerous=False,
         description="Reject and discard a generated plugin suggestion (suggestion_id).",
+    )
+    dispatcher.register(
+        "claude_cli_status",
+        _handle_claude_cli_status,
+        dangerous=False,
+        description="Check whether the Claude Code CLI is authenticated on this machine.",
+    )
+    dispatcher.register(
+        "claude_cli_login",
+        _handle_claude_cli_login,
+        dangerous=False,
+        description="Start the Claude Code CLI's own login flow (opens a browser).",
     )
 
 

@@ -51,6 +51,11 @@ class AIProviderAdapter(Protocol):
         """Detect from on-page UI markers whether the daily limit was hit."""
         ...
 
+    async def is_logged_in(self) -> bool:
+        """Best-effort: whether the current session looks authenticated
+        rather than guest."""
+        ...
+
     async def reveal(self) -> None:
         """Bring the provider's background tab/window to the foreground."""
         ...
@@ -94,6 +99,14 @@ class BrowserProviderAdapter(ABC):
     # visible text, mean the daily/usage limit has been hit. Provider UIs change
     # over time without notice, so this is a best-effort list, not a guarantee.
     limit_markers: tuple[str, ...] = ()
+    # Same idea as limit_markers, inverted: if any of these guest-mode
+    # invitations ("Sign in", "Log in", ...) are visible on the page, the
+    # session is not authenticated. Deliberately text-scanning rather than
+    # CSS selectors (like limit_markers) — a login/account button's exact
+    # markup is exactly the kind of thing that changes across a redesign
+    # without notice, whereas "some visible text invites you to sign in"
+    # is a much sturdier signal across UI changes.
+    guest_markers: tuple[str, ...] = ("sign in", "log in", "войти", "увійти")
 
     def __init__(self) -> None:
         self._playwright: Any = None
@@ -268,12 +281,24 @@ class BrowserProviderAdapter(ABC):
     async def close(self) -> None:
         async with self._lock:
             if self._context is not None:
-                await self._context.close()
-                self._context = None
-                self._page = None
+                try:
+                    await self._context.close()
+                except Exception as context_already_gone:
+                    logger.debug(
+                        "Error closing %s browser context: %s", self.name, context_already_gone, exc_info=True
+                    )
+                finally:
+                    self._context = None
+                    self._page = None
             if self._playwright is not None:
-                await self._playwright.stop()
-                self._playwright = None
+                try:
+                    await self._playwright.stop()
+                except Exception as driver_already_stopped:
+                    logger.debug(
+                        "Error stopping %s playwright driver: %s", self.name, driver_already_stopped, exc_info=True
+                    )
+                finally:
+                    self._playwright = None
             logger.info("Closed %s browser context.", self.name)
 
     async def _locate_prompt_box(self, page: Any) -> Any:
@@ -394,6 +419,22 @@ class BrowserProviderAdapter(ABC):
             logger.debug("Could not read %s page text to check limit status: %s", self.name, exc)
             return False
         return any(marker.lower() in body_text for marker in self.limit_markers)
+
+    async def is_logged_in(self) -> bool:
+        """Never opens a browser just to check — status is only meaningful
+        for a provider whose session is already open (see
+        provider_auth.py); an unopened context honestly reports "guest"
+        rather than launching a whole browser for a status check."""
+        if self._context is None:
+            return False
+        async with self._lock:
+            page = await self._ensure_page()
+        try:
+            body_text = (await page.locator("body").inner_text()).lower()
+        except Exception as exc:
+            logger.debug("Could not read %s page text to check login status: %s", self.name, exc)
+            return False
+        return not any(marker in body_text for marker in self.guest_markers)
 
     @abstractmethod
     def _describe(self) -> str:

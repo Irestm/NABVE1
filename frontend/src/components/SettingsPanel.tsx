@@ -1,13 +1,25 @@
-import { useEffect, useState } from "react";
-import { getProfileFact, saveAboutMe, setProfileFact } from "../api/client";
+import { useEffect, useRef, useState } from "react";
+import { getProfileFact, runCommand, saveAboutMe, setProfileFact } from "../api/client";
 import { DESIGNS } from "../design/registry";
 import type { DesignId } from "../design/types";
 import "./SettingsPanel.css";
 
 const ASSISTANT_NAME_KEY = "assistant_name";
 const ABOUT_ME_KEY = "about_me";
+// Matches modules/user_profile/domain.py's GENDER_KEY/DEFAULT_GENDER exactly.
+const GENDER_KEY = "gender";
+type Gender = "male" | "female";
+const DEFAULT_GENDER: Gender = "male";
+const CLAUDE_LOGIN_POLL_MS = 3000;
+const CLAUDE_LOGIN_POLL_MAX_ATTEMPTS = 40; // ~2 minutes
 
-type SettingsTab = "design" | "profile";
+type SettingsTab = "design" | "profile" | "code";
+
+interface ClaudeAuthStatus {
+  loggedIn: boolean;
+  email: string | undefined;
+  error: string | undefined;
+}
 
 interface SettingsPanelProps {
   designId: DesignId;
@@ -40,6 +52,14 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
   const [aboutStatus, setAboutStatus] = useState("");
   const [savingAbout, setSavingAbout] = useState(false);
 
+  const [gender, setGender] = useState<Gender>(DEFAULT_GENDER);
+  const [savingGender, setSavingGender] = useState(false);
+
+  const [claudeStatus, setClaudeStatus] = useState<ClaudeAuthStatus | null>(null);
+  const [claudeChecking, setClaudeChecking] = useState(false);
+  const [claudeLoggingIn, setClaudeLoggingIn] = useState(false);
+  const claudePollTimeout = useRef<number | null>(null);
+
   useEffect(() => {
     if (!open || loaded) {
       return;
@@ -48,7 +68,11 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
 
     async function load(): Promise<void> {
       try {
-        const [name, about] = await Promise.all([getProfileFact(ASSISTANT_NAME_KEY), getProfileFact(ABOUT_ME_KEY)]);
+        const [name, about, genderFact] = await Promise.all([
+          getProfileFact(ASSISTANT_NAME_KEY),
+          getProfileFact(ABOUT_ME_KEY),
+          getProfileFact(GENDER_KEY),
+        ]);
         if (cancelled) {
           return;
         }
@@ -56,6 +80,7 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
         setSavedName(name ?? "");
         setAboutInput(about ?? "");
         setSavedAbout(about ?? "");
+        setGender(genderFact === "female" ? "female" : DEFAULT_GENDER);
         setLoaded(true);
       } catch (error) {
         if (!cancelled) {
@@ -70,6 +95,68 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
       cancelled = true;
     };
   }, [open, loaded]);
+
+  async function checkClaudeStatus(): Promise<ClaudeAuthStatus> {
+    const response = await runCommand("claude_cli_status");
+    const result = (response.result ?? {}) as Partial<ClaudeAuthStatus>;
+    const status: ClaudeAuthStatus = {
+      loggedIn: Boolean(result.loggedIn),
+      email: typeof result.email === "string" ? result.email : undefined,
+      error: typeof result.error === "string" ? result.error : undefined,
+    };
+    setClaudeStatus(status);
+    return status;
+  }
+
+  useEffect(() => {
+    if (!open || tab !== "code" || claudeStatus !== null) {
+      return;
+    }
+    setClaudeChecking(true);
+    checkClaudeStatus()
+      .catch((error) => {
+        console.error("Failed to check Claude Code CLI status:", error);
+        setClaudeStatus({ loggedIn: false, email: undefined, error: "Не удалось проверить статус." });
+      })
+      .finally(() => setClaudeChecking(false));
+  }, [open, tab, claudeStatus]);
+
+  useEffect(() => {
+    return () => {
+      if (claudePollTimeout.current !== null) {
+        window.clearTimeout(claudePollTimeout.current);
+      }
+    };
+  }, []);
+
+  function pollClaudeStatusUntilLoggedIn(attempt = 0): void {
+    if (attempt >= CLAUDE_LOGIN_POLL_MAX_ATTEMPTS) {
+      setClaudeLoggingIn(false);
+      return;
+    }
+    claudePollTimeout.current = window.setTimeout(() => {
+      checkClaudeStatus()
+        .then((status) => {
+          if (status.loggedIn) {
+            setClaudeLoggingIn(false);
+          } else {
+            pollClaudeStatusUntilLoggedIn(attempt + 1);
+          }
+        })
+        .catch(() => pollClaudeStatusUntilLoggedIn(attempt + 1));
+    }, CLAUDE_LOGIN_POLL_MS);
+  }
+
+  async function handleClaudeLogin(): Promise<void> {
+    setClaudeLoggingIn(true);
+    try {
+      await runCommand("claude_cli_login");
+      pollClaudeStatusUntilLoggedIn();
+    } catch (error) {
+      console.error("Failed to start Claude Code CLI login:", error);
+      setClaudeLoggingIn(false);
+    }
+  }
 
   async function handleSaveName(): Promise<void> {
     const trimmed = nameInput.trim();
@@ -107,6 +194,20 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
       setAboutStatus("Не удалось сохранить.");
     } finally {
       setSavingAbout(false);
+    }
+  }
+
+  async function handleGenderChange(next: Gender): Promise<void> {
+    setSavingGender(true);
+    setError("");
+    try {
+      await setProfileFact(GENDER_KEY, next);
+      setGender(next);
+    } catch (error) {
+      console.error("Failed to save the gender setting:", error);
+      setError("Не удалось сохранить обращение.");
+    } finally {
+      setSavingGender(false);
     }
   }
 
@@ -149,6 +250,13 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
               >
                 Профиль
               </button>
+              <button
+                type="button"
+                className={`settings-panel__tab${tab === "code" ? " settings-panel__tab--active" : ""}`}
+                onClick={() => setTab("code")}
+              >
+                Генерация кода
+              </button>
             </div>
 
             {error && <p className="status-error">{error}</p>}
@@ -186,7 +294,7 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
                   );
                 })}
               </div>
-            ) : (
+            ) : tab === "profile" ? (
               <div className="settings-panel__profile">
                 {!loaded && !error && <p className="status-detail">Загрузка…</p>}
 
@@ -229,6 +337,57 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
                     </button>
                   </div>
                   {aboutStatus && <p className="status-detail">{aboutStatus}</p>}
+                </div>
+
+                <div className="settings-panel__field">
+                  <span className="settings-panel__label">Обращение</span>
+                  <div className="row">
+                    <label className="settings-panel__radio">
+                      <input
+                        type="radio"
+                        name="gender"
+                        checked={gender === "male"}
+                        disabled={savingGender}
+                        onChange={() => void handleGenderChange("male")}
+                      />
+                      Сэр (мужской)
+                    </label>
+                    <label className="settings-panel__radio">
+                      <input
+                        type="radio"
+                        name="gender"
+                        checked={gender === "female"}
+                        disabled={savingGender}
+                        onChange={() => void handleGenderChange("female")}
+                      />
+                      Мэм (женский)
+                    </label>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="settings-panel__profile">
+                <div className="settings-panel__field">
+                  <span className="settings-panel__label">Подключение Claude для генерации кода</span>
+                  <p className="status-detail">
+                    Единая точка правды для генерации кода в проекте (плагины, PHP-фиксы и т.д.) — Claude Code CLI.
+                    Если он уже авторизован на этой машине (например, из сессии PyCharm), отдельный вход не нужен.
+                  </p>
+                  {claudeChecking && !claudeStatus && <p className="status-detail">Проверяю статус…</p>}
+                  {claudeStatus && (
+                    <p className={claudeStatus.loggedIn ? "settings-panel__success" : "status-error"}>
+                      {claudeStatus.loggedIn
+                        ? `Claude подключён${claudeStatus.email ? ` (${claudeStatus.email})` : ""}`
+                        : `Claude не подключён — генерация кода недоступна${claudeStatus.error ? ` (${claudeStatus.error})` : ""}`}
+                    </p>
+                  )}
+                  {claudeStatus && !claudeStatus.loggedIn && (
+                    <div className="row">
+                      <button type="button" onClick={() => void handleClaudeLogin()} disabled={claudeLoggingIn}>
+                        {claudeLoggingIn ? "Ожидаю вход в браузере…" : "Войти в Claude"}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

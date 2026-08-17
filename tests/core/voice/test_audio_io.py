@@ -131,3 +131,67 @@ def test_onset_timeout_does_not_cut_off_speech_that_already_started(
     )
 
     assert result.shape[0] > 0
+
+
+class _FakeCallbackStream:
+    def __init__(self, *, samplerate: int, channels: int, dtype: str, callback: object, fail_on_start: bool) -> None:
+        self.callback = callback
+        self.started = False
+        self.closed = False
+        self.stopped = False
+        self._fail_on_start = fail_on_start
+
+    def start(self) -> None:
+        if self._fail_on_start:
+            raise RuntimeError("device busy")
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@dataclass
+class _FakeSoundDeviceForBuffer:
+    fail_on_start: bool = False
+    last_stream: _FakeCallbackStream = field(default=None)  # type: ignore[assignment]
+
+    def InputStream(self, **kwargs: object) -> _FakeCallbackStream:
+        self.last_stream = _FakeCallbackStream(fail_on_start=self.fail_on_start, **kwargs)
+        return self.last_stream
+
+
+def test_rolling_audio_buffer_closes_the_stream_if_start_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression test: InputStream's constructor already opens the PortAudio
+    # handle before .start() is even called — a failure in .start() used to
+    # leave that handle assigned to self._stream with nothing ever closing
+    # it, since the assignment happened before the call that could raise.
+    fake_sd = _FakeSoundDeviceForBuffer(fail_on_start=True)
+    monkeypatch.setattr(audio_io, "require_sounddevice", lambda: fake_sd)
+    buffer = audio_io.RollingAudioBuffer(_settings())
+
+    with pytest.raises(RuntimeError):
+        buffer.start()
+
+    assert fake_sd.last_stream is not None
+    assert fake_sd.last_stream.closed is True
+    assert buffer._stream is None
+
+
+def test_rolling_audio_buffer_start_and_stop_succeed_normally(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_sd = _FakeSoundDeviceForBuffer(fail_on_start=False)
+    monkeypatch.setattr(audio_io, "require_sounddevice", lambda: fake_sd)
+    buffer = audio_io.RollingAudioBuffer(_settings())
+
+    buffer.start()
+
+    assert fake_sd.last_stream.started is True
+    assert buffer._stream is fake_sd.last_stream
+
+    buffer.stop()
+
+    assert fake_sd.last_stream.stopped is True
+    assert fake_sd.last_stream.closed is True
+    assert buffer._stream is None

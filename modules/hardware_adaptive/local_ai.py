@@ -154,15 +154,24 @@ def _touch() -> None:
 def _idle_watcher() -> None:
     while True:
         time.sleep(_IDLE_CHECK_INTERVAL_SECONDS)
-        with _state_lock:
-            engine = _engine
-            idle_for = time.monotonic() - _last_used_at
-        if engine is not None and engine.is_loaded and idle_for >= _IDLE_UNLOAD_SECONDS:
-            logger.info(
-                "Local model idle for %.0fs (>= %ds threshold); unloading to free VRAM",
-                idle_for, _IDLE_UNLOAD_SECONDS,
-            )
-            engine.unload()
+        try:
+            with _state_lock:
+                engine = _engine
+                idle_for = time.monotonic() - _last_used_at
+            if engine is not None and engine.is_loaded and idle_for >= _IDLE_UNLOAD_SECONDS:
+                logger.info(
+                    "Local model idle for %.0fs (>= %ds threshold); unloading to free VRAM",
+                    idle_for, _IDLE_UNLOAD_SECONDS,
+                )
+                engine.unload()
+        except Exception:
+            # An uncaught exception here would silently kill this daemon
+            # thread (Python's default unhandled-thread-exception behavior
+            # is a stderr dump, not an assistant.log entry) — idle VRAM
+            # unloading would then just stop happening for the rest of the
+            # process's life with no trace of why. Same reasoning as
+            # modules/plugin_agent/promotion_worker.py's poll-tick guard.
+            logger.exception("Idle watcher tick failed")
 
 
 def _start_idle_watcher() -> None:

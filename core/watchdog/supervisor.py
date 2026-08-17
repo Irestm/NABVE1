@@ -101,7 +101,8 @@ class Supervisor:
         try:
             with urllib.request.urlopen(request, timeout=self._health_timeout) as response:
                 return 200 <= response.status < 300
-        except (urllib.error.URLError, OSError, ValueError):
+        except (urllib.error.URLError, OSError, ValueError) as health_check_unreachable:
+            logger.debug("Health check failed: %s", health_check_unreachable, exc_info=True)
             return False
 
     def _wait_backoff(self) -> None:

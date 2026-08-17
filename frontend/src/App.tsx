@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { BoardGameImageModal } from "./components/BoardGameImageModal";
+import { CommandPanel } from "./components/CommandPanel";
+import { CustomCommandsPanel } from "./components/CustomCommandsPanel";
 import { LanQrPanel } from "./components/LanQrPanel";
 import { PersonalityPanel } from "./components/PersonalityPanel";
 import { PlannerView } from "./components/PlannerView";
 import { PluginSuggestions } from "./components/PluginSuggestions";
+import { QuizletPanel } from "./components/QuizletPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { StatusPanel } from "./components/StatusPanel";
 import { TextChat } from "./components/TextChat";
@@ -33,6 +36,7 @@ function readStoredDesign(): DesignId {
 
 const STATE_LABELS: Record<AssistantState, string> = {
   idle: "Ожидание",
+  background_listening: "Жду «привет»",
   listening: "Слушаю",
   processing: "Обработка",
   thinking: "Думаю",
@@ -41,7 +45,7 @@ const STATE_LABELS: Record<AssistantState, string> = {
   paused: "На паузе",
 };
 
-type Tab = "assistant" | "planner";
+type Tab = "assistant" | "planner" | "commands" | "my_commands" | "learning";
 
 export function App(): JSX.Element {
   const [activeTab, setActiveTab] = useState<Tab>("assistant");
@@ -140,6 +144,24 @@ export function App(): JSX.Element {
           >
             Планировщик
           </button>
+          <button
+            className={`app-tabs__button${activeTab === "commands" ? " app-tabs__button--active" : ""}`}
+            onClick={() => setActiveTab("commands")}
+          >
+            Команды
+          </button>
+          <button
+            className={`app-tabs__button${activeTab === "my_commands" ? " app-tabs__button--active" : ""}`}
+            onClick={() => setActiveTab("my_commands")}
+          >
+            Мои команды
+          </button>
+          <button
+            className={`app-tabs__button${activeTab === "learning" ? " app-tabs__button--active" : ""}`}
+            onClick={() => setActiveTab("learning")}
+          >
+            Обучение
+          </button>
         </div>
 
         {activeTab === "assistant" ? (
@@ -158,9 +180,21 @@ export function App(): JSX.Element {
 
             <PluginSuggestions />
           </div>
-        ) : (
+        ) : activeTab === "planner" ? (
           <div key="planner" className="app-tab-content">
             <PlannerView />
+          </div>
+        ) : activeTab === "commands" ? (
+          <div key="commands" className="app-tab-content">
+            <CommandPanel />
+          </div>
+        ) : activeTab === "my_commands" ? (
+          <div key="my_commands" className="app-tab-content">
+            <CustomCommandsPanel />
+          </div>
+        ) : (
+          <div key="learning" className="app-tab-content">
+            <QuizletPanel />
           </div>
         )}
       </div>
