@@ -49,7 +49,17 @@ const WINGET_PACKAGES = [
   "UB-Mannheim.TesseractOCR",
   "Stockfish.Stockfish",
 ];
-const WINGET_PYTHON_ID = "Python.Python.3.12";
+
+// Python is installed straight from python.org (see installWindowsPython
+// below), not through winget — see that function's own comment for why.
+// Pinned to the newest 3.12.x release that actually ships a Windows
+// installer: python.org occasionally cuts a source-only patch with no
+// accompanying Windows/macOS binaries (3.12.11 through 3.12.14 are exactly
+// that, per python.org/downloads/windows/ — confirmed by hand against that
+// page, not assumed). Bump by hand only once a newer 3.12.x is confirmed to
+// have a python-*-amd64.exe listed there.
+const PYTHON_INSTALLER_VERSION = "3.12.10";
+const PYTHON_INSTALLER_URL = `https://www.python.org/ftp/python/${PYTHON_INSTALLER_VERSION}/python-${PYTHON_INSTALLER_VERSION}-amd64.exe`;
 
 export interface SetupProgress {
   step: string;
@@ -291,27 +301,52 @@ async function installLinuxSystemPackages(): Promise<void> {
 // configured source, including the built-in `msstore` one — and `msstore`
 // has its own separate one-time agreement (Microsoft Store Terms of
 // Transaction + sending the machine's 2-letter region) that has nothing to
-// do with the winget-pkgs community source our WINGET_PACKAGES/
-// WINGET_PYTHON_ID actually come from. On a machine where that msstore
-// agreement was never accepted, the source refresh fails outright with
-// 0x8a15000f ("Data required by the source is missing") and drags every
-// install down with it, no matter how many times the user clicks
-// "Повторить" — confirmed against a real user's setup.log, which showed the
-// msstore agreement text on the very first attempt. Scoping to
-// `--source winget` sidesteps msstore entirely, since we never need it.
+// do with the winget-pkgs community source WINGET_PACKAGES actually comes
+// from. On a machine where that msstore agreement was never accepted, the
+// source refresh fails outright with 0x8a15000f ("Data required by the
+// source is missing") and drags every install down with it, no matter how
+// many times the user clicks "Повторить" — confirmed against a real user's
+// setup.log, which showed the msstore agreement text on the very first
+// attempt. Scoping to `--source winget` sidesteps msstore entirely, since
+// we never need it.
 const WINGET_SOURCE = "winget";
 
 // Kept as a second-layer fallback, not the primary fix above: even scoped
 // to a single source, winget's own local index for it can independently go
 // stale/uninitialized (microsoft/winget-cli#4799, #5253) and fail with this
-// same code. `winget source reset --force` rebuilds it; retried once per
-// package before giving up for real.
+// same code. `winget source reset --force` rebuilds it — BUT that command
+// itself requires admin privileges (confirmed against the same real user's
+// setup.log: it failed with "This command requires administrator
+// privileges to execute" right after the scoped install above also failed
+// with 0x8a15000f), which this per-user, no-elevation installer never has.
+// So on a machine whose winget-source index is this broken, the reset
+// attempt below is expected to fail too and re-raise the original error —
+// it's a no-op safety net for the *other*, non-admin-requiring causes of
+// this same code, not a guaranteed fix for every cause of it. This is also
+// exactly why installWindowsPackages() below is non-fatal: a machine in
+// this state must still be able to finish setup and run the assistant, just
+// without LibreOffice/FFmpeg/Tesseract/Stockfish until winget itself is
+// fixed (see WINGET_SOURCE_DATA_MISSING_CODE's own troubleshooting: run
+// `winget source reset --force` from an elevated terminal by hand).
 const WINGET_SOURCE_DATA_MISSING_CODE = 2316632079; // 0x8a15000f
 
-async function installWindowsPackages(needsPython: boolean): Promise<void> {
-  const ids = needsPython ? [WINGET_PYTHON_ID, ...WINGET_PACKAGES] : WINGET_PACKAGES;
-  for (const id of ids) {
-    await installWindowsPackage(id);
+// Optional, non-Python system packages only — see installWindowsPython for
+// why Python itself was pulled out of this winget-based path entirely.
+// Deliberately non-fatal (unlike installWindowsPython, unlike
+// installLinuxSystemPackages): none of LibreOffice/FFmpeg/Tesseract/
+// Stockfish are required for the assistant to start and run — each is only
+// needed by one specific feature (file conversion / audio / OCR / chess),
+// which will itself report "not available" if missing — so a broken winget
+// (see WINGET_SOURCE_DATA_MISSING_CODE above) shouldn't block first run
+// entirely the way it used to when Python installation depended on the
+// same winget call succeeding.
+async function installWindowsPackages(): Promise<void> {
+  for (const id of WINGET_PACKAGES) {
+    try {
+      await installWindowsPackage(id);
+    } catch (error) {
+      void appendSetupLog(`[winget install ${id}] non-fatal, continuing without it: ${String(error)}`);
+    }
   }
 }
 
@@ -338,6 +373,39 @@ async function installWindowsPackage(id: string, retriedAfterSourceReset = false
     }
     await runCommand("winget source reset", "winget", ["source", "reset", "--force"]);
     await installWindowsPackage(id, true);
+  }
+}
+
+// Python is installed straight from the official python.org installer,
+// downloaded over plain HTTPS (same downloadFile() used for the Silero
+// weights below) and run silently — NOT through winget, unlike the other
+// Windows packages above. A real affected user's setup.log showed winget
+// itself is unusable on their machine even scoped to --source winget (see
+// WINGET_SOURCE_DATA_MISSING_CODE) — and unlike LibreOffice/FFmpeg/
+// Tesseract/Stockfish, Python isn't optional: runSetup can't create the
+// venv or install a single pip dependency without it, so it can't be made
+// non-fatal the way installWindowsPackages() is. Downloading the official
+// installer directly sidesteps winget (and its source list / msstore
+// agreement / admin-only reset) entirely for the one dependency that
+// actually has to succeed.
+//
+// InstallAllUsers=0 matches this app's whole per-user, no-admin-required
+// install philosophy (see nsis.perMachine: false in electron-builder.yml);
+// PrependPath=1 is what makes findSystemPython() succeed on the *next*
+// launch, and findWindowsPythonAfterInstall() below covers this same
+// already-running process not seeing the updated PATH yet.
+async function installWindowsPython(onProgress: (fraction: number) => void): Promise<void> {
+  const installerPath = path.join(userDataDir(), `python-${PYTHON_INSTALLER_VERSION}-amd64.exe`);
+  await downloadFile(PYTHON_INSTALLER_URL, installerPath, onProgress);
+  try {
+    await runCommand("python.org installer", installerPath, [
+      "/quiet",
+      "InstallAllUsers=0",
+      "PrependPath=1",
+      "Include_launcher=0",
+    ]);
+  } finally {
+    await fs.rm(installerPath, { force: true });
   }
 }
 
@@ -421,11 +489,15 @@ export async function runSetup(onProgress: (progress: SetupProgress) => void): P
       pythonBin = await findSystemPython();
     }
   } else if (process.platform === "win32") {
-    onProgress({ step: "Устанавливаю системные пакеты...", percent: 15 });
-    await installWindowsPackages(!pythonBin);
     if (!pythonBin) {
+      onProgress({ step: "Скачиваю Python...", percent: 8 });
+      await installWindowsPython((fraction) => {
+        onProgress({ step: "Скачиваю Python...", percent: 8 + Math.round(fraction * 7) });
+      });
       pythonBin = (await findSystemPython()) ?? (await findWindowsPythonAfterInstall());
     }
+    onProgress({ step: "Устанавливаю системные пакеты...", percent: 15 });
+    await installWindowsPackages();
     stockfishPath = await findWindowsStockfishAfterInstall();
   }
 
