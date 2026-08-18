@@ -133,14 +133,14 @@ def list_fixes() -> list[dict[str, object]]:
 def get_fix_code(filename: str) -> str:
     php_path = FIXES_DIR / filename
     if not php_path.is_file() or php_path.parent != FIXES_DIR:
-        raise ValueError(f"Unknown generated fix: {filename}")
+        raise ValueError(f"Неизвестное сгенерированное исправление: {filename}")
     return php_path.read_text(encoding="utf-8")
 
 
 def mark_reviewed(filename: str) -> None:
     meta_path = _meta_path(filename)
     if not meta_path.is_file():
-        raise ValueError(f"Unknown generated fix: {filename}")
+        raise ValueError(f"Неизвестное сгенерированное исправление: {filename}")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     meta["reviewed"] = True
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -149,6 +149,6 @@ def mark_reviewed(filename: str) -> None:
 def discard_fix(filename: str) -> None:
     php_path = FIXES_DIR / filename
     if not php_path.is_file() or php_path.parent != FIXES_DIR:
-        raise ValueError(f"Unknown generated fix: {filename}")
+        raise ValueError(f"Неизвестное сгенерированное исправление: {filename}")
     php_path.unlink()
     _meta_path(filename).unlink(missing_ok=True)

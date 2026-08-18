@@ -51,4 +51,4 @@ async def test_send_desktop_notification_calls_notify_with_event_title(monkeypat
 
     await notification_adapter.send_desktop_notification(event)
 
-    assert calls == [("Calendar reminder", "Meeting")]
+    assert calls == [("Напоминание", "Meeting")]

@@ -48,6 +48,32 @@ class CommandStatus(str, Enum):
     FAILED = "failed"
 
 
+# CommandDispatcher._execute's fallback for handlers with nothing more
+# specific to say (see that method's docstring comment) — a sentinel, not
+# just copy: core.voice.responses.localize_response compares response.message
+# against this exact string to decide whether to speak it verbatim or fall
+# back to a per-status template, so this and that module's import of it must
+# stay the same string. Frontend paths that display response.message
+# directly (CommandPanel, TextChat's confirm flow) show this text as-is if a
+# handler didn't set anything more specific — it must read as real Russian,
+# not just avoid crashing.
+GENERIC_EXECUTED_MESSAGE = "Команда выполнена."
+
+# CommandDispatcher._execute's fallback message on failure, used only when
+# the caught exception isn't one of our own deliberately-raised, already-
+# Russian business errors (ValueError/RuntimeError — see that method's own
+# comment) — i.e. an unexpected exception from a library/OS call, which
+# would otherwise surface its raw (often English, sometimes a stack-trace
+# fragment) str() straight to the user: shown as on-screen error text
+# (CommandPanel, TextChat) and, worse, spoken aloud by TTS
+# (VoiceRecorder.tsx's handleConfirm) since neither path runs response.message
+# through core.voice.responses.localize_response before displaying/speaking
+# it. The real exception is still fully logged via logger.exception right
+# where this is used, for debugging — this constant is only what the user
+# sees/hears.
+GENERIC_FAILED_MESSAGE = "Не удалось выполнить команду."
+
+
 class CommandResponse(BaseModel):
     status: CommandStatus
     command: str
@@ -74,6 +100,7 @@ class CommandParamField(BaseModel):
     min: float | None = None
     max: float | None = None
     options: list[str] | None = None
+    optional: bool = False
 
 
 class CommandButtonDescriptor(BaseModel):
@@ -339,6 +366,42 @@ class LibrarySetResponse(BaseModel):
 
 class QuizletLibraryResponse(BaseModel):
     sets: list[LibrarySetResponse]
+
+
+class BoardGameStartRequest(BaseModel):
+    kind: str  # "chess" | "checkers"
+    difficulty: str | None = None  # "very_easy".."impossible" (modules.board_games.domain.Difficulty) or None
+
+
+class BoardGameMoveRequest(BaseModel):
+    notation: str  # must be one of the current state's legal_moves
+
+
+class LegalMoveSquares(BaseModel):
+    from_square: str
+    to_square: str
+    label: str
+
+
+class BoardGameStateResponse(BaseModel):
+    kind: str
+    difficulty: str | None
+    board_svg: str
+    legal_moves: list[str]
+    legal_move_squares: list[LegalMoveSquares]
+    is_over: bool
+    is_check: bool
+    result: str | None  # None while ongoing — "1-0"/"0-1"/"1/2-1/2"/"-" (draw) once over
+    last_player_move: str | None = None
+    last_engine_move: str | None = None
+    # The engine's own from/to squares — unlike the player's move (whose
+    # origin the frontend already knows, from whichever square they
+    # clicked), there's no other way for BoardGamesPanel.tsx to know where
+    # the engine's piece started, needed to animate its reply the same way
+    # the player's own move is (see modules.board_games.domain.EngineMove).
+    last_engine_move_from: str | None = None
+    last_engine_move_to: str | None = None
+    mistake_message: str | None = None
 
 
 class GameStartRequest(BaseModel):

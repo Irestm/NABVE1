@@ -8,7 +8,13 @@ from typing import Any, Awaitable, Callable
 
 from core.capabilities import CAPABILITIES_MESSAGES
 from core.logger import get_logger
-from core.models import CommandDescriptor, CommandResponse, CommandStatus
+from core.models import (
+    GENERIC_EXECUTED_MESSAGE,
+    GENERIC_FAILED_MESSAGE,
+    CommandDescriptor,
+    CommandResponse,
+    CommandStatus,
+)
 from core.os_adapter import get_os_adapter
 
 logger = get_logger(__name__)
@@ -89,7 +95,7 @@ class CommandDispatcher:
             return CommandResponse(
                 status=CommandStatus.CONFIRMATION_REQUIRED,
                 command=command,
-                message="This action requires explicit confirmation.",
+                message="Это действие требует подтверждения.",
                 token=token,
             )
 
@@ -102,7 +108,7 @@ class CommandDispatcher:
             return CommandResponse(
                 status=CommandStatus.FAILED,
                 command="",
-                message="Unknown or expired confirmation token.",
+                message="Неизвестный или просроченный токен подтверждения.",
             )
 
         if not approved:
@@ -110,7 +116,7 @@ class CommandDispatcher:
             return CommandResponse(
                 status=CommandStatus.CANCELLED,
                 command=pending.command,
-                message="Command cancelled.",
+                message="Команда отменена.",
             )
 
         return await self._execute(pending.command, pending.params)
@@ -130,37 +136,47 @@ class CommandDispatcher:
             return CommandResponse(
                 status=CommandStatus.EXECUTED,
                 command=command,
-                message=message or "Command executed.",
+                message=message or GENERIC_EXECUTED_MESSAGE,
                 result=result,
             )
         except Exception as exc:
             logger.exception("Command '%s' failed", command)
+            # ValueError/RuntimeError are what every handler in this
+            # codebase deliberately raises for a user-facing business error
+            # (already in Russian — see e.g. this file's own _handle_*
+            # functions, or "Сначала войдите в Quizlet." elsewhere) — safe to
+            # show/speak verbatim. Anything else is an unexpected exception
+            # from a library/OS call, whose str() is often English and never
+            # meant for a user to see; those get the generic Russian
+            # fallback instead (the real exception is still fully logged
+            # above via logger.exception).
+            message = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else GENERIC_FAILED_MESSAGE
             return CommandResponse(
                 status=CommandStatus.FAILED,
                 command=command,
-                message=str(exc),
+                message=message,
             )
 
 
 async def _handle_open_app(params: dict[str, Any]) -> dict[str, Any]:
     target = params.get("target")
     if not target:
-        raise ValueError("Missing required parameter 'target'")
+        raise ValueError("Не указано, что открыть.")
     adapter = get_os_adapter()
     success = await asyncio.to_thread(adapter.open_application, target)
     if not success:
-        raise RuntimeError(f"Could not open application '{target}'")
+        raise RuntimeError(f"Не удалось открыть «{target}».")
     return {"target": target}
 
 
 async def _handle_close_app(params: dict[str, Any]) -> dict[str, Any]:
     target = params.get("target")
     if not target:
-        raise ValueError("Missing required parameter 'target'")
+        raise ValueError("Не указано, что закрыть.")
     adapter = get_os_adapter()
     success = await asyncio.to_thread(adapter.close_application, target)
     if not success:
-        raise RuntimeError(f"Could not find an open application matching '{target}' to close")
+        raise RuntimeError(f"Не найдено открытое приложение, подходящее под «{target}».")
     return {"target": target}
 
 
@@ -179,7 +195,7 @@ async def _handle_restart(_params: dict[str, Any]) -> dict[str, Any]:
 async def _handle_click(params: dict[str, Any]) -> dict[str, Any]:
     x, y = params.get("x"), params.get("y")
     if x is None or y is None:
-        raise ValueError("Missing required parameters 'x' and 'y'")
+        raise ValueError("Не указаны координаты x и y.")
     button = params.get("button", "left")
     adapter = get_os_adapter()
     await asyncio.to_thread(adapter.click, int(x), int(y), button)
@@ -189,7 +205,7 @@ async def _handle_click(params: dict[str, Any]) -> dict[str, Any]:
 async def _handle_move_mouse(params: dict[str, Any]) -> dict[str, Any]:
     x, y = params.get("x"), params.get("y")
     if x is None or y is None:
-        raise ValueError("Missing required parameters 'x' and 'y'")
+        raise ValueError("Не указаны координаты x и y.")
     adapter = get_os_adapter()
     await asyncio.to_thread(adapter.move_mouse, int(x), int(y))
     return {"x": x, "y": y}
@@ -198,7 +214,7 @@ async def _handle_move_mouse(params: dict[str, Any]) -> dict[str, Any]:
 async def _handle_type_text(params: dict[str, Any]) -> dict[str, Any]:
     text = params.get("text")
     if not text:
-        raise ValueError("Missing required parameter 'text'")
+        raise ValueError("Не указан текст для ввода.")
     adapter = get_os_adapter()
     await asyncio.to_thread(adapter.type_text, text)
     return {"text": text}
@@ -207,7 +223,7 @@ async def _handle_type_text(params: dict[str, Any]) -> dict[str, Any]:
 async def _handle_press_key(params: dict[str, Any]) -> dict[str, Any]:
     key = params.get("key")
     if not key:
-        raise ValueError("Missing required parameter 'key'")
+        raise ValueError("Не указана клавиша.")
     adapter = get_os_adapter()
     await asyncio.to_thread(adapter.press_key, key)
     return {"key": key}
@@ -228,11 +244,11 @@ async def _handle_list_capabilities(params: dict[str, Any]) -> dict[str, Any]:
 async def _handle_focus_window(params: dict[str, Any]) -> dict[str, Any]:
     title = params.get("title")
     if not title:
-        raise ValueError("Missing required parameter 'title'")
+        raise ValueError("Не указан заголовок окна.")
     adapter = get_os_adapter()
     focused = await asyncio.to_thread(adapter.focus_window, title)
     if not focused:
-        raise RuntimeError(f"Could not find window matching '{title}'")
+        raise RuntimeError(f"Не найдено окно, подходящее под «{title}».")
     return {"title": title}
 
 
@@ -245,7 +261,7 @@ def _parse_bool(value: Any) -> bool:
 async def _handle_set_volume(params: dict[str, Any]) -> dict[str, Any]:
     percent = params.get("percent")
     if percent is None:
-        raise ValueError("Missing required parameter 'percent'")
+        raise ValueError("Не указан уровень громкости.")
     adapter = get_os_adapter()
     await asyncio.to_thread(adapter.set_volume, int(percent))
     return {"percent": int(percent), "message": f"Громкость установлена на {int(percent)} процентов."}
@@ -254,7 +270,7 @@ async def _handle_set_volume(params: dict[str, Any]) -> dict[str, Any]:
 async def _handle_change_volume(params: dict[str, Any]) -> dict[str, Any]:
     delta_percent = params.get("delta_percent")
     if delta_percent is None:
-        raise ValueError("Missing required parameter 'delta_percent'")
+        raise ValueError("Не указано изменение громкости.")
     adapter = get_os_adapter()
     await asyncio.to_thread(adapter.change_volume, int(delta_percent))
     new_level = await asyncio.to_thread(adapter.get_volume)
@@ -290,8 +306,11 @@ async def _handle_minimize_window(params: dict[str, Any]) -> dict[str, Any]:
     adapter = get_os_adapter()
     ok = await asyncio.to_thread(adapter.hide_window, app_name)
     if not ok:
-        raise RuntimeError(f"Could not find window matching '{app_name}'" if app_name else "No active window")
-    return {"app_name": app_name}
+        raise RuntimeError(
+            f"Не найдено окно, подходящее под «{app_name}»." if app_name else "Нет активного окна."
+        )
+    message = f"Окно {app_name} свёрнуто." if app_name else "Окно свёрнуто."
+    return {"app_name": app_name, "message": message}
 
 
 async def _handle_close_os_window(params: dict[str, Any]) -> dict[str, Any]:
@@ -299,7 +318,9 @@ async def _handle_close_os_window(params: dict[str, Any]) -> dict[str, Any]:
     adapter = get_os_adapter()
     ok = await asyncio.to_thread(adapter.close_window, app_name)
     if not ok:
-        raise RuntimeError(f"Could not find window matching '{app_name}'" if app_name else "No active window")
+        raise RuntimeError(
+            f"Не найдено окно, подходящее под «{app_name}»." if app_name else "Нет активного окна."
+        )
     return {"app_name": app_name}
 
 
@@ -312,24 +333,31 @@ async def _handle_close_browser_tab(_params: dict[str, Any]) -> dict[str, Any]:
 async def _handle_create_folder(params: dict[str, Any]) -> dict[str, Any]:
     path = params.get("path")
     if not path:
-        raise ValueError("Missing required parameter 'path'")
+        raise ValueError("Не указан путь к папке.")
     adapter = get_os_adapter()
-    return await asyncio.to_thread(adapter.create_folder, path)
+    result = await asyncio.to_thread(adapter.create_folder, path)
+    # adapter.create_folder already sets a message for the "already exists"
+    # case; setdefault leaves that alone and only fills the generic
+    # GENERIC_EXECUTED_MESSAGE gap for an actual fresh create.
+    result.setdefault("message", f"Папка {path} создана.")
+    return result
 
 
 async def _handle_move_folder(params: dict[str, Any]) -> dict[str, Any]:
     source = params.get("source")
     destination = params.get("destination")
     if not source or not destination:
-        raise ValueError("Missing required parameters 'source' and 'destination'")
+        raise ValueError("Не указаны источник и назначение.")
     adapter = get_os_adapter()
-    return await asyncio.to_thread(adapter.move_folder, source, destination)
+    result = await asyncio.to_thread(adapter.move_folder, source, destination)
+    result.setdefault("message", f"Папка перемещена: {source} → {destination}.")
+    return result
 
 
 async def _handle_delete_folder(params: dict[str, Any]) -> dict[str, Any]:
     path = params.get("path")
     if not path:
-        raise ValueError("Missing required parameter 'path'")
+        raise ValueError("Не указан путь к папке.")
     force_admin = _parse_bool(params.get("force_admin", False))
     adapter = get_os_adapter()
     result = await asyncio.to_thread(adapter.delete_folder, path, force_admin)
@@ -340,15 +368,20 @@ async def _handle_delete_folder(params: dict[str, Any]) -> dict[str, Any]:
 async def _handle_switch_keyboard_layout(params: dict[str, Any]) -> dict[str, Any]:
     language_code = params.get("language_code")
     if not language_code:
-        raise ValueError("Missing required parameter 'language_code'")
+        raise ValueError("Не указан код языка.")
     adapter = get_os_adapter()
-    return await asyncio.to_thread(adapter.switch_keyboard_layout, language_code)
+    result = await asyncio.to_thread(adapter.switch_keyboard_layout, language_code)
+    # Some backends (Linux's gsettings fallback) already put a more specific
+    # message in result; setdefault leaves that alone and only fills in the
+    # generic GENERIC_EXECUTED_MESSAGE gap for the rest (setxkbmap, Windows).
+    result.setdefault("message", f"Раскладка переключена на {language_code}.")
+    return result
 
 
 async def _handle_change_system_locale(params: dict[str, Any]) -> dict[str, Any]:
     language_code = params.get("language_code")
     if not language_code:
-        raise ValueError("Missing required parameter 'language_code'")
+        raise ValueError("Не указан код языка.")
     adapter = get_os_adapter()
     return await asyncio.to_thread(adapter.change_system_locale, language_code)
 
@@ -507,7 +540,17 @@ def build_dispatcher(confirmation_ttl_seconds: int = 60) -> CommandDispatcher:
     dispatcher.register(
         "switch_keyboard_layout",
         _handle_switch_keyboard_layout,
-        dangerous=False,
+        # A false-positive match here (see
+        # modules/hardware_adaptive/command_classifier.py's
+        # _SIMILARITY_THRESHOLD — 0.80, empirically tuned but not zero-risk)
+        # silently leaves the *system* keyboard layout on whatever it just
+        # switched to, with nothing on screen announcing it happened — the
+        # user only discovers it later as "why is everything I type coming
+        # out in the wrong alphabet". dangerous=True routes it through the
+        # same spoken re-confirmation delete_folder/change_system_locale
+        # already get, so a stray match prompts and can be declined instead
+        # of applying immediately.
+        dangerous=True,
         description="Switch the active keyboard input layout (language_code: ru/uk/en).",
     )
     dispatcher.register(

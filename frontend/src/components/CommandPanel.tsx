@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 import {
+  AlarmClockOff,
   Battery,
+  CircleStop,
+  Crown,
+  Disc,
   DownloadCloud,
   FolderInput,
   FolderPlus,
@@ -9,9 +14,11 @@ import {
   Minimize2,
   Power,
   RefreshCw,
+  Timer,
   Trash2,
   Volume2,
   VolumeX,
+  Watch,
   X,
 } from "lucide-react";
 import { confirmCommand, listCommandButtons, runCommand } from "../api/client";
@@ -34,6 +41,12 @@ const ICONS: Record<string, LucideIcon> = {
   Languages,
   Battery,
   DownloadCloud,
+  Crown,
+  Disc,
+  Timer,
+  AlarmClockOff,
+  Watch,
+  CircleStop,
 };
 
 type FormValues = Record<string, string>;
@@ -53,13 +66,20 @@ function defaultFormValues(schema: CommandParamField[]): FormValues {
 }
 
 function isFormComplete(schema: CommandParamField[], values: FormValues): boolean {
-  return schema.every((field) => (values[field.name] ?? "").trim() !== "");
+  return schema.every((field) => field.optional || (values[field.name] ?? "").trim() !== "");
 }
 
 function toParams(schema: CommandParamField[], values: FormValues): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   for (const field of schema) {
-    params[field.name] = field.type === "number" ? Number(values[field.name]) : values[field.name];
+    const raw = values[field.name] ?? "";
+    if (field.optional && raw.trim() === "") {
+      // Omitted entirely, not sent as 0/"" — e.g. toggle_timer reads a
+      // missing "minutes" as "cancel every active timer", not "start one
+      // for zero minutes".
+      continue;
+    }
+    params[field.name] = field.type === "number" ? Number(raw) : raw;
   }
   return params;
 }
@@ -94,6 +114,13 @@ function ParamFields({
                 max={field.max}
                 value={values[field.name] ?? field.min}
                 onChange={(event) => onChange(field.name, event.target.value)}
+                style={
+                  {
+                    "--range-fill": `${
+                      (((Number(values[field.name] ?? field.min) - field.min) / (field.max - field.min)) * 100).toFixed(2)
+                    }%`,
+                  } as CSSProperties
+                }
               />
               <span className="command-panel__slider-value">{values[field.name]}</span>
             </span>
@@ -110,7 +137,16 @@ function ParamFields({
   );
 }
 
-export function CommandPanel(): JSX.Element {
+// Commands that actually start something the user then wants to look at
+// (a running board game, on the Ассистент tab's Игры panel) rather than
+// just reading a confirmation message.
+const NAVIGATE_TO_GAMES_ON: ReadonlySet<string> = new Set(["start_chess_game", "start_checkers_game"]);
+
+interface CommandPanelProps {
+  onNavigateToGames?: () => void;
+}
+
+export function CommandPanel({ onNavigateToGames }: CommandPanelProps): JSX.Element {
   const [buttons, setButtons] = useState<CommandButtonDescriptor[]>([]);
   const [loadError, setLoadError] = useState("");
   const [resultMessage, setResultMessage] = useState("");
@@ -154,6 +190,15 @@ export function CommandPanel(): JSX.Element {
         setResultError(response.message || `Не удалось выполнить «${command.label}».`);
       } else {
         setResultMessage(response.message || `Команда «${command.label}» выполнена.`);
+        if (NAVIGATE_TO_GAMES_ON.has(command.name) && onNavigateToGames) {
+          onNavigateToGames();
+          // The tab switch above re-renders the Ассистент tab's content
+          // fresh — give it a frame to actually mount before scrolling to
+          // an element that doesn't exist yet.
+          requestAnimationFrame(() => {
+            document.querySelector(".board-games-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          });
+        }
       }
     } catch (error) {
       console.error(`Command ${command.name} failed:`, error);

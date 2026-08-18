@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 from pathlib import Path
 from typing import Any
 
+from core.browser_automation import HIDE_WEBDRIVER_INIT_SCRIPT, resolve_browser_launcher
+from core.browser_cookie_import import ImportResult, import_session_cookies
 from core.config import DATA_DIR
 from core.logger import get_logger
+from modules.ai_bridge import virtual_display
 
 logger = get_logger(__name__)
 
@@ -23,53 +27,134 @@ GUEST_MARKERS = ("log in", "sign up", "войти", "увійти", "зарег�
 
 
 class QuizletSession:
-    """Persistent Playwright/Chromium session for the user's own Quizlet
-    account. Uses the same launch_persistent_context(user_data_dir=...)
-    mechanism as modules.ai_bridge.providers.base.BrowserProviderAdapter —
-    Chromium itself persists cookies/localStorage on disk across restarts,
-    no bespoke storage_state export/import needed.
+    """Persistent Playwright session for the user's own Quizlet account
+    (engine picked by core.browser_automation.resolve_browser_launcher —
+    Firefox by default). Uses the same launch_persistent_context
+    (user_data_dir=...) mechanism as
+    modules.ai_bridge.providers.base.BrowserProviderAdapter — the browser
+    itself persists cookies/localStorage on disk across restarts, no
+    bespoke storage_state export/import needed.
 
-    Unlike ai_bridge's adapters, this never renders on a hidden virtual
-    display: logging in is a one-time, user-visible action (the user types
-    their own Quizlet password directly into quizlet.com — this module
-    never sees or stores it), and a brief visible window while scraping a
-    refresh is reassuring rather than something to hide.
-    """
+    Renders on modules.ai_bridge.virtual_display's hidden Xvfb display by
+    default — same reasoning as BrowserProviderAdapter: real headed
+    rendering (Cloudflare's bot-check needs it — see the captcha-loop
+    investigation this module was built for) without a window actually
+    appearing on the user's screen for a purely programmatic action like
+    scraping/importing. open_login_page() is the one exception: logging in
+    is a one-time, user-visible action (the user types their own Quizlet
+    password directly into quizlet.com — this module never sees or stores
+    it) — it forces a relaunch on the real display so there's something to
+    look at, mirroring BrowserProviderAdapter.reveal()."""
 
     def __init__(self) -> None:
         self._playwright: Any = None
         self._context: Any = None
         self._page: Any = None
+        self._on_virtual_display = False
         self._lock = asyncio.Lock()
 
-    async def _ensure_page(self) -> Any:
+    async def _ensure_page(self, *, force_headed: bool = False) -> Any:
         try:
             from playwright.async_api import async_playwright
         except ImportError as exc:
             raise RuntimeError(
                 "playwright is not installed. Install it with: "
-                "pip install playwright && playwright install chromium"
+                "pip install playwright && playwright install firefox chromium"
             ) from exc
 
-        if self._context is None:
-            PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-            self._playwright = await async_playwright().start()
-            self._context = await self._playwright.chromium.launch_persistent_context(
-                user_data_dir=str(PROFILE_DIR),
-                headless=False,
-                args=["--window-size=1280,800"],
-            )
-            logger.info("Launched persistent Quizlet browser context at %s", PROFILE_DIR)
+        if self._context is not None and force_headed and self._on_virtual_display:
+            # Currently hidden on the virtual display but a human needs to
+            # actually see this now (login) — tear down and relaunch on the
+            # real display below, mirroring BrowserProviderAdapter.reveal().
+            # Inlined rather than calling self.close(): every caller of
+            # _ensure_page already holds self._lock, and that method
+            # re-acquires it (asyncio.Lock isn't reentrant).
+            try:
+                await self._context.close()
+            except Exception as context_already_gone:
+                logger.debug(
+                    "Error closing virtual-display Quizlet context before reveal: %s",
+                    context_already_gone,
+                    exc_info=True,
+                )
+            finally:
+                self._context = None
+                self._page = None
+            if self._playwright is not None:
+                try:
+                    await self._playwright.stop()
+                except Exception as driver_already_stopped:
+                    logger.debug(
+                        "Playwright driver already stopped before reveal: %s",
+                        driver_already_stopped,
+                        exc_info=True,
+                    )
+                finally:
+                    self._playwright = None
 
-        if self._page is None or self._page.is_closed():
-            self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
+        if self._context is not None:
+            try:
+                if self._page is None or self._page.is_closed():
+                    self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
+                return self._page
+            except Exception as exc:
+                # This module-level session can outlive the actual browser
+                # window it opened — the user (or an OS sleep/crash) can
+                # close it between requests while this object still thinks
+                # it's alive, so the next Playwright call fails with a raw,
+                # low-level "Target page, context or browser has been
+                # closed" instead of anything actionable. Discard the stale
+                # references and fall through to relaunch below rather than
+                # leaving every subsequent Quizlet action broken until the
+                # whole backend restarts.
+                logger.warning("Quizlet browser context was closed unexpectedly, relaunching: %s", exc)
+                self._context = None
+                self._page = None
+                if self._playwright is not None:
+                    try:
+                        await self._playwright.stop()
+                    except Exception as driver_already_stopped:
+                        logger.debug(
+                            "Playwright driver already stopped: %s", driver_already_stopped, exc_info=True
+                        )
+                    finally:
+                        self._playwright = None
+
+        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        self._playwright = await async_playwright().start()
+        # See core.browser_automation.resolve_browser_launcher: prefers
+        # Firefox, which — confirmed by hand — doesn't trip the same
+        # repeat-captcha bot-detection friction Playwright's default
+        # Chromium build ("Chrome for Testing") does on quizlet.com.
+        browser_type, engine_kwargs = resolve_browser_launcher(self._playwright)
+        launch_kwargs: dict[str, Any] = {
+            "user_data_dir": str(PROFILE_DIR),
+            "headless": False,
+            "viewport": {"width": 1280, "height": 800},
+            **engine_kwargs,
+        }
+        self._on_virtual_display = False
+        if not force_headed:
+            display = await virtual_display.get_display()
+            if display:
+                launch_kwargs["env"] = {**os.environ, "DISPLAY": display}
+                self._on_virtual_display = True
+        self._context = await browser_type.launch_persistent_context(**launch_kwargs)
+        await self._context.add_init_script(HIDE_WEBDRIVER_INIT_SCRIPT)
+        logger.info(
+            "Launched persistent Quizlet browser context (engine=%s, virtual_display=%s) at %s",
+            browser_type.name,
+            self._on_virtual_display,
+            PROFILE_DIR,
+        )
+        self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
         return self._page
 
     async def open_login_page(self) -> None:
         """Reveals a visible window on Quizlet's own login page so the user
         can log in themselves."""
         async with self._lock:
-            page = await self._ensure_page()
+            page = await self._ensure_page(force_headed=True)
             await page.goto(LOGIN_URL, wait_until="domcontentloaded")
             await page.bring_to_front()
 
@@ -144,6 +229,30 @@ async def login() -> None:
     Quizlet password. Once logged in, the persistent browser profile keeps
     the session for future runs."""
     await get_session().open_login_page()
+
+
+async def import_session() -> ImportResult:
+    """Copies an already-logged-in quizlet.com session from the user's own
+    real Firefox/Chrome browser into the automation profile — bypasses
+    Quizlet's Cloudflare bot-check entirely rather than trying to pass a
+    fresh automated login through it (see the captcha-loop investigation
+    this was built for)."""
+    session = get_session()
+    if not PROFILE_DIR.exists():
+        # Bootstrap: launch once just to materialize a real profile skeleton
+        # (cookies.sqlite etc.) for the writer below to write into.
+        await session._ensure_page()
+    # Never write into cookies.sqlite while a live context has it open —
+    # Firefox's own WAL writes could clobber or race with ours.
+    await session.close()
+    result = await asyncio.to_thread(import_session_cookies, PROFILE_DIR, ["quizlet.com"])
+    # Reopen right away so the freshly-imported cookies actually take effect —
+    # is_logged_in()/library_page() never launch a browser just to check (see
+    # their own docstrings), so without this the very next status poll would
+    # still see self._context as None and report "Гость" until something
+    # else happened to open it.
+    await session._ensure_page()
+    return result
 
 
 async def logout() -> None:

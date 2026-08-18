@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from modules.calendar.domain import CalendarEvent
+from modules.calendar.domain import CalendarEvent, RecurrenceRule
 from modules.calendar.repository import CalendarEventRepository
 
 
@@ -75,6 +75,75 @@ def test_mark_notified_flips_the_flag(tmp_db_path: Path) -> None:
 
     stored = repo.get(event_id)
     assert stored is not None and stored.notified is True
+
+
+def test_list_upcoming_includes_a_recurring_event_whose_own_event_time_is_in_the_past(
+    tmp_db_path: Path,
+) -> None:
+    conn = _connect(tmp_db_path)
+    repo = CalendarEventRepository(conn)
+    now = datetime(2030, 6, 15, 12, 0)
+    recurring_id = repo.add(
+        CalendarEvent(title="Birthday", event_time=datetime(1990, 7, 4, 9, 0), recurrence=RecurrenceRule.YEARLY)
+    )
+    repo.add(CalendarEvent(title="Old one-off", event_time=datetime(2020, 1, 1)))  # correctly excluded
+
+    upcoming = repo.list_upcoming(now)
+
+    assert [e.id for e in upcoming] == [recurring_id]
+
+
+def test_list_upcoming_sorts_a_recurring_event_by_its_projected_next_occurrence(tmp_db_path: Path) -> None:
+    conn = _connect(tmp_db_path)
+    repo = CalendarEventRepository(conn)
+    now = datetime(2030, 1, 1)
+    # Recurs daily from long ago -> its next occurrence is effectively
+    # "today", sooner than the one-off event three days out.
+    daily_id = repo.add(
+        CalendarEvent(title="Daily", event_time=datetime(2020, 1, 1, 9, 0), recurrence=RecurrenceRule.DAILY)
+    )
+    later_id = repo.add(CalendarEvent(title="Later", event_time=now + timedelta(days=3)))
+
+    upcoming = repo.list_upcoming(now)
+
+    assert [e.id for e in upcoming] == [daily_id, later_id]
+
+
+def test_reschedule_recurrence_updates_event_time_and_clears_notified(tmp_db_path: Path) -> None:
+    conn = _connect(tmp_db_path)
+    repo = CalendarEventRepository(conn)
+    event_id = repo.add(
+        CalendarEvent(title="A", event_time=datetime(2030, 1, 1, 9, 0), recurrence=RecurrenceRule.DAILY)
+    )
+    repo.mark_notified(event_id)
+
+    repo.reschedule_recurrence(event_id, datetime(2030, 1, 2, 9, 0))
+
+    stored = repo.get(event_id)
+    assert stored is not None
+    assert stored.event_time == datetime(2030, 1, 2, 9, 0)
+    assert stored.notified is False
+
+
+def test_add_persists_color_category_and_recurrence(tmp_db_path: Path) -> None:
+    conn = _connect(tmp_db_path)
+    repo = CalendarEventRepository(conn)
+    event_id = repo.add(
+        CalendarEvent(
+            title="A",
+            event_time=datetime(2030, 1, 1),
+            color="#2ad8ff",
+            category="Дни рождения",
+            recurrence=RecurrenceRule.YEARLY,
+        )
+    )
+
+    stored = repo.get(event_id)
+
+    assert stored is not None
+    assert stored.color == "#2ad8ff"
+    assert stored.category == "Дни рождения"
+    assert stored.recurrence == RecurrenceRule.YEARLY
 
 
 def test_list_not_notified_excludes_notified_events(tmp_db_path: Path) -> None:

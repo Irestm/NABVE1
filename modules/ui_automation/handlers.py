@@ -19,7 +19,7 @@ async def _handle_ui_action(params: dict[str, Any]) -> dict[str, Any]:
     schedule_event's own param resolution happens for those commands."""
     steps = params.get("steps")
     if not steps or not isinstance(steps, list):
-        raise ValueError("Missing required parameter 'steps'")
+        raise ValueError("Не указаны шаги действия.")
 
     adapter = get_os_adapter()
     for step in steps:
@@ -33,7 +33,7 @@ async def _handle_ui_action(params: dict[str, Any]) -> dict[str, Any]:
         elif action == "press_key":
             await asyncio.to_thread(adapter.press_key, step["key"])
         else:
-            raise ValueError(f"Unknown ui_action step action '{action}'")
+            raise ValueError(f"Неизвестное действие шага ui_action: «{action}».")
 
     return {"steps": steps, "message": params.get("announcement") or "Готово."}
 
@@ -56,9 +56,10 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         # unaffected by this flag — it only closes the raw-API bypass.
         dangerous=True,
         description=(
-            "Click, type text, or press a key inside the currently active application window, "
-            "grounded automatically against its visible UI from a free-text instruction (raw_text) "
-            "— e.g. 'нажми на тренды', 'напечатай текст письма'. Use this for any request to "
-            "interact with whatever the user currently has open/focused, when no other command fits."
+            "Кликнуть, напечатать текст или нажать клавишу в текущем активном окне приложения, "
+            "автоматически привязываясь к его видимому интерфейсу по тексту инструкции (raw_text) "
+            "— например «нажми на тренды», «напечатай текст письма». Использовать для любого запроса "
+            "взаимодействовать с тем, что сейчас открыто/в фокусе у пользователя, если не подходит "
+            "никакая другая команда."
         ),
     )

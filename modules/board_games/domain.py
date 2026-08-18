@@ -9,6 +9,23 @@ class GameKind(str, enum.Enum):
     CHECKERS = "checkers"
 
 
+class Difficulty(str, enum.Enum):
+    """Plain-words difficulty tiers — see chess_adapter._DIFFICULTY_ELO and
+    checkers_adapter._DIFFICULTY_DEPTH for what each maps to per game.
+    Optional everywhere it's accepted: omitting it (None) preserves each
+    adapter's original, pre-difficulty-selector default engine strength
+    (full-strength Stockfish for chess, depth 6 for checkers) — matters
+    because core/voice/pipeline.py's voice-driven games start one without
+    ever passing a difficulty."""
+
+    VERY_EASY = "very_easy"
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+    VERY_HARD = "very_hard"
+    IMPOSSIBLE = "impossible"
+
+
 @dataclass(frozen=True)
 class MoveJudgement:
     """The engine's verdict on one player move, computed by
@@ -22,6 +39,22 @@ class MoveJudgement:
     was_mistake: bool
     better_move: str | None = None
     eval_delta: float | None = None
+
+
+@dataclass(frozen=True)
+class EngineMove:
+    """The engine's own move, with its from/to squares alongside the
+    notation string — unlike a player's move (whose origin square the UI
+    already knows, from whichever square they clicked), the frontend has
+    no other way to find where the engine's piece started, so
+    chess_adapter/checkers_adapter.apply_engine_move captures this while
+    the move object is still in hand, before collapsing it to a string.
+    Used to drive BoardGamesPanel.tsx's slide animation for the engine's
+    reply."""
+
+    notation: str
+    from_square: str
+    to_square: str
 
 
 @dataclass(frozen=True)

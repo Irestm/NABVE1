@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { BoardGameImageModal } from "./components/BoardGameImageModal";
+import { BoardGamesPanel } from "./components/BoardGamesPanel";
 import { CommandPanel } from "./components/CommandPanel";
 import { CustomCommandsPanel } from "./components/CustomCommandsPanel";
+import { IntegrationsPanel } from "./components/IntegrationsPanel";
 import { LanQrPanel } from "./components/LanQrPanel";
 import { PersonalityPanel } from "./components/PersonalityPanel";
 import { PlannerView } from "./components/PlannerView";
@@ -45,7 +47,7 @@ const STATE_LABELS: Record<AssistantState, string> = {
   paused: "На паузе",
 };
 
-type Tab = "assistant" | "planner" | "commands" | "my_commands" | "learning";
+type Tab = "assistant" | "planner" | "commands" | "my_commands" | "learning" | "integrations";
 
 export function App(): JSX.Element {
   const [activeTab, setActiveTab] = useState<Tab>("assistant");
@@ -136,13 +138,13 @@ export function App(): JSX.Element {
             className={`app-tabs__button${activeTab === "assistant" ? " app-tabs__button--active" : ""}`}
             onClick={() => setActiveTab("assistant")}
           >
-            Ассистент
+            {"Асси­стент"}
           </button>
           <button
             className={`app-tabs__button${activeTab === "planner" ? " app-tabs__button--active" : ""}`}
             onClick={() => setActiveTab("planner")}
           >
-            Планировщик
+            {"Планиров­щик"}
           </button>
           <button
             className={`app-tabs__button${activeTab === "commands" ? " app-tabs__button--active" : ""}`}
@@ -162,6 +164,12 @@ export function App(): JSX.Element {
           >
             Обучение
           </button>
+          <button
+            className={`app-tabs__button${activeTab === "integrations" ? " app-tabs__button--active" : ""}`}
+            onClick={() => setActiveTab("integrations")}
+          >
+            {"Интегра­ции"}
+          </button>
         </div>
 
         {activeTab === "assistant" ? (
@@ -171,6 +179,8 @@ export function App(): JSX.Element {
             <VoiceRecorder onRecordingChange={setVoiceRecording} onSpeakingChange={setVoiceSpeaking} />
 
             <TextChat />
+
+            <BoardGamesPanel />
 
             <PersonalityPanel />
 
@@ -186,15 +196,19 @@ export function App(): JSX.Element {
           </div>
         ) : activeTab === "commands" ? (
           <div key="commands" className="app-tab-content">
-            <CommandPanel />
+            <CommandPanel onNavigateToGames={() => setActiveTab("assistant")} />
           </div>
         ) : activeTab === "my_commands" ? (
           <div key="my_commands" className="app-tab-content">
             <CustomCommandsPanel />
           </div>
-        ) : (
+        ) : activeTab === "learning" ? (
           <div key="learning" className="app-tab-content">
             <QuizletPanel />
+          </div>
+        ) : (
+          <div key="integrations" className="app-tab-content">
+            <IntegrationsPanel />
           </div>
         )}
       </div>

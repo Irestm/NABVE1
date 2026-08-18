@@ -9,12 +9,17 @@ interface ProviderCardProps {
   busy: boolean;
   onLogin: () => void;
   onLogout: () => void;
+  onImportSession: () => void;
 }
 
 interface ProviderMeta {
   label: string;
   description: string;
   initial: string;
+  // Where the user actually logs in by hand — shown next to the import
+  // button so "Импорт из браузера" isn't a mystery action (see the note
+  // rendered below it).
+  loginSite: string;
 }
 
 // Not the providers' official logos — trademark/licensing status of each
@@ -26,21 +31,25 @@ const PROVIDER_META: Record<ProviderName, ProviderMeta> = {
     label: "Gemini",
     description: "Быстрый и точный, хорош для повседневных задач и быстрых ответов",
     initial: "G",
+    loginSite: "gemini.google.com",
   },
   chatgpt: {
     label: "ChatGPT",
     description: "Сильный в рассуждениях и написании текста, второй по приоритету",
     initial: "C",
+    loginSite: "chatgpt.com",
   },
   deepseek: {
     label: "DeepSeek",
     description: "Хорош в коде и технических задачах, запасной вариант",
     initial: "D",
+    loginSite: "chat.deepseek.com",
   },
   grok: {
     label: "Grok",
     description: "Это дерьмо прям на крайний случай",
     initial: "X",
+    loginSite: "grok.com",
   },
 };
 
@@ -52,8 +61,16 @@ export function ProviderCard({
   busy,
   onLogin,
   onLogout,
+  onImportSession,
 }: ProviderCardProps): JSX.Element {
   const meta = PROVIDER_META[provider];
+  // Gemini has no direct "Войти" — Google's automated-browser sign-in block
+  // makes a from-scratch login there unreliable enough to have pulled that
+  // button entirely (see provider-card__note below). Importing an
+  // already-established session from the user's own real browser sidesteps
+  // that block, so once that succeeds `loggedIn` is trustworthy here same
+  // as any other provider.
+  const canLoginDirectly = provider !== "gemini";
 
   return (
     <div
@@ -77,14 +94,44 @@ export function ProviderCard({
 
       {limited && <p className="provider-card__limit">Дневной лимит исчерпан</p>}
 
-      <button
-        type="button"
-        className="provider-card__auth-button"
-        onClick={loggedIn ? onLogout : onLogin}
-        disabled={busy}
-      >
-        {busy ? "…" : loggedIn ? "Выйти" : "Войти"}
-      </button>
+      {!canLoginDirectly && !loggedIn && (
+        // Login unreliable enough (Google's automated-browser sign-in block)
+        // to have pulled the direct-login button rather than ship a broken
+        // one — Gemini still works fine as a guest, or via the import
+        // button below, just never via a from-scratch automated login.
+        <p className="provider-card__note">Прямой вход недоступен — работает в гостевом режиме</p>
+      )}
+
+      <div className="provider-card__actions">
+        {loggedIn ? (
+          <button type="button" className="provider-card__auth-button" onClick={onLogout} disabled={busy}>
+            {busy ? "…" : "Выйти"}
+          </button>
+        ) : (
+          <>
+            {canLoginDirectly && (
+              <button type="button" className="provider-card__auth-button" onClick={onLogin} disabled={busy}>
+                {busy ? "…" : "Войти"}
+              </button>
+            )}
+            <button
+              type="button"
+              className="provider-card__auth-button provider-card__auth-button--secondary"
+              onClick={onImportSession}
+              disabled={busy}
+            >
+              {busy ? "…" : "Импорт из браузера"}
+            </button>
+          </>
+        )}
+      </div>
+
+      {!loggedIn && (
+        <p className="provider-card__note">
+          Как это работает: войдите на {meta.loginSite} в своём обычном браузере (Firefox или Chrome), как обычно
+          заходите на сайты, — затем нажмите «Импорт из браузера», и NABVE скопирует эту сессию себе.
+        </p>
+      )}
     </div>
   );
 }

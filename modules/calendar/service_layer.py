@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from core.logger import get_logger
 from core.message_bus import MessageBus
-from modules.calendar.domain import CalendarEvent
+from modules.calendar.domain import CalendarEvent, RecurrenceRule
 from modules.calendar.events import ReminderDue
 from modules.calendar.uow import CalendarUnitOfWork
 
@@ -12,12 +12,23 @@ logger = get_logger(__name__)
 
 
 def create_event(
-    uow: CalendarUnitOfWork, title: str, event_time: datetime, remind_before_minutes: int = 0
+    uow: CalendarUnitOfWork,
+    title: str,
+    event_time: datetime,
+    remind_before_minutes: int = 0,
+    color: str | None = None,
+    category: str | None = None,
+    recurrence: RecurrenceRule = RecurrenceRule.NONE,
 ) -> int:
     with uow:
         event_id = uow.events.add(
             CalendarEvent(
-                title=title, event_time=event_time, remind_before_minutes=remind_before_minutes
+                title=title,
+                event_time=event_time,
+                remind_before_minutes=remind_before_minutes,
+                color=color,
+                category=category,
+                recurrence=recurrence,
             )
         )
         uow.commit()
@@ -48,7 +59,24 @@ async def check_due_reminders(uow: CalendarUnitOfWork, bus: MessageBus, now: dat
         due = [event for event in uow.events.list_not_notified() if event.is_due(now)]
         for event in due:
             assert event.id is not None
-            uow.events.mark_notified(event.id)
+            if event.recurrence == RecurrenceRule.NONE:
+                uow.events.mark_notified(event.id)
+            else:
+                # Advance in place to the next occurrence strictly after
+                # this one (and at/after `now`, so if the reminder checker
+                # was down for a while, this catches up to the next real
+                # occurrence instead of leaving a backlog of overdue
+                # reminders) — a daily/weekly/monthly/yearly reminder keeps
+                # firing on every cycle instead of going silent for good
+                # after its first ever notification.
+                # +1s so the occurrence that just fired (event.event_time
+                # itself, still un-advanced at this point) is excluded —
+                # next_occurrence_on_or_after treats its argument as
+                # inclusive, and without this the very next poll a moment
+                # later would find the "same" occurrence due all over again.
+                reference = max(now, event.event_time) + timedelta(seconds=1)
+                next_occurrence = event.next_occurrence_on_or_after(reference)
+                uow.events.reschedule_recurrence(event.id, next_occurrence)
         uow.commit()
 
     for event in due:

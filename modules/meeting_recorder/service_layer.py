@@ -52,10 +52,10 @@ def append_chunk(
     with uow:
         recording = uow.recordings.get(recording_id)
         if recording is None:
-            raise ValueError(f"Recording {recording_id} not found")
+            raise ValueError(f"Запись {recording_id} не найдена.")
         if recording.status != RecordingStatus.UPLOADING:
             raise ValueError(
-                f"Recording {recording_id} is not accepting audio (status={recording.status.value})"
+                f"Запись {recording_id} не принимает аудио (статус={recording.status.value})."
             )
 
         new_size = recording.size_bytes + len(chunk)
@@ -79,10 +79,10 @@ def finish_recording(uow: MeetingRecordingUnitOfWork, recording_id: int, mic_onl
     with uow:
         recording = uow.recordings.get(recording_id)
         if recording is None:
-            raise ValueError(f"Recording {recording_id} not found")
+            raise ValueError(f"Запись {recording_id} не найдена.")
         if recording.status != RecordingStatus.UPLOADING:
             raise ValueError(
-                f"Recording {recording_id} was already finished (status={recording.status.value})"
+                f"Запись {recording_id} уже завершена (статус={recording.status.value})."
             )
         recording.status = RecordingStatus.PROCESSING
         recording.mic_only = mic_only

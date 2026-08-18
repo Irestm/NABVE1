@@ -269,7 +269,7 @@ class WindowsAdapter(OSAdapter):
             detail="" if success else "path still exists after elevated delete attempt (timed out after 30s)",
         )
         if not success:
-            raise RuntimeError("Elevated deletion did not complete within 30 seconds.")
+            raise RuntimeError("Удаление с повышенными правами не завершилось за 30 секунд.")
         return {"path": str(target), "deleted": True, "used_elevation": True, "elevation_mechanism": "uac_runas"}
 
     # --- system language ---
@@ -277,7 +277,7 @@ class WindowsAdapter(OSAdapter):
     def switch_keyboard_layout(self, language_code: str) -> dict[str, Any]:
         klid = _KEYBOARD_LAYOUT_KLID.get(language_code)
         if klid is None:
-            raise ValueError(f"Unknown language code '{language_code}' for keyboard layout switching")
+            raise ValueError(f"Неизвестный код языка «{language_code}» для смены раскладки клавиатуры.")
 
         KLF_ACTIVATE = 0x00000001
         WM_INPUTLANGCHANGEREQUEST = 0x0050

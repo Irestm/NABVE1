@@ -1,5 +1,8 @@
 import type {
   AIBridgeStatus,
+  BoardGameDifficulty,
+  BoardGameKind,
+  BoardGameState,
   CalendarEvent,
   CommandButtonDescriptor,
   CommandDescriptor,
@@ -13,6 +16,7 @@ import type {
   MeetingRecording,
   PluginSuggestion,
   QuizletAuthStatus,
+  RecurrenceRule,
   QuizletGameStateResponse,
   QuizletLibrarySet,
   QuizletVoiceGameAnswerResponse,
@@ -131,6 +135,28 @@ export function confirmCommand(token: string, approved: boolean): Promise<Comman
   });
 }
 
+export function startBoardGame(kind: BoardGameKind, difficulty: BoardGameDifficulty | null): Promise<BoardGameState> {
+  return requestJson<BoardGameState>("/api/boardgames/start", {
+    method: "POST",
+    body: JSON.stringify({ kind, difficulty }),
+  });
+}
+
+export function getCurrentBoardGame(): Promise<BoardGameState | null> {
+  return requestJson<BoardGameState | null>("/api/boardgames/current");
+}
+
+export function playBoardGameMove(notation: string): Promise<BoardGameState> {
+  return requestJson<BoardGameState>("/api/boardgames/move", {
+    method: "POST",
+    body: JSON.stringify({ notation }),
+  });
+}
+
+export function finishBoardGame(): Promise<{ message: string }> {
+  return requestJson<{ message: string }>("/api/boardgames/finish", { method: "POST" });
+}
+
 export function getAIBridgeStatus(): Promise<AIBridgeStatus> {
   return requestJson<AIBridgeStatus>("/api/ai_bridge/status");
 }
@@ -171,11 +197,17 @@ export function createCalendarEvent(
   title: string,
   eventTimeIso: string,
   remindBeforeMinutes: number,
+  color: string | null = null,
+  category: string | null = null,
+  recurrence: RecurrenceRule = "none",
 ): Promise<CommandResponse> {
   return runCommand("calendar_create_event", {
     title,
     event_time: eventTimeIso,
     remind_before_minutes: remindBeforeMinutes,
+    color,
+    category,
+    recurrence,
   });
 }
 
@@ -391,6 +423,22 @@ export function getMeetingRecordingAudioUrl(recordingId: number): string {
   return withTokenParam(`${BASE_URL}/api/meetings/recordings/${recordingId}/audio`);
 }
 
+// Same withTokenParam pattern — an <a href download> link can't carry a
+// custom header either. Each zip already has this machine's address/token
+// (WordPress/Figma) or nothing to fill in at all (Blender) baked in — see
+// modules/integrations/packager.py.
+export function getWordpressPluginDownloadUrl(): string {
+  return withTokenParam(`${BASE_URL}/api/integrations/wordpress/plugin.zip`);
+}
+
+export function getFigmaPluginDownloadUrl(): string {
+  return withTokenParam(`${BASE_URL}/api/integrations/figma/plugin.zip`);
+}
+
+export function getBlenderAddonDownloadUrl(): string {
+  return withTokenParam(`${BASE_URL}/api/integrations/blender/addon.zip`);
+}
+
 export async function getMeetingRecordingTranscript(recordingId: number): Promise<string> {
   const response = await requestJson<{ text: string }>(
     `/api/meetings/recordings/${recordingId}/transcript`,
@@ -431,6 +479,14 @@ export function quizletLogin(): Promise<CommandResponse> {
 
 export function quizletLogout(): Promise<CommandResponse> {
   return runCommand("quizlet_logout");
+}
+
+export function quizletImportSession(): Promise<CommandResponse> {
+  return runCommand("quizlet_import_session");
+}
+
+export function quizletImportAllSets(): Promise<CommandResponse> {
+  return runCommand("quizlet_import_all_sets");
 }
 
 export function quizletImportSet(quizletSetId: string, title: string): Promise<CommandResponse> {

@@ -33,8 +33,9 @@
 }
 
 .status-panel__reveal {
-  padding: 3px 10px;
-  font-size: 11px;
+  min-height: var(--control-height-sm);
+  padding: 6px 12px;
+  font-size: var(--font-size-xs);
   border-radius: 999px;
   border: 1px solid var(--border);
   background: transparent;

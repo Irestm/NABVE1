@@ -26,7 +26,7 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         _handle_hardware_adaptive_status,
         dangerous=False,
         description=(
-            "Report detected RAM/VRAM/CPU, the selected local model tier, and whether "
-            "the local adaptive model is available (vs. falling back to ai_bridge)."
+            "Показать обнаруженные RAM/VRAM/CPU, выбранный уровень локальной модели и доступна ли "
+            "локальная адаптивная модель (иначе используется ai_bridge)."
         ),
     )

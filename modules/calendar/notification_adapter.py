@@ -37,6 +37,6 @@ async def send_desktop_notification(event: ReminderDue) -> None:
     itself already isolates handler failures, this just logs with a
     traceback so a genuinely broken notify-send install is diagnosable."""
     try:
-        await asyncio.to_thread(notify, "Calendar reminder", event.title)
+        await asyncio.to_thread(notify, "Напоминание", event.title)
     except Exception:
         logger.exception("Failed to show desktop notification for event id=%s", event.event_id)

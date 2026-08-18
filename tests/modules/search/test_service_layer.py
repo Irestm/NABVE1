@@ -16,7 +16,7 @@ class _FakeSearchEngine:
 
 
 async def test_web_search_raises_when_query_missing() -> None:
-    with pytest.raises(ValueError, match="query"):
+    with pytest.raises(ValueError, match="запрос"):
         await service_layer.web_search(_FakeSearchEngine([]), None, 3)
 
 

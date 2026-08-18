@@ -34,17 +34,17 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         "password_store",
         _handle_password_store,
         dangerous=True,
-        description="Store a password (service, username, password) in the system keyring.",
+        description="Сохранить пароль (service, username, password) в системном хранилище ключей.",
     )
     dispatcher.register(
         "password_get",
         _handle_password_get,
         dangerous=True,
-        description="Retrieve a stored password (service, username) from the system keyring.",
+        description="Получить сохранённый пароль (service, username) из системного хранилища ключей.",
     )
     dispatcher.register(
         "password_delete",
         _handle_password_delete,
         dangerous=True,
-        description="Delete a stored password (service, username) from the system keyring.",
+        description="Удалить сохранённый пароль (service, username) из системного хранилища ключей.",
     )

@@ -21,5 +21,5 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         "transcribe_recording",
         _handle_transcribe_recording,
         dangerous=False,
-        description="Transcribe a CRM call recording audio file to text using local faster-whisper (path, optional export_txt).",
+        description="Расшифровать запись звонка CRM в текст через локальный faster-whisper (path, опционально export_txt).",
     )

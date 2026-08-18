@@ -5,6 +5,7 @@ import pytest
 
 from modules.board_games import checkers_adapter
 from modules.board_games.checkers_adapter import CheckersSession
+from modules.board_games.domain import Difficulty
 
 
 class _FakeMove:
@@ -54,6 +55,15 @@ def test_legal_move_labels_lists_opening_moves() -> None:
     assert "24-19" in labels
 
 
+def test_legal_moves_with_squares_matches_labels_and_exposes_origin_destination() -> None:
+    session = _real_session()
+    moves = checkers_adapter.legal_moves_with_squares(session)
+
+    assert len(moves) == 7
+    assert {label for _from, _to, label in moves} == set(checkers_adapter.legal_move_labels(session))
+    assert ("24", "19", "24-19") in moves
+
+
 def test_is_over_false_for_opening_position() -> None:
     assert not checkers_adapter.is_over(_real_session())
 
@@ -69,8 +79,9 @@ def test_render_svg_returns_svg_markup() -> None:
 def test_apply_engine_move_plays_a_legal_move_and_advances_the_board() -> None:
     session = _real_session()
     before = checkers_adapter.legal_move_labels(session)
-    label = checkers_adapter.apply_engine_move(session)
-    assert label in before
+    engine_move = checkers_adapter.apply_engine_move(session)
+    assert engine_move.notation in before
+    assert engine_move.from_square and engine_move.to_square
     assert not checkers_adapter.is_over(session)  # one move never ends the opening
 
 
@@ -123,3 +134,19 @@ def test_apply_player_move_short_circuits_when_game_ends() -> None:
     assert judgement.notation == "31-27"
     assert judgement.was_mistake is False
     assert session.board.pushed == ["31-27"]  # the move itself was still applied
+
+
+def test_start_without_difficulty_uses_the_original_default_depth() -> None:
+    session = checkers_adapter.start()
+    assert session.engine.depth_limit == checkers_adapter._ENGINE_DEPTH
+
+
+def test_start_with_a_difficulty_uses_the_mapped_depth() -> None:
+    session = checkers_adapter.start(Difficulty.VERY_EASY)
+    assert session.engine.depth_limit == checkers_adapter._DIFFICULTY_DEPTH[Difficulty.VERY_EASY]
+
+
+def test_difficulty_depth_map_covers_every_tier_and_increases_with_difficulty() -> None:
+    depths = [checkers_adapter._DIFFICULTY_DEPTH[tier] for tier in Difficulty]
+    assert depths == sorted(depths)  # strictly non-decreasing from easiest to hardest
+    assert len(depths) == len(list(Difficulty))

@@ -22,11 +22,11 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         "show_window",
         _handle_show_window,
         dangerous=False,
-        description="Show and focus the Jarvis UI window.",
+        description="Показать и сфокусировать окно NABVE.",
     )
     dispatcher.register(
         "hide_window",
         _handle_hide_window,
         dangerous=False,
-        description="Hide the Jarvis UI window (it keeps running in the tray).",
+        description="Скрыть окно NABVE (продолжает работать в трее).",
     )

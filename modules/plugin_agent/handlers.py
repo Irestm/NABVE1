@@ -54,7 +54,7 @@ async def _handle_list_suggestions(_params: dict[str, Any]) -> dict[str, Any]:
 async def _handle_get_code(params: dict[str, Any]) -> dict[str, Any]:
     suggestion_id = params.get("suggestion_id")
     if suggestion_id is None:
-        raise ValueError("Missing required parameter 'suggestion_id'")
+        raise ValueError("Не указан идентификатор предложения.")
     code = await asyncio.to_thread(service_layer.get_generated_code, PluginAgentUnitOfWork(), int(suggestion_id))
     return {"suggestion_id": suggestion_id, "code": code}
 
@@ -62,7 +62,7 @@ async def _handle_get_code(params: dict[str, Any]) -> dict[str, Any]:
 async def _handle_approve(params: dict[str, Any]) -> dict[str, Any]:
     suggestion_id = params.get("suggestion_id")
     if suggestion_id is None:
-        raise ValueError("Missing required parameter 'suggestion_id'")
+        raise ValueError("Не указан идентификатор предложения.")
 
     def _approve() -> tuple[str, Any]:
         return service_layer.approve(PluginAgentUnitOfWork(), int(suggestion_id), get_registry(), PLUGINS_DIR)
@@ -75,7 +75,7 @@ async def _handle_approve(params: dict[str, Any]) -> dict[str, Any]:
 async def _handle_reject(params: dict[str, Any]) -> dict[str, Any]:
     suggestion_id = params.get("suggestion_id")
     if suggestion_id is None:
-        raise ValueError("Missing required parameter 'suggestion_id'")
+        raise ValueError("Не указан идентификатор предложения.")
     await asyncio.to_thread(service_layer.reject, PluginAgentUnitOfWork(), int(suggestion_id))
     return {"suggestion_id": suggestion_id}
 
@@ -99,37 +99,37 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         "plugin_agent_list_suggestions",
         _handle_list_suggestions,
         dangerous=False,
-        description="List AI-generated plugin suggestions awaiting user confirmation.",
+        description="Показать список предложений плагинов от ИИ, ожидающих подтверждения пользователя.",
     )
     dispatcher.register(
         "plugin_agent_get_code",
         _handle_get_code,
         dangerous=False,
-        description="Show the source code of a generated plugin suggestion (suggestion_id).",
+        description="Показать исходный код сгенерированного предложения плагина (suggestion_id).",
     )
     dispatcher.register(
         "plugin_agent_approve",
         _handle_approve,
         dangerous=False,
-        description="Approve a generated plugin suggestion and enable it (suggestion_id).",
+        description="Одобрить сгенерированное предложение плагина и включить его (suggestion_id).",
     )
     dispatcher.register(
         "plugin_agent_reject",
         _handle_reject,
         dangerous=False,
-        description="Reject and discard a generated plugin suggestion (suggestion_id).",
+        description="Отклонить и удалить сгенерированное предложение плагина (suggestion_id).",
     )
     dispatcher.register(
         "claude_cli_status",
         _handle_claude_cli_status,
         dangerous=False,
-        description="Check whether the Claude Code CLI is authenticated on this machine.",
+        description="Проверить, авторизован ли Claude Code CLI на этом компьютере.",
     )
     dispatcher.register(
         "claude_cli_login",
         _handle_claude_cli_login,
         dangerous=False,
-        description="Start the Claude Code CLI's own login flow (opens a browser).",
+        description="Запустить процесс входа Claude Code CLI (откроется браузер).",
     )
 
 

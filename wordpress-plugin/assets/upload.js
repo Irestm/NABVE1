@@ -17,7 +17,7 @@
 
   function pollJob(jobId, attempt) {
     if (attempt >= POLL_MAX_ATTEMPTS) {
-      setStatus("Jarvis не ответил вовремя — проверьте вкладку с браузером Jarvis.", true);
+      setStatus("NABVE не ответил вовремя — проверьте вкладку с браузером NABVE.", true);
       return;
     }
     fetch(jarvisBridgeConfig.backendUrl + "/api/wordpress/upload/" + jobId, {
@@ -32,7 +32,7 @@
         } else if (job.status === "failed") {
           setStatus(job.message || "Не удалось подготовить черновик.", true);
         } else {
-          setStatus("Jarvis готовит черновик… (" + job.status + ")", false);
+          setStatus("NABVE готовит черновик… (" + job.status + ")", false);
           window.setTimeout(function () {
             pollJob(jobId, attempt + 1);
           }, POLL_INTERVAL_MS);
@@ -63,7 +63,7 @@
       formData.append("files", filesInput.files[i]);
     }
 
-    setStatus("Отправляю файлы Jarvis…", false);
+    setStatus("Отправляю файлы NABVE…", false);
 
     fetch(jarvisBridgeConfig.backendUrl + "/api/wordpress/upload", {
       method: "POST",
@@ -77,11 +77,11 @@
         return response.json();
       })
       .then(function (data) {
-        setStatus("Jarvis готовит черновик — сейчас откроется видимое окно браузера на этом компьютере…", false);
+        setStatus("NABVE готовит черновик — сейчас откроется видимое окно браузера на этом компьютере…", false);
         pollJob(data.job_id, 0);
       })
       .catch(function (error) {
-        setStatus("Не удалось связаться с Jarvis: " + error.message, true);
+        setStatus("Не удалось связаться с NABVE: " + error.message, true);
       });
   });
 })();

@@ -14,11 +14,11 @@ async def _handle_open_media(params: dict[str, Any]) -> dict[str, Any]:
     # before dispatch, same shape as open_app's target-resolution step.
     target = params.get("target")
     if not target:
-        raise ValueError("Missing required parameter 'target'")
+        raise ValueError("Не указана цель для открытия.")
     adapter = get_os_adapter()
     success = await asyncio.to_thread(adapter.open_application, target)
     if not success:
-        raise RuntimeError(f"Could not open media target '{target}'")
+        raise RuntimeError(f"Не удалось открыть «{target}».")
     return {"target": target}
 
 
@@ -27,5 +27,5 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         "open_media",
         _handle_open_media,
         dangerous=False,
-        description="Open a music or video recommendation on YouTube (target, already resolved to a URL).",
+        description="Открыть музыкальную или видео-рекомендацию на YouTube (target, уже готовый URL).",
     )

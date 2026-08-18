@@ -18,7 +18,7 @@ export function createTray(window: BrowserWindow, setAlwaysOnTop: (enabled: bool
   const idleIconPath = path.join(ICONS_DIR, "tray-idle.png");
   const hiddenIconPath = path.join(ICONS_DIR, "tray-hidden.png");
   const tray = new Tray(idleIconPath);
-  tray.setToolTip("Jarvis");
+  tray.setToolTip("NABVE");
 
   function setHiddenIndicator(hidden: boolean): void {
     tray.setImage(hidden ? hiddenIconPath : idleIconPath);

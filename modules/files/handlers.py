@@ -35,17 +35,17 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         "convert_to_pdf",
         _handle_convert_to_pdf,
         dangerous=False,
-        description="Convert a file to PDF using LibreOffice headless (path, optional output_dir).",
+        description="Конвертировать файл в PDF через LibreOffice headless (path, опционально output_dir).",
     )
     dispatcher.register(
         "read_docx_text",
         _handle_read_docx_text,
         dangerous=False,
-        description="Read and return all text from a .docx file (path).",
+        description="Прочитать и вернуть весь текст из .docx файла (path).",
     )
     dispatcher.register(
         "read_xlsx_sheet",
         _handle_read_xlsx_sheet,
         dangerous=False,
-        description="Read a sheet from a .xlsx file as rows of cell values (path, optional sheet_name).",
+        description="Прочитать лист .xlsx как строки значений ячеек (path, опционально sheet_name).",
     )

@@ -76,6 +76,26 @@ export function StatusPanel(): JSX.Element {
     }
   }
 
+  async function handleImportSession(provider: ProviderName): Promise<void> {
+    setBusyProvider(provider);
+    setError("");
+    try {
+      const response = await runCommand("ai_bridge_provider_import_session", { provider });
+      if (response.status === "failed") {
+        setError(response.message || "Не удалось импортировать сессию.");
+        return;
+      }
+      // The next 5s poll will confirm it, but reflect success immediately
+      // rather than leaving the card on "Гость" for up to 5s.
+      setStatus((prev) => (prev ? { ...prev, logged_in: { ...prev.logged_in, [provider]: true } } : prev));
+    } catch (err) {
+      console.error(`Failed to import a browser session for ${provider}:`, err);
+      setError("Не удалось импортировать сессию.");
+    } finally {
+      setBusyProvider(null);
+    }
+  }
+
   return (
     <div className="status-panel">
       <div className="status-panel__row status-panel__row--header">
@@ -103,6 +123,7 @@ export function StatusPanel(): JSX.Element {
             busy={busyProvider === name}
             onLogin={() => void handleLogin(name)}
             onLogout={() => void handleLogout(name)}
+            onImportSession={() => void handleImportSession(name)}
           />
         ))}
       </div>

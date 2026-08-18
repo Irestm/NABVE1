@@ -14,11 +14,11 @@ class WhitelistedCommand:
     @classmethod
     def resolve(cls, name: str) -> "WhitelistedCommand":
         if name not in WHITELIST:
-            raise ValueError(f"Command '{name}' is not in the whitelist")
+            raise ValueError(f"Команда «{name}» не входит в белый список.")
         entry = WHITELIST[name]
         if isinstance(entry, dict):
             system = platform.system()
             if system not in entry:
-                raise ValueError(f"Command '{name}' is not in the whitelist for OS '{system}'")
+                raise ValueError(f"Команда «{name}» не входит в белый список для ОС «{system}».")
             return cls(name=name, argv=entry[system])
         return cls(name=name, argv=entry)

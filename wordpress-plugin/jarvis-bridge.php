@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name: Jarvis Bridge
+ * Plugin Name: NABVE Bridge
  * Description: Uploads docx/PDF/images from wp-admin straight to your local
- * Jarvis assistant, which turns them into a ready-to-review WordPress draft
- * (title, body, featured image) — Jarvis never publishes it, that's always
+ * NABVE assistant, which turns them into a ready-to-review WordPress draft
+ * (title, body, featured image) — NABVE never publishes it, that's always
  * done by hand from this site's own editor.
  * Version: 1.0.0
  *
@@ -26,8 +26,8 @@ define('JARVIS_OPTION_API_TOKEN', 'jarvis_api_token');
 add_action('admin_menu', 'jarvis_bridge_register_menu');
 function jarvis_bridge_register_menu() {
     add_menu_page(
-        'Jarvis Bridge',
-        'Jarvis',
+        'NABVE Bridge',
+        'NABVE',
         'manage_options',
         'jarvis-bridge',
         'jarvis_bridge_render_page',
@@ -82,20 +82,20 @@ function jarvis_bridge_render_page() {
     $has_config = !empty($backend_url) && !empty(get_option(JARVIS_OPTION_API_TOKEN, ''));
     ?>
     <div class="wrap">
-        <h1>Jarvis Bridge</h1>
+        <h1>NABVE Bridge</h1>
         <p>
-            Загрузите docx, PDF или изображения — Jarvis подготовит черновик записи
+            Загрузите docx, PDF или изображения — NABVE подготовит черновик записи
             (заголовок, текст, главное изображение) и оставит его здесь, в разделе
-            «Записи → Черновики», для вашей проверки. <strong>Публикацию Jarvis никогда
+            «Записи → Черновики», для вашей проверки. <strong>Публикацию NABVE никогда
             не выполняет сам</strong> — это всегда делаете вы вручную.
         </p>
 
-        <h2>Подключение к Jarvis</h2>
+        <h2>Подключение к NABVE</h2>
         <form method="post" action="options.php">
             <?php settings_fields('jarvis_bridge_settings'); ?>
             <table class="form-table" role="presentation">
                 <tr>
-                    <th scope="row"><label for="jarvis_backend_url">Адрес бэкенда Jarvis</label></th>
+                    <th scope="row"><label for="jarvis_backend_url">Адрес бэкенда NABVE</label></th>
                     <td>
                         <input
                             type="url"
@@ -106,8 +106,8 @@ function jarvis_bridge_render_page() {
                             class="regular-text"
                         />
                         <p class="description">
-                            LAN-адрес компьютера, на котором запущен Jarvis (см. QR-код/адрес в
-                            настройках самого Jarvis).
+                            LAN-адрес компьютера, на котором запущен NABVE (см. QR-код/адрес в
+                            настройках самого NABVE).
                         </p>
                     </td>
                 </tr>
@@ -131,7 +131,7 @@ function jarvis_bridge_render_page() {
 
         <h2>Загрузить материалы</h2>
         <?php if (!$has_config) : ?>
-            <p><em>Сначала укажите адрес и токен Jarvis выше.</em></p>
+            <p><em>Сначала укажите адрес и токен NABVE выше.</em></p>
         <?php else : ?>
             <form id="jarvis-upload-form">
                 <table class="form-table" role="presentation">
@@ -144,13 +144,13 @@ function jarvis_bridge_render_page() {
                         <td>
                             <label>
                                 <input type="checkbox" id="jarvis-rewrite" name="rewrite_with_ai" />
-                                Дать Jarvis отформатировать/переписать текст перед вставкой в черновик
+                                Дать NABVE отформатировать/переписать текст перед вставкой в черновик
                             </label>
                         </td>
                     </tr>
                 </table>
                 <p>
-                    <button type="submit" class="button button-primary">Отправить Jarvis</button>
+                    <button type="submit" class="button button-primary">Отправить NABVE</button>
                 </p>
             </form>
             <div id="jarvis-upload-status" aria-live="polite"></div>

@@ -18,13 +18,13 @@ def _build_prompt(params: dict[str, Any]) -> str:
     if preset_id:
         template = PRESET_PROMPTS.get(preset_id)
         if template is None:
-            raise ValueError(f"Unknown preset_id '{preset_id}'")
+            raise ValueError(f"Неизвестный preset_id «{preset_id}».")
         return template.format(input=prompt or "")
 
     if prompt:
         return prompt
 
-    raise ValueError("Either 'prompt' or a valid 'preset_id' must be provided")
+    raise ValueError("Нужно указать 'prompt' или корректный 'preset_id'.")
 
 
 async def _handle_ai_bridge_ask(params: dict[str, Any]) -> dict[str, Any]:
@@ -65,6 +65,15 @@ async def _handle_ai_bridge_provider_logout(params: dict[str, Any]) -> dict[str,
     return {"provider": provider}
 
 
+async def _handle_ai_bridge_provider_import_session(params: dict[str, Any]) -> dict[str, Any]:
+    provider = _require_provider(params)
+    result = await provider_auth.import_session(provider)
+    message = f"Сессия импортирована из {result.source} ({result.cookies_written} cookie)."
+    if result.warnings:
+        message += " " + " ".join(result.warnings)
+    return {"provider": provider, "source": result.source, "cookies_written": result.cookies_written, "message": message}
+
+
 def register_commands(dispatcher: CommandDispatcher) -> None:
     dispatcher.register(
         "ai_bridge_ask",
@@ -103,4 +112,14 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         _handle_ai_bridge_provider_logout,
         dangerous=False,
         description="Reset an AI provider's browser session back to guest (provider).",
+    )
+    dispatcher.register(
+        "ai_bridge_provider_import_session",
+        _handle_ai_bridge_provider_import_session,
+        dangerous=False,
+        description=(
+            "Copy an already-logged-in session for the given AI provider (provider: "
+            "gemini/chatgpt/deepseek/grok) from the user's own real Firefox/Chrome browser, "
+            "instead of attempting a fresh automated login."
+        ),
     )

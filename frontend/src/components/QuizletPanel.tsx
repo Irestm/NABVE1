@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
+import { GraduationCap, Layers, ListChecks, Mic, Plus, Shuffle, Trash2, type LucideIcon, X } from "lucide-react";
 import {
   answerQuizletGame,
   answerQuizletVoiceGame,
@@ -7,7 +8,9 @@ import {
   getQuizletStatus,
   listQuizletLibrary,
   listStudySets,
+  quizletImportAllSets,
   quizletImportSet,
+  quizletImportSession,
   quizletLogin,
   quizletLogout,
   saveStudySet,
@@ -24,6 +27,28 @@ const MODE_LABELS: Record<GameMode, string> = {
   match: "Сопоставление",
   test: "Тест",
   voice: "Голосовой режим",
+};
+
+// Icons per mode, same idea as Quizlet's own mode-switcher (flashcards/
+// learn/test/match each get a distinct icon there too) — makes the row
+// scannable at a glance instead of five identical-looking text buttons.
+const MODE_ICONS: Record<GameMode, LucideIcon> = {
+  flashcards: Layers,
+  learn: GraduationCap,
+  match: Shuffle,
+  test: ListChecks,
+  voice: Mic,
+};
+
+// One accent per mode instead of everything defaulting to --accent-blue —
+// same "give each thing its own color" idea as the section-accent borders
+// elsewhere in the app.
+const MODE_ACCENT: Record<GameMode, string> = {
+  flashcards: "var(--accent-blue)",
+  learn: "var(--accent-purple)",
+  match: "var(--accent-green)",
+  test: "var(--accent-amber)",
+  voice: "var(--accent-red)",
 };
 
 function playAudioBase64(base64: string): void {
@@ -499,6 +524,13 @@ export function QuizletPanel(): JSX.Element {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
 
+  // null = "haven't observed a status yet" — the very first check (whatever
+  // it finds) is a baseline, not a fresh login, so it must not itself count
+  // as a false->true transition below.
+  const wasLoggedInRef = useRef<boolean | null>(null);
+  const [bulkImporting, setBulkImporting] = useState(false);
+  const [bulkImportMessage, setBulkImportMessage] = useState("");
+
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [library, setLibrary] = useState<QuizletLibrarySet[] | null>(null);
   const [libraryLoading, setLibraryLoading] = useState(false);
@@ -513,6 +545,7 @@ export function QuizletPanel(): JSX.Element {
   const [deleting, setDeleting] = useState(false);
 
   const [selectedSet, setSelectedSet] = useState<StudySet | null>(null);
+  const [viewingSet, setViewingSet] = useState<StudySet | null>(null);
   const [activeMode, setActiveMode] = useState<GameMode | null>(null);
   const [activeSession, setActiveSession] = useState<{ sessionId: string; state: QuizletGameState } | null>(null);
   const [startingMode, setStartingMode] = useState(false);
@@ -525,6 +558,33 @@ export function QuizletPanel(): JSX.Element {
     }
   }
 
+  // Fires once per fresh login (Войти или Импорт из браузера — whichever
+  // gets there first) — not on every poll tick, and not for a session that
+  // was already logged in when the panel mounted (see wasLoggedInRef).
+  // Pulls the whole Quizlet library into local storage in one go and closes
+  // the browser tab, so the user doesn't have to open "Библиотека Quizlet"
+  // and import sets one at a time by hand.
+  async function handleLoggedInChange(nowLoggedIn: boolean): Promise<void> {
+    const wasLoggedIn = wasLoggedInRef.current;
+    wasLoggedInRef.current = nowLoggedIn;
+    setLoggedIn(nowLoggedIn);
+    if (wasLoggedIn !== false || !nowLoggedIn) {
+      return;
+    }
+    setBulkImporting(true);
+    setBulkImportMessage("");
+    try {
+      const response = await quizletImportAllSets();
+      setBulkImportMessage(response.message || "");
+      await refreshSets();
+    } catch (err) {
+      console.error("Failed to bulk-import the Quizlet library:", err);
+      setBulkImportMessage("Не удалось автоматически перенести библиотеку — попробуйте «Библиотека Quizlet» вручную.");
+    } finally {
+      setBulkImporting(false);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -534,6 +594,7 @@ export function QuizletPanel(): JSX.Element {
         if (cancelled) {
           return;
         }
+        wasLoggedInRef.current = status.logged_in; // baseline — not a transition
         setLoggedIn(status.logged_in);
         setSets(setsList);
         setLoaded(true);
@@ -551,7 +612,7 @@ export function QuizletPanel(): JSX.Element {
       void getQuizletStatus()
         .then((status) => {
           if (!cancelled) {
-            setLoggedIn(status.logged_in);
+            void handleLoggedInChange(status.logged_in);
           }
         })
         .catch((err) => console.error("Failed to poll Quizlet status:", err));
@@ -584,6 +645,24 @@ export function QuizletPanel(): JSX.Element {
     } catch (err) {
       console.error("Failed to log out of Quizlet:", err);
       setError("Не удалось выйти из Quizlet.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function handleImportSession(): Promise<void> {
+    setAuthBusy(true);
+    setError("");
+    try {
+      const response = await quizletImportSession();
+      if (response.status === "failed") {
+        setError(response.message || "Не удалось импортировать сессию.");
+        return;
+      }
+      await handleLoggedInChange(true);
+    } catch (err) {
+      console.error("Failed to import a Quizlet browser session:", err);
+      setError("Не удалось импортировать сессию.");
     } finally {
       setAuthBusy(false);
     }
@@ -707,6 +786,12 @@ export function QuizletPanel(): JSX.Element {
     setActiveSession(null);
   }
 
+  // Double-click on a set card — like opening a folder to see what's
+  // inside, rather than single-click's "select this set to study."
+  function openSetContents(set: StudySet): void {
+    setViewingSet(set);
+  }
+
   async function startMode(mode: GameMode): Promise<void> {
     if (!selectedSet) {
       return;
@@ -740,6 +825,8 @@ export function QuizletPanel(): JSX.Element {
     <div className="section quizlet-panel">
       <h3>Обучение</h3>
       {error && <p className="status-error">{error}</p>}
+      {bulkImporting && <p className="status-detail">Переношу всю библиотеку Quizlet в NABVE…</p>}
+      {!bulkImporting && bulkImportMessage && <p className="status-detail">{bulkImportMessage}</p>}
       {!loaded && !error && <p className="status-detail">Загрузка…</p>}
 
       <div className="quizlet-panel__auth">
@@ -748,13 +835,23 @@ export function QuizletPanel(): JSX.Element {
             {loggedIn ? "Подключено к Quizlet" : "Не подключено к Quizlet"}
           </span>
           <p className="status-detail">
-            Вход выполняется в отдельном окне браузера — Jarvis не запрашивает и не хранит пароль от Quizlet.
+            Вход выполняется в отдельном окне браузера — NABVE не запрашивает и не хранит пароль от Quizlet.
           </p>
         </div>
         <div className="quizlet-panel__auth-actions">
           <button type="button" onClick={() => void (loggedIn ? handleLogout() : handleLogin())} disabled={authBusy}>
             {authBusy ? "…" : loggedIn ? "Выйти из Quizlet" : "Войти в Quizlet"}
           </button>
+          {!loggedIn && (
+            <button
+              type="button"
+              className="quizlet-panel__import-session"
+              onClick={() => void handleImportSession()}
+              disabled={authBusy}
+            >
+              {authBusy ? "…" : "Импорт из браузера"}
+            </button>
+          )}
           {loggedIn && (
             <button type="button" onClick={() => void toggleLibrary()}>
               {libraryOpen ? "Скрыть библиотеку" : "Библиотека Quizlet"}
@@ -762,6 +859,14 @@ export function QuizletPanel(): JSX.Element {
           )}
         </div>
       </div>
+
+      {!loggedIn && (
+        <p className="quizlet-panel__import-note">
+          «Импорт из браузера» — это способ входа, если окно входа не срабатывает: сначала зайдите на quizlet.com в
+          своём обычном браузере (Firefox или Chrome), как обычно заходите на сайты, затем нажмите эту кнопку — NABVE
+          скопирует эту сессию себе, без пароля.
+        </p>
+      )}
 
       {libraryOpen && (
         <div className="quizlet-panel__library">
@@ -802,55 +907,103 @@ export function QuizletPanel(): JSX.Element {
 
       <div className="quizlet-panel__cards">
         {sets.map((set) => (
-          <div
-            key={set.id}
-            className={`quizlet-panel__card${selectedSet?.id === set.id ? " quizlet-panel__card--active" : ""}`}
-          >
-            <button type="button" className="quizlet-panel__card-main" onClick={() => selectSet(set)}>
-              <span className="quizlet-panel__card-title">{set.title}</span>
-              <span className="status-detail">
-                {set.terms.length} терминов · {set.progress_percent}% выучено · {set.attempts_count} попыток
-                {set.source === "quizlet_import" ? " · из Quizlet" : ""}
-              </span>
-            </button>
-            <div className="quizlet-panel__card-actions">
-              {set.source === "manual" && (
-                <button type="button" onClick={() => openEditForm(set)} title="Редактировать">
-                  Изменить
-                </button>
-              )}
-              <button type="button" onClick={() => setConfirmingDelete(set)} title="Удалить">
-                <Trash2 size={16} />
+          <Fragment key={set.id}>
+            <div
+              className={`quizlet-panel__card${selectedSet?.id === set.id ? " quizlet-panel__card--active" : ""}`}
+            >
+              <button
+                type="button"
+                className="quizlet-panel__card-main"
+                onClick={() => selectSet(set)}
+                onDoubleClick={() => openSetContents(set)}
+                title="Клик — выбрать для изучения, двойной клик — открыть содержимое"
+              >
+                <span className="quizlet-panel__card-title">{set.title}</span>
+                <span className="status-detail">
+                  {set.terms.length} терминов · {set.progress_percent}% выучено · {set.attempts_count} попыток
+                  {set.source === "quizlet_import" ? " · из Quizlet" : ""}
+                </span>
               </button>
+              <div className="quizlet-panel__card-actions">
+                {set.source === "manual" && (
+                  <button type="button" onClick={() => openEditForm(set)} title="Редактировать">
+                    Изменить
+                  </button>
+                )}
+                <button type="button" onClick={() => setConfirmingDelete(set)} title="Удалить">
+                  <Trash2 size={16} />
+                </button>
+              </div>
             </div>
-          </div>
+
+            {/* Rendered right under the card it belongs to, not after the
+                whole list — so studying the set you just clicked doesn't
+                mean scrolling past every other set first. */}
+            {selectedSet?.id === set.id && (
+              <div className="quizlet-panel__study">
+                <h4>{selectedSet.title}</h4>
+                {activeMode === null ? (
+                  <div className="quizlet-panel__modes">
+                    {(Object.keys(MODE_LABELS) as GameMode[]).map((mode) => {
+                      const Icon = MODE_ICONS[mode];
+                      return (
+                        <button
+                          type="button"
+                          key={mode}
+                          className="quizlet-panel__mode"
+                          style={{ "--mode-accent": MODE_ACCENT[mode] } as CSSProperties}
+                          onClick={() => void startMode(mode)}
+                          disabled={startingMode}
+                        >
+                          <Icon size={20} />
+                          <span>{MODE_LABELS[mode]}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : activeMode === "voice" ? (
+                  <VoiceView setId={selectedSet.id} onExit={exitMode} />
+                ) : activeSession ? (
+                  activeMode === "flashcards" ? (
+                    <FlashcardsView
+                      sessionId={activeSession.sessionId}
+                      initialState={activeSession.state}
+                      onExit={exitMode}
+                    />
+                  ) : activeMode === "learn" ? (
+                    <LearnView sessionId={activeSession.sessionId} initialState={activeSession.state} onExit={exitMode} />
+                  ) : activeMode === "match" ? (
+                    <MatchView sessionId={activeSession.sessionId} initialState={activeSession.state} onExit={exitMode} />
+                  ) : (
+                    <TestView sessionId={activeSession.sessionId} initialState={activeSession.state} onExit={exitMode} />
+                  )
+                ) : null}
+              </div>
+            )}
+          </Fragment>
         ))}
       </div>
 
-      {selectedSet && (
-        <div className="quizlet-panel__study">
-          <h4>{selectedSet.title}</h4>
-          {activeMode === null ? (
-            <div className="quizlet-panel__modes">
-              {(Object.keys(MODE_LABELS) as GameMode[]).map((mode) => (
-                <button type="button" key={mode} onClick={() => void startMode(mode)} disabled={startingMode}>
-                  {MODE_LABELS[mode]}
-                </button>
+      {viewingSet && (
+        <div className="quizlet-panel__contents">
+          <div className="quizlet-panel__contents-header">
+            <h4>{viewingSet.title}</h4>
+            <button type="button" onClick={() => setViewingSet(null)} title="Закрыть">
+              <X size={16} />
+            </button>
+          </div>
+          {viewingSet.terms.length === 0 ? (
+            <p className="status-detail">В этом наборе пока нет терминов.</p>
+          ) : (
+            <div className="quizlet-panel__contents-list">
+              {viewingSet.terms.map((term) => (
+                <div key={term.id} className="quizlet-panel__contents-row">
+                  <span className="quizlet-panel__contents-term">{term.term}</span>
+                  <span className="quizlet-panel__contents-definition">{term.definition}</span>
+                </div>
               ))}
             </div>
-          ) : activeMode === "voice" ? (
-            <VoiceView setId={selectedSet.id} onExit={exitMode} />
-          ) : activeSession ? (
-            activeMode === "flashcards" ? (
-              <FlashcardsView sessionId={activeSession.sessionId} initialState={activeSession.state} onExit={exitMode} />
-            ) : activeMode === "learn" ? (
-              <LearnView sessionId={activeSession.sessionId} initialState={activeSession.state} onExit={exitMode} />
-            ) : activeMode === "match" ? (
-              <MatchView sessionId={activeSession.sessionId} initialState={activeSession.state} onExit={exitMode} />
-            ) : (
-              <TestView sessionId={activeSession.sessionId} initialState={activeSession.state} onExit={exitMode} />
-            )
-          ) : null}
+          )}
         </div>
       )}
 

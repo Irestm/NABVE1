@@ -8,7 +8,7 @@ import chess.engine
 import chess.svg
 
 from core.logger import get_logger
-from modules.board_games.domain import MoveJudgement
+from modules.board_games.domain import Difficulty, EngineMove, MoveJudgement
 
 logger = get_logger(__name__)
 
@@ -26,6 +26,18 @@ _ANALYSIS_TIME_SECONDS = 0.5
 _MISTAKE_THRESHOLD_CENTIPAWNS = 100
 _MATE_SCORE = 100_000
 
+# Stockfish's own UCI_Elo range (confirmed via `echo uci | stockfish`: "option
+# name UCI_Elo type spin default 1320 min 1320 max 3190") — "очень легко"
+# can't go below what Stockfish itself supports weakening to.
+_DIFFICULTY_ELO: dict[Difficulty, int] = {
+    Difficulty.VERY_EASY: 1320,
+    Difficulty.EASY: 1500,
+    Difficulty.MEDIUM: 1800,
+    Difficulty.HARD: 2200,
+    Difficulty.VERY_HARD: 2700,
+    Difficulty.IMPOSSIBLE: 3190,
+}
+
 
 @dataclass
 class ChessSession:
@@ -33,8 +45,10 @@ class ChessSession:
     engine: chess.engine.SimpleEngine
 
 
-def start() -> ChessSession:
+def start(difficulty: Difficulty | None = None) -> ChessSession:
     engine = chess.engine.SimpleEngine.popen_uci(_ENGINE_COMMAND)
+    if difficulty is not None:
+        engine.configure({"UCI_LimitStrength": True, "UCI_Elo": _DIFFICULTY_ELO[difficulty]})
     return ChessSession(board=chess.Board(), engine=engine)
 
 
@@ -50,6 +64,18 @@ def legal_move_labels(session: ChessSession) -> list[str]:
     modules.ui_automation.grounding/modules.app_catalog.resolver/
     modules.task_orchestrator.planner."""
     return [session.board.san(move) for move in session.board.legal_moves]
+
+
+def legal_moves_with_squares(session: ChessSession) -> list[tuple[str, str, str]]:
+    """(from_square, to_square, SAN label) for every legal move — lets the
+    UI group moves by origin square ("click a piece, see its legal
+    destinations") without parsing SAN itself, which doesn't reliably
+    encode the origin square (e.g. "e4" alone doesn't say the pawn started
+    on e2)."""
+    return [
+        (chess.square_name(move.from_square), chess.square_name(move.to_square), session.board.san(move))
+        for move in session.board.legal_moves
+    ]
 
 
 def _relative_eval_centipawns(session: ChessSession) -> int:
@@ -90,11 +116,13 @@ def apply_player_move(session: ChessSession, san: str) -> MoveJudgement:
     )
 
 
-def apply_engine_move(session: ChessSession) -> str:
+def apply_engine_move(session: ChessSession) -> EngineMove:
     result = session.engine.play(session.board, chess.engine.Limit(time=_ANALYSIS_TIME_SECONDS))
     san = session.board.san(result.move)
+    from_square = chess.square_name(result.move.from_square)
+    to_square = chess.square_name(result.move.to_square)
     session.board.push(result.move)
-    return san
+    return EngineMove(notation=san, from_square=from_square, to_square=to_square)
 
 
 def is_over(session: ChessSession) -> bool:

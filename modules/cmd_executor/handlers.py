@@ -20,5 +20,5 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         "run_command",
         _handle_run_command,
         dangerous=True,
-        description="Run a pre-approved whitelisted terminal command by symbolic name (name).",
+        description="Запустить заранее одобренную команду терминала из белого списка по имени (name).",
     )

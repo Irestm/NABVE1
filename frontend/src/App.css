@@ -1,6 +1,7 @@
 .app-shell {
   position: relative;
   z-index: 1;
+  width: 100%;
   padding: 18px 16px 16px;
   display: flex;
   flex-direction: column;
@@ -38,65 +39,11 @@
   animation: tab-fade-in var(--transition-med) ease-out;
 }
 
-/* Two-corner HUD viewfinder accents (top-left + bottom-right only — full
-   four-corner brackets read as busier without adding legibility) on every
-   top-level panel. Centralized here instead of per-component so every
-   panel — present and future — picks it up automatically. */
 .section,
 .status-panel,
 .planner__calendar,
 .plugin-suggestion-card {
   position: relative;
-}
-
-.section::before,
-.section::after,
-.status-panel::before,
-.status-panel::after,
-.planner__calendar::before,
-.planner__calendar::after,
-.plugin-suggestion-card::before,
-.plugin-suggestion-card::after {
-  content: "";
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  opacity: 0.45;
-  pointer-events: none;
-  transition: opacity var(--transition-fast), width var(--transition-fast), height var(--transition-fast);
-}
-
-.section::before,
-.status-panel::before,
-.planner__calendar::before,
-.plugin-suggestion-card::before {
-  top: -1px;
-  left: -1px;
-  border-top: 1.5px solid var(--hud-line);
-  border-left: 1.5px solid var(--hud-line);
-}
-
-.section::after,
-.status-panel::after,
-.planner__calendar::after,
-.plugin-suggestion-card::after {
-  bottom: -1px;
-  right: -1px;
-  border-bottom: 1.5px solid var(--hud-line);
-  border-right: 1.5px solid var(--hud-line);
-}
-
-.section:hover::before,
-.section:hover::after,
-.status-panel:hover::before,
-.status-panel:hover::after,
-.planner__calendar:hover::before,
-.planner__calendar:hover::after,
-.plugin-suggestion-card:hover::before,
-.plugin-suggestion-card:hover::after {
-  opacity: 0.9;
-  width: 14px;
-  height: 14px;
 }
 
 .app-shell__stage {
@@ -143,21 +90,31 @@
   text-align: center;
 }
 
+/* Six tabs stopped fitting on one equal-width row without shrinking to an
+   unreadable 9px (see App.tsx's tab list) — a horizontally scrollable strip
+   with natural-width, nowrap labels (Material Design's "scrollable tabs"
+   pattern) keeps every label readable instead of forcing them all to fit. */
 .app-tabs {
   display: flex;
-  gap: 6px;
+  gap: 2px;
   padding: 3px;
   border-radius: 10px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
 }
 
 .app-tabs__button {
-  flex: 1;
+  flex: 0 0 auto;
+  scroll-snap-align: start;
   background: transparent;
   color: var(--text-dim);
   border: none;
-  padding: 7px 10px;
+  padding: 9px 14px;
+  font-size: 13px;
+  line-height: 1.25;
+  white-space: nowrap;
   transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
@@ -167,10 +124,66 @@
   box-shadow: 0 0 16px color-mix(in srgb, var(--accent-blue) 55%, transparent);
 }
 
+/* Base card look for every top-level section — some components (CommandPanel,
+   QuizletPanel, CustomCommandsPanel) already redeclare the same padding/
+   background/border on their own more specific class for historical reasons;
+   the values match exactly so there's no visible difference either way.
+   Without this on the shared class, VoiceRecorder/TextChat/PersonalityPanel/
+   VoiceSettingsPanel/LanQrPanel had no background or border of their own at
+   all — bare text directly on the app background, indistinguishable from
+   each other. */
 .section {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--section-accent, var(--border));
+}
+
+/* One accent color per section on the Ассистент tab — purely a "tell these
+   apart at a glance" cue (see the corner brackets above, which are too
+   subtle alone), not a status/semantic color; picked from the same palette
+   every theme already defines so it re-themes automatically. */
+.voice-recorder {
+  --section-accent: var(--accent-blue);
+}
+.text-chat {
+  --section-accent: var(--accent-purple);
+}
+.board-games-panel {
+  --section-accent: var(--accent-red);
+}
+.personality-panel {
+  --section-accent: var(--accent-green);
+}
+.voice-settings-panel {
+  --section-accent: var(--accent-amber);
+}
+.command-panel {
+  --section-accent: var(--accent-blue);
+}
+.custom-commands-panel {
+  --section-accent: var(--accent-purple);
+}
+.quizlet-panel {
+  --section-accent: var(--accent-green);
+}
+.integrations-panel {
+  --section-accent: var(--accent-amber);
+}
+
+/* Checkboxes/radios inherit their own section's accent (see --section-accent
+   above) instead of the browser's default blue — accent-color is the real
+   native-control equivalent of "tint it like the rest of this section";
+   native checkboxes can't render an actual gradient fill at that size
+   without a full custom replacement, and a gradient that small would just
+   look like a smudge anyway. */
+.section input[type="checkbox"],
+.section input[type="radio"] {
+  accent-color: var(--section-accent, var(--accent-blue));
 }
 
 .section h3 {
@@ -206,7 +219,12 @@ button {
   padding: 7px 14px;
   border-radius: 8px;
   border: 1px solid transparent;
-  background: var(--accent-blue);
+  /* --section-accent (set per top-level .section, see below) cascades down
+     to every plain button inside it automatically — a bare type selector
+     loses to any component's own more-specific class rule, so this only
+     ever affects buttons that don't already declare their own background
+     (e.g. "Превью"/"Начать шахматы", not .quizlet-panel__mode). */
+  background: linear-gradient(135deg, var(--section-accent, var(--accent-blue)), var(--accent-blue));
   color: #04070c;
   font-weight: 600;
   font-size: 13px;
@@ -216,7 +234,7 @@ button {
 
 button:hover:not(:disabled) {
   filter: brightness(1.1);
-  box-shadow: 0 0 14px color-mix(in srgb, var(--accent-blue) 60%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--section-accent, var(--accent-blue)) 60%, transparent);
 }
 
 button:active:not(:disabled) {
@@ -275,8 +293,9 @@ button.danger:hover:not(:disabled) {
 }
 
 .voice-lang-toggle button {
-  padding: 4px 10px;
-  font-size: 12px;
+  min-height: var(--control-height-sm);
+  padding: 6px 12px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   background: var(--bg-elevated);
   color: var(--text-dim);
@@ -341,7 +360,7 @@ button.danger:hover:not(:disabled) {
 }
 
 .voice-option--selected {
-  border-color: var(--accent-blue);
+  border-color: var(--section-accent, var(--accent-blue));
 }
 
 .voice-option__info {
@@ -368,7 +387,7 @@ button.danger:hover:not(:disabled) {
 }
 
 .voice-option__select.active {
-  background: var(--accent-blue);
+  background: linear-gradient(135deg, var(--section-accent, var(--accent-blue)), var(--accent-blue));
   color: #04070c;
   border-color: transparent;
 }

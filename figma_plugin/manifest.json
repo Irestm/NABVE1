@@ -1,5 +1,5 @@
 {
-  "name": "Jarvis Voice Control",
+  "name": "NABVE Voice Control",
   "id": "jarvis-figma-control-local",
   "api": "1.0.0",
   "main": "code.js",
@@ -9,6 +9,6 @@
   "networkAccess": {
     "allowedDomains": ["http://127.0.0.1:8756", "ws://127.0.0.1:8756"],
     "devAllowedDomains": ["http://127.0.0.1:*", "ws://127.0.0.1:*"],
-    "reasoning": "Connects to the local Jarvis assistant backend (modules/figma_control) over a loopback WebSocket so voice commands can drive the Figma document. Never leaves the local machine."
+    "reasoning": "Connects to the local NABVE assistant backend (modules/figma_control) over a loopback WebSocket so voice commands can drive the Figma document. Never leaves the local machine."
   }
 }

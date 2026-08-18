@@ -28,7 +28,7 @@ def _find_soffice() -> str:
 def convert_to_pdf(source_path: str, output_dir: str | None = None) -> Path:
     source = Path(source_path)
     if not source.is_file():
-        raise ValueError(f"Source file not found: {source_path}")
+        raise ValueError(f"Исходный файл не найден: {source_path}")
 
     target_dir = Path(output_dir) if output_dir else source.parent
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -74,7 +74,7 @@ def read_docx_text(path: str) -> str:
 
     source = Path(path)
     if not source.is_file():
-        raise ValueError(f"File not found: {path}")
+        raise ValueError(f"Файл не найден: {path}")
 
     document = docx.Document(str(source))
     return "\n".join(paragraph.text for paragraph in document.paragraphs)
@@ -108,7 +108,7 @@ def read_xlsx_sheet(path: str, sheet_name: str | None = None) -> list[list[Any]]
 
     source = Path(path)
     if not source.is_file():
-        raise ValueError(f"File not found: {path}")
+        raise ValueError(f"Файл не найден: {path}")
 
     workbook = openpyxl.load_workbook(str(source), data_only=True)
     sheet = workbook[sheet_name] if sheet_name else workbook.active

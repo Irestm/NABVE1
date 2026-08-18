@@ -12,6 +12,7 @@ from core.voice.pipeline import VoiceAssistantLoop
 from core.voice.proactive_announcer import ProactiveAnnouncer
 from modules.ai_bridge import register_commands as register_ai_bridge_commands
 from modules.blender_control import register_commands as register_blender_control_commands
+from modules.board_games import register_commands as register_board_games_commands
 from modules.calendar import reminder_checker, register_commands as register_calendar_commands
 from modules.calendar.events import ReminderDue
 from modules.calendar.notifier import ReminderChecker
@@ -39,6 +40,9 @@ from modules.plugin_agent.events import PluginCandidateReadyForReview
 from modules.quizlet_clone import register_commands as register_quizlet_clone_commands
 from modules.search import register_commands as register_search_commands
 from modules.task_orchestrator import register_commands as register_task_orchestrator_commands
+from modules.timer import register_commands as register_timer_commands
+from modules.timer.events import TimerFired
+from modules.timer.notification_adapter import send_desktop_notification as send_timer_desktop_notification
 from modules.ui_automation import register_commands as register_ui_automation_commands
 from modules.ui_control import register_commands as register_ui_control_commands
 from modules.user_profile import register_commands as register_user_profile_commands
@@ -103,6 +107,7 @@ def compose(bus: MessageBus = message_bus) -> Composed:
     register_quizlet_clone_commands(dispatcher)
     register_figma_control_commands(dispatcher)
     register_blender_control_commands(dispatcher)
+    register_board_games_commands(dispatcher)
     register_crm_transcribe_commands(dispatcher)
     register_ai_bridge_commands(dispatcher)
     register_search_commands(dispatcher)
@@ -117,6 +122,7 @@ def compose(bus: MessageBus = message_bus) -> Composed:
     register_ui_automation_commands(dispatcher)
     register_messaging_commands(dispatcher)
     register_wordpress_bridge_commands(dispatcher)
+    register_timer_commands(dispatcher)
     # Registered last is not load-bearing: dispatcher.list_commands() (what
     # modules.task_orchestrator.service_layer.build_plan offers the planner
     # as candidate steps) is only ever called later, at an actual voice
@@ -137,6 +143,12 @@ def compose(bus: MessageBus = message_bus) -> Composed:
     # core.voice's running loop, so that half is composed here.
     proactive_announcer = ProactiveAnnouncer(voice_loop)
     bus.subscribe(HardwareAlertRaised, proactive_announcer.handle)
+    # TimerFired carries a pre-built `message` for exactly this reason — no
+    # dedicated timer announcer class needed, same consumer as the hardware
+    # alert above. Desktop notification is timer's own small adapter
+    # (modules/timer/notification_adapter.py), same split as calendar's.
+    bus.subscribe(TimerFired, proactive_announcer.handle)
+    bus.subscribe(TimerFired, send_timer_desktop_notification)
 
     # Outbound Telegram notifications (see core/telegram_notifier.py) — a
     # separate delivery channel from the two spoken subscribers above, for

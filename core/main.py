@@ -17,6 +17,9 @@ from core.logger import get_logger
 from core.message_bus import message_bus
 from core.models import (
     AIBridgeStatus,
+    BoardGameMoveRequest,
+    BoardGameStartRequest,
+    BoardGameStateResponse,
     CommandButtonDescriptor,
     CommandDescriptor,
     CommandParamField,
@@ -30,6 +33,7 @@ from core.models import (
     GameStateResponse,
     ImageRequest,
     LanUrlResponse,
+    LegalMoveSquares,
     LibrarySetResponse,
     MeetingRecordingChunkResponse,
     MeetingRecordingCreateRequest,
@@ -67,12 +71,18 @@ from core.state import state_manager
 from core.voice import web_pipeline
 from modules.ai_bridge import provider_auth, virtual_display
 from modules.ai_bridge.provider_manager import get_provider_manager
+from modules.board_games import announce as board_games_announce
+from modules.board_games import service_layer as board_games_service_layer
+from modules.board_games import ui_session as board_games_ui_session
+from modules.board_games.domain import Difficulty as BoardGameDifficulty
+from modules.board_games.domain import GameKind
 from modules.custom_commands import dispatcher as custom_commands_registry
 from modules.custom_commands import service_layer as custom_commands_service_layer
 from modules.custom_commands.domain import ActionType
 from modules.custom_commands.uow import CustomCommandsUnitOfWork
 from modules.figma_control.ws_server import WEBSOCKET_PATH as FIGMA_WEBSOCKET_PATH
 from modules.figma_control.ws_server import figma_ws_server
+from modules.integrations import packager as integrations_packager
 from modules.meeting_recorder import service_layer as meeting_service_layer
 from modules.meeting_recorder.domain import Recording as MeetingRecording
 from modules.meeting_recorder.domain import RecordingStatus as MeetingRecordingStatus
@@ -659,6 +669,116 @@ async def answer_quizlet_voice_game(
     )
 
 
+def _board_game_state_response(
+    session: Any,
+    *,
+    last_player_move: str | None = None,
+    last_engine_move: str | None = None,
+    last_engine_move_from: str | None = None,
+    last_engine_move_to: str | None = None,
+    mistake_message: str | None = None,
+) -> BoardGameStateResponse:
+    is_over = board_games_service_layer.is_over(session)
+    legal_move_squares = (
+        []
+        if is_over
+        else [
+            LegalMoveSquares(from_square=from_sq, to_square=to_sq, label=label)
+            for from_sq, to_sq, label in board_games_service_layer.legal_moves_with_squares(session)
+        ]
+    )
+    return BoardGameStateResponse(
+        kind=session.kind.value,
+        difficulty=session.difficulty.value if session.difficulty else None,
+        board_svg=board_games_service_layer.render_svg(session),
+        legal_moves=[] if is_over else board_games_service_layer.legal_move_labels(session),
+        legal_move_squares=legal_move_squares,
+        is_over=is_over,
+        is_check=board_games_service_layer.is_check(session),
+        result=board_games_service_layer.result_string(session) if is_over else None,
+        last_player_move=last_player_move,
+        last_engine_move=last_engine_move,
+        last_engine_move_from=last_engine_move_from,
+        last_engine_move_to=last_engine_move_to,
+        mistake_message=mistake_message,
+    )
+
+
+def _parse_board_game_kind(raw: str) -> GameKind:
+    try:
+        return GameKind(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unknown game kind: {raw}") from None
+
+
+def _parse_board_game_difficulty(raw: str | None) -> BoardGameDifficulty | None:
+    if raw is None:
+        return None
+    try:
+        return BoardGameDifficulty(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unknown difficulty: {raw}") from None
+
+
+@app.post("/api/boardgames/start", response_model=BoardGameStateResponse)
+async def start_board_game(request: BoardGameStartRequest) -> BoardGameStateResponse:
+    kind = _parse_board_game_kind(request.kind)
+    difficulty = _parse_board_game_difficulty(request.difficulty)
+    session = await asyncio.to_thread(board_games_ui_session.start, kind, difficulty)
+    return _board_game_state_response(session)
+
+
+@app.get("/api/boardgames/current", response_model=BoardGameStateResponse | None)
+async def get_current_board_game() -> BoardGameStateResponse | None:
+    session = board_games_ui_session.current()
+    if session is None:
+        return None
+    return _board_game_state_response(session)
+
+
+@app.post("/api/boardgames/move", response_model=BoardGameStateResponse)
+async def play_board_game_move(request: BoardGameMoveRequest) -> BoardGameStateResponse:
+    try:
+        session = board_games_ui_session.require_current()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    legal = board_games_service_layer.legal_move_labels(session)
+    if request.notation not in legal:
+        raise HTTPException(status_code=400, detail=f"Illegal move: {request.notation}")
+
+    judgement = await asyncio.to_thread(board_games_service_layer.apply_player_move, session, request.notation)
+    mistake_message = board_games_announce.mistake_text(judgement) if judgement.was_mistake else None
+
+    if board_games_service_layer.is_over(session):
+        return _board_game_state_response(session, last_player_move=request.notation, mistake_message=mistake_message)
+
+    # A real engine search takes long enough at higher difficulties to feel
+    # like "thinking" on its own, but the easy tiers return near-instantly —
+    # the reply then lands in the same network round-trip as the player's
+    # own move, reading as "the board just teleported" rather than a turn
+    # being taken. A small fixed pause makes every difficulty feel like an
+    # opponent moved, not a bug.
+    await asyncio.sleep(0.6)
+    engine_move = await asyncio.to_thread(board_games_service_layer.apply_engine_move, session)
+    return _board_game_state_response(
+        session,
+        last_player_move=request.notation,
+        last_engine_move=engine_move.notation,
+        last_engine_move_from=engine_move.from_square,
+        last_engine_move_to=engine_move.to_square,
+        mistake_message=mistake_message,
+    )
+
+
+@app.post("/api/boardgames/finish")
+async def finish_board_game() -> dict[str, str]:
+    summary = await asyncio.to_thread(board_games_ui_session.finish)
+    if summary is None:
+        return {"message": "Игра не была начата."}
+    return {"message": board_games_announce.result_text(summary.result_string)}
+
+
 @app.post("/api/voice/confirm", response_model=VoiceQueryResponse)
 async def voice_confirm(
     audio: UploadFile = File(...), token: str = Form(...), language: str | None = Form(None)
@@ -750,6 +870,50 @@ async def get_lan_url() -> LanUrlResponse:
     require_api_token above; scanning the QR code is what "pairs" the
     phone, nothing else transfers the token to it."""
     return LanUrlResponse(url=f"http://{detect_lan_ip()}:{settings.port}/?token={settings.api_token}")
+
+
+@app.get("/api/integrations/wordpress/plugin.zip")
+async def download_wordpress_plugin() -> Response:
+    """One-click alternative to IntegrationsPanel's manual "copy the folder,
+    fill in the address and token yourself" instructions — the zip already
+    has both filled in as this plugin's settings-screen defaults, so
+    uploading it via WordPress's own Plugins → Add New → Upload Plugin is
+    the only step left."""
+    data = await asyncio.to_thread(integrations_packager.build_wordpress_plugin_zip)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=jarvis-wordpress-plugin.zip"},
+    )
+
+
+@app.get("/api/integrations/figma/plugin.zip")
+async def download_figma_plugin() -> Response:
+    """Same one-click idea as the WordPress download above — WS_TOKEN is
+    already filled in and code.js already built, so "Import plugin from
+    manifest…" in Figma Desktop is the only step left."""
+    try:
+        data = await asyncio.to_thread(integrations_packager.build_figma_plugin_zip)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=jarvis-figma-plugin.zip"},
+    )
+
+
+@app.get("/api/integrations/blender/addon.zip")
+async def download_blender_addon() -> Response:
+    """Same one-click idea as the WordPress/Figma downloads above — already
+    zipped as the single top-level folder Blender's own Install… expects,
+    so the user no longer has to zip it themselves."""
+    data = await asyncio.to_thread(integrations_packager.build_blender_addon_zip)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=jarvis-blender-addon.zip"},
+    )
 
 
 def _meeting_recording_response(recording: MeetingRecording) -> MeetingRecordingResponse:

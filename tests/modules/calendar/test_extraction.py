@@ -6,6 +6,7 @@ from datetime import datetime
 import pytest
 
 import core.ai_adapter_chain as ai_adapter_chain
+from modules.calendar.domain import RecurrenceRule
 from modules.calendar.extraction import ExtractedEvent, _parse_extraction, extract_event
 
 
@@ -32,8 +33,33 @@ def test_parses_valid_extraction() -> None:
     raw = '{"title": "Купить молока", "event_time": "2026-08-06T09:00:00", "remind_before_minutes": 15}'
     result = _parse_extraction(raw)
     assert result == ExtractedEvent(
-        title="Купить молока", event_time=datetime(2026, 8, 6, 9, 0, 0), remind_before_minutes=15
+        title="Купить молока",
+        event_time=datetime(2026, 8, 6, 9, 0, 0),
+        remind_before_minutes=15,
+        recurrence=RecurrenceRule.NONE,
+        category=None,
     )
+
+
+def test_parses_recurrence_and_category_when_present() -> None:
+    raw = (
+        '{"title": "Пить воду", "event_time": "2026-08-06T09:00:00", "remind_before_minutes": 0, '
+        '"recurrence": "daily", "category": "Здоровье"}'
+    )
+    result = _parse_extraction(raw)
+    assert result is not None
+    assert result.recurrence == RecurrenceRule.DAILY
+    assert result.category == "Здоровье"
+
+
+def test_unknown_recurrence_value_falls_back_to_none() -> None:
+    raw = (
+        '{"title": "Что-то", "event_time": "2026-08-06T09:00:00", "remind_before_minutes": 0, '
+        '"recurrence": "biweekly", "category": null}'
+    )
+    result = _parse_extraction(raw)
+    assert result is not None
+    assert result.recurrence == RecurrenceRule.NONE
 
 
 def test_extracts_json_from_surrounding_text() -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.models import CommandResponse, CommandStatus
+from core.models import GENERIC_EXECUTED_MESSAGE, CommandResponse, CommandStatus
 
 _TEMPLATES: dict[str, dict[CommandStatus, str]] = {
     "ru": {
@@ -45,9 +45,6 @@ _TRAY_SHOW_ACK: dict[str, str] = {
 }
 
 
-_GENERIC_EXECUTED_MESSAGE = "Command executed."
-
-
 def localize_response(response: CommandResponse, language: str) -> str:
     templates = _TEMPLATES.get(language, _TEMPLATES["en"])
     # A handler that actually has something to say (see CommandDispatcher.
@@ -55,7 +52,7 @@ def localize_response(response: CommandResponse, language: str) -> str:
     # assistant is answering in — speak that verbatim instead of the generic
     # per-status template, which would otherwise silently discard it (e.g. a
     # web_search result summary) and always say "Готово."/"Done." instead.
-    if response.status == CommandStatus.EXECUTED and response.message != _GENERIC_EXECUTED_MESSAGE:
+    if response.status == CommandStatus.EXECUTED and response.message != GENERIC_EXECUTED_MESSAGE:
         return response.message
     return templates.get(response.status, response.message)
 

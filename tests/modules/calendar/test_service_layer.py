@@ -5,7 +5,7 @@ from pathlib import Path
 
 from core.message_bus import MessageBus
 from modules.calendar import service_layer
-from modules.calendar.domain import CalendarEvent
+from modules.calendar.domain import CalendarEvent, RecurrenceRule
 from modules.calendar.events import ReminderDue
 from modules.calendar.uow import CalendarUnitOfWork
 
@@ -39,6 +39,10 @@ class FakeCalendarEventRepository:
 
     def mark_notified(self, key: int) -> None:
         self._events[key].notified = True
+
+    def reschedule_recurrence(self, key: int, next_event_time: datetime) -> None:
+        self._events[key].event_time = next_event_time
+        self._events[key].notified = False
 
 
 class FakeCalendarUnitOfWork:
@@ -92,6 +96,32 @@ async def test_check_due_reminders_publishes_one_event_per_due_reminder() -> Non
     assert [e.event_id for e in received] == [due_id]
     # Marked notified so the next poll doesn't re-fire it.
     assert uow.events.get(due_id).notified is True
+
+
+async def test_check_due_reminders_advances_a_recurring_event_instead_of_marking_it_done_forever() -> None:
+    uow = FakeCalendarUnitOfWork()
+    now = datetime(2030, 1, 5, 9, 0)
+    event_id = service_layer.create_event(
+        uow, "Daily standup", datetime(2030, 1, 1, 9, 0), recurrence=RecurrenceRule.DAILY
+    )
+
+    bus = MessageBus()
+    received: list[ReminderDue] = []
+
+    async def handler(event: ReminderDue) -> None:
+        received.append(event)
+
+    bus.subscribe(ReminderDue, handler)
+
+    handled = await service_layer.check_due_reminders(uow, bus, now=now)
+
+    assert handled == 1
+    stored = uow.events.get(event_id)
+    assert stored is not None
+    # Still not "notified forever" — advanced to the next daily occurrence,
+    # ready to fire again tomorrow.
+    assert stored.notified is False
+    assert stored.event_time == datetime(2030, 1, 6, 9, 0)
 
 
 def test_domain_is_due_respects_remind_before_minutes() -> None:

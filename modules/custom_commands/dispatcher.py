@@ -57,7 +57,7 @@ async def execute_custom_command(command: CustomCommand) -> dict[str, Any]:
     adapter = get_os_adapter()
     success = await asyncio.to_thread(adapter.open_application, target)
     if not success:
-        raise RuntimeError(f"Could not run custom command '{command.trigger_phrase}' (target={target!r})")
+        raise RuntimeError(f"Не удалось выполнить свою команду «{command.trigger_phrase}» (цель: {target!r}).")
     return {"message": f"Выполняю: {command.trigger_phrase}."}
 
 
@@ -121,7 +121,7 @@ class CustomCommandRegistry:
                     # cache" approach already used for the stop word/wake
                     # phrase.
                     dangerous=False,
-                    description=f"Custom command: {command.trigger_phrase}",
+                    description=f"Своя команда: {command.trigger_phrase}",
                 )
             self._commands[command.id] = command
             self._trigger_index[_normalize(command.trigger_phrase)] = command.id
@@ -165,7 +165,7 @@ _registry: CustomCommandRegistry | None = None
 def get_registry() -> CustomCommandRegistry:
     if _registry is None:
         raise RuntimeError(
-            "Custom command registry has not been initialized; call register_all_custom_commands() first"
+            "Реестр своих команд ещё не инициализирован — сначала вызовите register_all_custom_commands()."
         )
     return _registry
 

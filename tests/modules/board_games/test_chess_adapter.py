@@ -8,6 +8,7 @@ import pytest
 
 from modules.board_games import chess_adapter
 from modules.board_games.chess_adapter import ChessSession
+from modules.board_games.domain import Difficulty
 
 _STOCKFISH_AVAILABLE = shutil.which("stockfish") is not None
 
@@ -26,6 +27,16 @@ def test_legal_move_labels_lists_all_opening_moves() -> None:
     assert len(labels) == 20  # standard chess opening: 20 legal first moves
     assert "e4" in labels
     assert "Nf3" in labels
+
+
+def test_legal_moves_with_squares_matches_labels_and_exposes_origin_destination() -> None:
+    session = _session()
+    moves = chess_adapter.legal_moves_with_squares(session)
+
+    assert len(moves) == 20
+    assert {label for _from, _to, label in moves} == set(chess_adapter.legal_move_labels(session))
+    assert ("e2", "e4", "e4") in moves
+    assert ("g1", "f3", "Nf3") in moves
 
 
 def test_is_over_false_for_opening_position() -> None:
@@ -134,11 +145,29 @@ def test_apply_player_move_short_circuits_on_checkmate(monkeypatch: pytest.Monke
 def test_real_stockfish_engine_start_and_play_a_move() -> None:
     session = chess_adapter.start()
     try:
-        san = chess_adapter.apply_engine_move(session)
-        assert san in [
+        engine_move = chess_adapter.apply_engine_move(session)
+        assert engine_move.notation in [
             "a3", "a4", "b3", "b4", "c3", "c4", "d3", "d4", "e3", "e4", "f3", "f4",
             "g3", "g4", "h3", "h4", "Na3", "Nc3", "Nf3", "Nh3",
         ]
+        assert engine_move.from_square and engine_move.to_square
         assert len(session.board.move_stack) == 1
+    finally:
+        chess_adapter.close(session)
+
+
+def test_difficulty_elo_map_covers_every_tier_within_stockfishs_supported_range() -> None:
+    for tier in Difficulty:
+        elo = chess_adapter._DIFFICULTY_ELO[tier]
+        assert 1320 <= elo <= 3190  # Stockfish's own UCI_Elo min/max
+
+
+@pytest.mark.skipif(not _STOCKFISH_AVAILABLE, reason="requires the system stockfish binary")
+def test_start_with_a_difficulty_configures_the_engine_and_still_plays() -> None:
+    session = chess_adapter.start(Difficulty.EASY)
+    try:
+        engine_move = chess_adapter.apply_engine_move(session)
+        assert len(session.board.move_stack) == 1
+        assert engine_move.notation  # a legal first move was actually played, engine wasn't left unusable
     finally:
         chess_adapter.close(session)

@@ -9,7 +9,7 @@ from modules.figma_control.dispatcher import process_figma_command
 async def _handle_figma_command(params: dict[str, Any]) -> dict[str, Any]:
     text = params.get("text")
     if not text:
-        raise ValueError("Missing required parameter 'text'")
+        raise ValueError("Не указан текст команды.")
     message = await process_figma_command(str(text))
     return {"message": message}
 
@@ -20,8 +20,8 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         _handle_figma_command,
         dangerous=False,
         description=(
-            "Execute a voice command inside the Figma design tool — create, select, move, resize, "
-            "delete, recolor, group, or align layers/frames/shapes, export a selection, undo/redo "
-            "(text: the raw spoken command)."
+            "Выполнить голосовую команду внутри Figma — создать, выделить, переместить, изменить "
+            "размер, удалить, перекрасить, сгруппировать или выровнять слои/фреймы/фигуры, "
+            "экспортировать выделенное, отменить/повторить (text: сырой текст команды)."
         ),
     )

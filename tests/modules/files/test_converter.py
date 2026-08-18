@@ -17,7 +17,7 @@ def test_read_docx_text_round_trips_written_content(tmp_path) -> None:
 
 
 def test_read_docx_text_raises_for_missing_file(tmp_path) -> None:
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(ValueError, match="не найден"):
         converter.read_docx_text(str(tmp_path / "missing.docx"))
 
 
@@ -41,7 +41,7 @@ def test_read_xlsx_sheet_round_trips_written_rows(tmp_path) -> None:
 
 
 def test_read_xlsx_sheet_raises_for_missing_file(tmp_path) -> None:
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(ValueError, match="не найден"):
         converter.read_xlsx_sheet(str(tmp_path / "missing.xlsx"))
 
 
@@ -55,7 +55,7 @@ def test_write_xlsx_sheet_uses_given_sheet_name(tmp_path) -> None:
 
 
 def test_convert_to_pdf_raises_for_missing_source(tmp_path) -> None:
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(ValueError, match="не найден"):
         converter.convert_to_pdf(str(tmp_path / "missing.docx"))
 
 

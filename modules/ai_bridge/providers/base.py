@@ -6,6 +6,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any, Protocol, runtime_checkable
 
+from core.browser_automation import HIDE_WEBDRIVER_INIT_SCRIPT, resolve_browser_launcher
 from core.config import DATA_DIR
 from core.logger import get_logger
 from modules.ai_bridge import virtual_display
@@ -114,6 +115,10 @@ class BrowserProviderAdapter(ABC):
         self._page: Any = None
         self._headless = False
         self._on_virtual_display = False
+        # Set by _ensure_page to whichever engine resolve_browser_launcher
+        # picked ("firefox" or "chromium") — _set_window_bounds needs this
+        # since it uses CDP, which only Chromium speaks.
+        self._browser_engine: str | None = None
         self._lock = asyncio.Lock()
         # Set when _ensure_page just launched a brand-new context; cleared
         # the moment _locate_prompt_box first succeeds on it. Only gates
@@ -149,7 +154,7 @@ class BrowserProviderAdapter(ABC):
         except ImportError as exc:
             raise RuntimeError(
                 "playwright is not installed. Install it with: "
-                "pip install playwright && playwright install chromium"
+                "pip install playwright && playwright install firefox chromium"
             ) from exc
 
         if self._context is None:
@@ -168,39 +173,52 @@ class BrowserProviderAdapter(ABC):
             headless = not force_headed and try_headless_env and self._auth_marker.exists()
             self._headless = headless
 
+            browser_type, engine_kwargs = resolve_browser_launcher(self._playwright)
+            self._browser_engine = browser_type.name
+
+            # Small while hidden/backgrounded, full-size only when actually
+            # revealed to the user — see reveal()'s old CDP resize-on-reveal,
+            # which this replaces for engines (Firefox) that can't do that.
+            # Playwright's `viewport` is the cross-engine equivalent of the
+            # old Chromium-only `--window-size=W,H` launch arg.
+            viewport = {"width": 1280, "height": 800} if force_headed else {"width": 480, "height": 360}
             launch_kwargs: dict[str, Any] = {
                 "user_data_dir": str(self.profile_dir),
                 "headless": headless,
+                "viewport": viewport,
+                **engine_kwargs,
             }
             on_virtual_display = False
-            if not headless:
-                launch_kwargs["args"] = ["--window-size=480,360"]
-                if not force_headed:
-                    # Real headed rendering (Gemini requires it) without it
-                    # ever touching the user's actual screen: point the
-                    # browser subprocess at a hidden Xvfb display instead of
-                    # the real one. A window that's launched on the real
-                    # display but merely minimized/unfocused was confirmed
-                    # the hard way to fail the same way headless does —
-                    # Gemini's page never finishes rendering — so Xvfb (a
-                    # real, focused compositor the browser is never aware is
-                    # invisible to the user) is what actually solves both
-                    # problems at once.
-                    display = await virtual_display.get_display()
-                    if display is not None:
-                        launch_kwargs["env"] = {**os.environ, "DISPLAY": display}
-                        on_virtual_display = True
-                    else:
-                        # Xvfb unavailable — fall back to the old best-effort
-                        # minimized-on-the-real-display hint.
-                        launch_kwargs["args"] = ["--start-minimized", "--window-size=480,360"]
+            if not headless and not force_headed:
+                # Real headed rendering (Gemini requires it) without it
+                # ever touching the user's actual screen: point the
+                # browser subprocess at a hidden Xvfb display instead of
+                # the real one. A window that's launched on the real
+                # display but merely minimized/unfocused was confirmed
+                # the hard way to fail the same way headless does —
+                # Gemini's page never finishes rendering — so Xvfb (a
+                # real, focused compositor the browser is never aware is
+                # invisible to the user) is what actually solves both
+                # problems at once.
+                display = await virtual_display.get_display()
+                if display is not None:
+                    launch_kwargs["env"] = {**os.environ, "DISPLAY": display}
+                    on_virtual_display = True
+                elif browser_type is self._playwright.chromium:
+                    # Xvfb unavailable — fall back to the old best-effort
+                    # minimized-on-the-real-display hint. Chromium-only
+                    # flag; Firefox has no equivalent, so it just opens
+                    # normally on the real display in this fallback case.
+                    launch_kwargs["args"] = ["--start-minimized"]
             self._on_virtual_display = on_virtual_display
 
-            self._context = await self._playwright.chromium.launch_persistent_context(**launch_kwargs)
+            self._context = await browser_type.launch_persistent_context(**launch_kwargs)
+            await self._context.add_init_script(HIDE_WEBDRIVER_INIT_SCRIPT)
             self._is_fresh_context = True
             logger.info(
-                "Launched persistent %s browser context (headless=%s, virtual_display=%s) at %s",
+                "Launched persistent %s browser context (engine=%s, headless=%s, virtual_display=%s) at %s",
                 self.name,
+                self._browser_engine,
                 headless,
                 on_virtual_display,
                 self.profile_dir,
@@ -230,6 +248,14 @@ class BrowserProviderAdapter(ABC):
         # practice, without moving it off-screen (which stopped some of these
         # sites, Gemini in particular, from finishing their own rendering).
         if self._page is None or self._context is None:
+            return
+        if self._browser_engine != "chromium":
+            # CDP (Chrome DevTools Protocol) window-bounds control is
+            # Chromium-only; Firefox has no Playwright-exposed equivalent.
+            # reveal() already launched this context at full viewport size
+            # (see _ensure_page's force_headed branch) and brings it to the
+            # front — only the precise on-screen position/minimized-state
+            # restore is skipped, which is cosmetic.
             return
         try:
             cdp = await self._context.new_cdp_session(self._page)

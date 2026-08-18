@@ -11,6 +11,11 @@ class ParamField:
     min: float | None = None
     max: float | None = None
     options: tuple[str, ...] | None = None
+    # When true, CommandPanel.tsx's isFormComplete lets the field stay
+    # empty — used where "nothing entered" is itself a meaningful choice
+    # (see toggle_timer: minutes given starts a new timer, left blank
+    # cancels every active one), not just an unfinished form.
+    optional: bool = False
 
 
 @dataclass(frozen=True)
@@ -63,4 +68,17 @@ COMMAND_UI_METADATA: dict[str, CommandUIMeta] = {
     ),
     "get_battery_status": CommandUIMeta("Проверить заряд батареи", "Battery", None),
     "check_system_updates": CommandUIMeta("Проверить обновления", "DownloadCloud", None),
+    "start_chess_game": CommandUIMeta("Шахматы", "Crown", None),
+    "start_checkers_game": CommandUIMeta("Шашки", "Disc", None),
+    # One button for both directions, like toggle_stopwatch — minutes given
+    # starts a new timer, left blank cancels every active one (see
+    # modules.timer.handlers._handle_toggle_timer). Still no separate
+    # "label" field: the handler accepts one from a voice/AI-classified
+    # call, but the UI button always uses the default.
+    "toggle_timer": CommandUIMeta(
+        "Таймер",
+        "Timer",
+        (ParamField("minutes", "number", "Минут (пусто — отменить все активные)", min=1, max=180, optional=True),),
+    ),
+    "toggle_stopwatch": CommandUIMeta("Секундомер", "Watch", None),
 }

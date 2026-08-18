@@ -37,6 +37,23 @@ _LOCALE_CODES: dict[str, str] = {"ru": "ru_RU.UTF-8", "uk": "uk_UA.UTF-8", "en":
 _ELEVATED_COMMAND_TIMEOUT_SECONDS = 120
 
 
+def _current_xkb_layouts() -> list[str]:
+    """Returns the X server's current XKB layout list (e.g. ["us", "ru", "ua", "ru"]
+    for `setxkbmap -query`'s "layout: us,ru,ua,ru" line), or [] if it can't be
+    read — switch_keyboard_layout below falls back to a single-layout switch
+    in that case, same as before this existed."""
+    try:
+        result = subprocess.run(["setxkbmap", "-query"], capture_output=True, text=True)
+    except OSError:
+        return []
+    if result.returncode != 0:
+        return []
+    for line in result.stdout.splitlines():
+        if line.startswith("layout:"):
+            return [item.strip() for item in line.split(":", 1)[1].split(",") if item.strip()]
+    return []
+
+
 def _run_elevated(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     """Runs a pkexec/sudo-prefixed command. stdin is explicitly closed
     (DEVNULL) rather than left inherited from this backend process — sudo
@@ -400,7 +417,17 @@ class LinuxAdapter(OSAdapter):
     def switch_keyboard_layout(self, language_code: str) -> dict[str, Any]:
         layout = _KEYBOARD_LAYOUT_CODES.get(language_code, language_code)
         if shutil.which("setxkbmap"):
-            result = subprocess.run(["setxkbmap", layout], capture_output=True, text=True)
+            # Passing just `layout` here would silently replace the user's
+            # whole configured layout list (e.g. a us/ru/ua set toggled via a
+            # hotkey) with that one language, breaking the toggle until they
+            # reconfigure it by hand. Reorder the existing list instead so the
+            # requested layout becomes active (group 0) while the rest stay
+            # available; falls back to a plain single-layout switch if the
+            # current list can't be read (_current_xkb_layouts() returns []).
+            existing = _current_xkb_layouts()
+            ordered = [layout] + [item for item in existing if item != layout]
+            target_arg = ",".join(ordered)
+            result = subprocess.run(["setxkbmap", target_arg], capture_output=True, text=True)
             if result.returncode == 0:
                 return {"layout": layout, "backend": "setxkbmap"}
             # Falls through to gsettings below — e.g. setxkbmap has nothing to

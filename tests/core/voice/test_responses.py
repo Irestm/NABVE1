@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from core.models import CommandResponse, CommandStatus
+from core.models import GENERIC_EXECUTED_MESSAGE, CommandResponse, CommandStatus
 from core.voice.responses import localize_response, not_understood, tray_hide_ack, tray_show_ack
 
 
-def _response(status: CommandStatus, message: str = "Command executed.") -> CommandResponse:
+def _response(status: CommandStatus, message: str = GENERIC_EXECUTED_MESSAGE) -> CommandResponse:
     return CommandResponse(status=status, command="some_command", message=message)
 
 

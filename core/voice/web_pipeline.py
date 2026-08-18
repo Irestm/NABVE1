@@ -218,6 +218,8 @@ async def _resolve_and_dispatch(
                     "title": extracted.title,
                     "event_time": extracted.event_time.isoformat(),
                     "remind_before_minutes": str(extracted.remind_before_minutes),
+                    "recurrence": extracted.recurrence.value,
+                    "category": extracted.category,
                 },
             )
         else:

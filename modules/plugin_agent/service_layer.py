@@ -100,10 +100,10 @@ def get_candidate(uow: PluginAgentUnitOfWork, candidate_id: int) -> GapCandidate
 def get_generated_code(uow: PluginAgentUnitOfWork, candidate_id: int) -> str:
     candidate = get_candidate(uow, candidate_id)
     if candidate is None or not candidate.generated_plugin_path:
-        raise ValueError(f"No generated plugin found for suggestion '{candidate_id}'")
+        raise ValueError(f"Не найден сгенерированный плагин для предложения «{candidate_id}».")
     path = Path(candidate.generated_plugin_path)
     if not path.is_file():
-        raise ValueError("Generated plugin file no longer exists")
+        raise ValueError("Файл сгенерированного плагина больше не существует.")
     return path.read_text(encoding="utf-8")
 
 
@@ -117,11 +117,11 @@ def approve(
     with uow:
         candidate = uow.candidates.get(candidate_id)
         if candidate is None or not candidate.generated_plugin_path:
-            raise ValueError(f"No generated plugin found for suggestion '{candidate_id}'")
+            raise ValueError(f"Не найден сгенерированный плагин для предложения «{candidate_id}».")
 
         source = Path(candidate.generated_plugin_path)
         if not source.is_file():
-            raise ValueError("Generated plugin file no longer exists")
+            raise ValueError("Файл сгенерированного плагина больше не существует.")
 
         destination = plugins_dir / source.name
         shutil.move(str(source), str(destination))
@@ -130,10 +130,10 @@ def approve(
         if loaded is None:
             destination.unlink(missing_ok=True)
             candidate.status = GapCandidateStatus.GENERATION_FAILED
-            candidate.error = "Plugin failed validation on enable"
+            candidate.error = "Плагин не прошёл проверку при включении."
             uow.candidates.update(candidate)
             uow.commit()
-            raise ValueError("Generated plugin failed validation and was not enabled")
+            raise ValueError("Сгенерированный плагин не прошёл проверку и не был включён.")
 
         registry.register(loaded)
         candidate.status = GapCandidateStatus.ENABLED
@@ -149,7 +149,7 @@ def reject(uow: PluginAgentUnitOfWork, candidate_id: int) -> None:
     with uow:
         candidate = uow.candidates.get(candidate_id)
         if candidate is None:
-            raise ValueError(f"Unknown suggestion '{candidate_id}'")
+            raise ValueError(f"Неизвестное предложение «{candidate_id}».")
 
         if candidate.generated_plugin_path:
             Path(candidate.generated_plugin_path).unlink(missing_ok=True)

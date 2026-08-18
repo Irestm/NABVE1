@@ -208,12 +208,16 @@ _CAPABILITIES_PHRASES: dict[str, set[str]] = {
 # AI classifier fallback the way most free-text commands are, since
 # modules.board_games has no dispatcher-registered command for the
 # classifier to offer as a candidate in the first place (there's nothing
-# for it to *dispatch*: the whole game runs synchronously inside
+# for it to *dispatch*: starting a game runs synchronously inside
 # core/voice/pipeline.py::_resolve_board_game itself, called directly from
 # interpret()'s match, same shape as _resolve_messaging_reply's "handles
 # everything itself, never hands a Command to the generic dispatch call"
-# pattern). A phrasing that doesn't match one of these variants just won't
-# start a game — a known first-slice limitation, not an oversight.
+# pattern). Only the *start* of a game needs one of these trigger phrases —
+# once a game is active, individual moves are recognized a different way
+# (see core/voice/pipeline.py::_resolve_active_board_game_utterance, checked
+# before interpret() is even called). A phrasing that doesn't match one of
+# these variants just won't start a game — a known first-slice limitation,
+# not an oversight.
 _BOARD_GAME_PHRASES: dict[str, set[str]] = {
     "ru": {
         "давай сыграем партию", "давай сыграем", "сыграем партию", "сыграем",
@@ -277,10 +281,10 @@ def is_stop_command(text: str, language: str) -> bool:
 
 
 # Distinct from STOP_PHRASES/is_stop_command: "сдаюсь" mid-game (see
-# core/voice/pipeline.py::_resolve_board_game) means "end this chess/
-# draughts game as a loss," not "stop talking" — conflating the two would
-# make an ordinary "стоп" during a game ambiguous between "pause" and
-# "resign," when the player almost always means the former.
+# core/voice/pipeline.py::_resolve_active_board_game_utterance) means "end
+# this chess/draughts game as a loss," not "stop talking" — conflating the
+# two would make an ordinary "стоп" during a game ambiguous between "pause"
+# and "resign," when the player almost always means the former.
 RESIGN_PHRASES: dict[str, set[str]] = {
     "ru": {"сдаюсь", "я сдаюсь", "сдаться", "хочу сдаться"},
     "uk": {"здаюся", "я здаюся", "здатися"},

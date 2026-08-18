@@ -24,7 +24,7 @@ def _looks_like_telegram_identifier(identifier: str) -> bool:
 async def _handle_watch_contact(params: dict[str, Any]) -> dict[str, Any]:
     identifier = params.get("identifier")
     if not identifier:
-        raise ValueError("Missing required parameter 'identifier'")
+        raise ValueError("Не указан идентификатор контакта.")
     source = params.get("source") or "telegram"
     if source == "telegram" and not _looks_like_telegram_identifier(identifier):
         raise ValueError(
@@ -67,13 +67,13 @@ async def _handle_reply(params: dict[str, Any]) -> dict[str, Any]:
     message_id = params.get("message_id")
     text = params.get("text")
     if message_id is None:
-        raise ValueError("Missing required parameter 'message_id'")
+        raise ValueError("Не указан идентификатор сообщения.")
     if not text:
-        raise ValueError("Missing required parameter 'text'")
+        raise ValueError("Не указан текст.")
 
     pending = service_layer.get_message(MessagingUnitOfWork(), int(message_id))
     if pending is None:
-        raise ValueError(f"No pending message with id {message_id}")
+        raise ValueError(f"Нет ожидающего сообщения с id {message_id}.")
     if pending.source != "telegram":
         raise ValueError(f"Ответ пока не поддерживается для источника '{pending.source}'.")
 
@@ -116,14 +116,14 @@ async def _handle_snooze(params: dict[str, Any]) -> dict[str, Any]:
     message_id = params.get("message_id")
     minutes = params.get("minutes")
     if message_id is None:
-        raise ValueError("Missing required parameter 'message_id'")
+        raise ValueError("Не указан идентификатор сообщения.")
     if minutes is None:
-        raise ValueError("Missing required parameter 'minutes'")
+        raise ValueError("Не указано количество минут.")
 
     minutes = int(minutes)
     ok = service_layer.snooze(MessagingUnitOfWork(), int(message_id), minutes)
     if not ok:
-        raise ValueError(f"No pending message with id {message_id}")
+        raise ValueError(f"Нет ожидающего сообщения с id {message_id}.")
     return {
         "message_id": int(message_id),
         "minutes": minutes,
@@ -148,25 +148,25 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         _handle_watch_contact,
         dangerous=False,
         description=(
-            "Start watching a contact for incoming messages, given a spoken description of who "
-            "(raw_text) — e.g. 'следи за @ira в телеграме'. Handler itself expects identifier "
-            "(exact @username/phone), source (defaults to 'telegram'), optional note."
+            "Начать отслеживать контакт на входящие сообщения по устной формулировке, кого именно "
+            "(raw_text) — например «следи за @ira в телеграме». Сам обработчик ожидает identifier "
+            "(точный @username/номер), source (по умолчанию 'telegram'), опционально note."
         ),
     )
     dispatcher.register(
         "messaging_list_watched",
         _handle_list_watched,
         dangerous=False,
-        description="List currently watched contacts.",
+        description="Показать список отслеживаемых сейчас контактов.",
     )
     dispatcher.register(
         "messaging_reply",
         _handle_reply,
         dangerous=True,
         description=(
-            "Reply to a pending message from a watched contact, optionally naming who (raw_target) "
-            "— e.g. 'ответь Ире'. Handler itself expects message_id and the already-dictated text; "
-            "requires confirmation."
+            "Ответить на ожидающее сообщение от отслеживаемого контакта, опционально назвав кого "
+            "(raw_target) — например «ответь Ире». Сам обработчик ожидает message_id и уже "
+            "продиктованный текст; требует подтверждения."
         ),
     )
     dispatcher.register(
@@ -174,7 +174,7 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         _handle_snooze,
         dangerous=False,
         description=(
-            "Snooze a pending message from a watched contact for later, from a spoken description "
-            "(raw_text) — e.g. 'отложи Иру на 10 минут'. Handler itself expects message_id and minutes."
+            "Отложить ожидающее сообщение от отслеживаемого контакта на потом, по устному описанию "
+            "(raw_text) — например «отложи Иру на 10 минут». Сам обработчик ожидает message_id и minutes."
         ),
     )

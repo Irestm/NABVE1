@@ -11,15 +11,15 @@ def store(store: CredentialStorePort, service: str, username: str, password: str
 
 def get(store: CredentialStorePort, service: str | None, username: str | None) -> str | None:
     if not service:
-        raise ValueError("Missing required parameter 'service'")
+        raise ValueError("Не указан сервис.")
     if not username:
-        raise ValueError("Missing required parameter 'username'")
+        raise ValueError("Не указано имя пользователя.")
     return store.get_password(service, username)
 
 
 def delete(store: CredentialStorePort, service: str | None, username: str | None) -> bool:
     if not service:
-        raise ValueError("Missing required parameter 'service'")
+        raise ValueError("Не указан сервис.")
     if not username:
-        raise ValueError("Missing required parameter 'username'")
+        raise ValueError("Не указано имя пользователя.")
     return store.delete_password(service, username)

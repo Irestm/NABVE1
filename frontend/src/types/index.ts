@@ -55,6 +55,7 @@ export interface CommandParamField {
   min: number | null;
   max: number | null;
   options: string[] | null;
+  optional: boolean;
 }
 
 export interface CommandButtonDescriptor {
@@ -72,12 +73,21 @@ export interface CommunicationStyle {
   prosody_rate: number;
 }
 
+// Matches core/models.py... actually calendar events have no dedicated
+// Pydantic model — they travel through the generic dispatcher command
+// result (see modules/calendar/handlers.py), so this interface is the
+// single source of truth for that shape on the frontend side.
+export type RecurrenceRule = "none" | "daily" | "weekly" | "monthly" | "yearly";
+
 export interface CalendarEvent {
   id: number;
   title: string;
   event_time: string;
   remind_before_minutes: number;
   notified: boolean;
+  color: string | null;
+  category: string | null;
+  recurrence: RecurrenceRule;
 }
 
 export interface PluginSuggestion {
@@ -267,6 +277,32 @@ export interface QuizletVoiceGameAnswerResponse {
   next_term_audio_base64: string | null;
   remaining: number;
   total: number;
+}
+
+export type BoardGameKind = "chess" | "checkers";
+
+export type BoardGameDifficulty = "very_easy" | "easy" | "medium" | "hard" | "very_hard" | "impossible";
+
+export interface LegalMoveSquares {
+  from_square: string;
+  to_square: string;
+  label: string;
+}
+
+export interface BoardGameState {
+  kind: BoardGameKind;
+  difficulty: BoardGameDifficulty | null;
+  board_svg: string;
+  legal_moves: string[];
+  legal_move_squares: LegalMoveSquares[];
+  is_over: boolean;
+  is_check: boolean;
+  result: string | null;
+  last_player_move: string | null;
+  last_engine_move: string | null;
+  last_engine_move_from: string | null;
+  last_engine_move_to: string | null;
+  mistake_message: string | null;
 }
 
 declare global {

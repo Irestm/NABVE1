@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { getProfileFact, listCommunicationStyles, setProfileFact } from "../api/client";
 import type { CommunicationStyle } from "../types";
 import "./PersonalityPanel.css";
@@ -363,6 +364,7 @@ export function PersonalityPanel(): JSX.Element {
             value={assistantVolume}
             disabled={savingAssistantVolume}
             onChange={(event) => handleAssistantVolumeChange(Number(event.target.value))}
+            style={{ "--range-fill": `${assistantVolume}%` } as CSSProperties}
           />
           <span className="personality-panel__unit">{assistantVolume}%</span>
         </div>

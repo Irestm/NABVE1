@@ -1,0 +1,268 @@
+.board-games-panel__start-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.board-games-panel__board {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-elevated);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  padding: 8px;
+}
+
+/* Sized to exactly match the rendered <svg> box so the overlay's
+   percentage-based highlight squares (computed in BoardGamesPanel.tsx from
+   the same margin/square-size constants the server-side SVG renderer
+   uses) line up pixel-for-pixel with the board underneath it. */
+.board-games-panel__board-frame {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  cursor: pointer;
+}
+
+.board-games-panel__board-svg svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Re-keyed (see BoardGamesPanel.tsx's moveSeq) on every start/move so this
+   replays each time instead of only once on first mount — a lightweight
+   stand-in for a real piece-slide animation, which would need diffing
+   piece positions out of the server-rendered SVG. */
+@keyframes board-games-pop {
+  from {
+    opacity: 0.35;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.board-games-panel__board-svg {
+  animation: board-games-pop 220ms ease-out;
+}
+
+.board-games-panel__board-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.board-games-panel__square-highlight {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: 2px;
+}
+
+.board-games-panel__square-highlight--origin {
+  border: 3px solid var(--accent-red);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-red) 60%, transparent);
+}
+
+.board-games-panel__square-highlight--target {
+  background: color-mix(in srgb, var(--accent-green) 45%, transparent);
+  box-shadow: inset 0 0 0 2px var(--accent-green);
+}
+
+@keyframes board-games-invalid-flash {
+  0%, 100% {
+    background: transparent;
+    box-shadow: inset 0 0 0 3px transparent;
+  }
+  25%, 75% {
+    background: color-mix(in srgb, var(--accent-red) 40%, transparent);
+    box-shadow: inset 0 0 0 3px var(--accent-red);
+  }
+}
+
+.board-games-panel__square-highlight--invalid {
+  animation: board-games-invalid-flash 450ms ease-in-out;
+}
+
+/* Solid patch the exact color of the square it covers (light/dark square
+   fill, computed in BoardGamesPanel.tsx's squareColor from the same
+   default palette chess.svg/draughts.svg render with) — masks whatever the
+   currently-displayed board_svg still draws at a square mid-move: the
+   piece at its old origin (board_svg only catches up once the server
+   responds, which can lag well behind the animation for the player's own
+   optimistic move) and, for the engine's move, the piece already drawn at
+   its destination (board_svg is already fully up to date by the time the
+   engine's slide starts, since that only runs after setState). Without
+   this, the real piece and the sliding token were both visible at once. */
+.board-games-panel__square-mask {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+@keyframes board-games-capture-burst {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.4);
+    box-shadow: inset 0 0 0 4px var(--accent-amber);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.15);
+    box-shadow: inset 0 0 0 0 transparent;
+  }
+}
+
+.board-games-panel__capture-burst {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: board-games-capture-burst 320ms ease-out;
+}
+
+/* The moving piece itself — a real Unicode chess glyph (matches the moved
+   piece's type, parsed from its own SAN in BoardGamesPanel.tsx) for chess,
+   since chess pieces are distinct silhouettes a plain disc doesn't read
+   as; checkers pieces genuinely are discs already; so no glyph there.
+   Duration is per-instance (see BoardGamesPanel.tsx's legDuration) —
+   longer for a queen crossing the whole board than for a one-square pawn
+   push, set inline as transitionDuration rather than fixed here. */
+.board-games-panel__slide-token {
+  position: absolute;
+  box-sizing: border-box;
+  transition-property: left, top;
+  transition-timing-function: cubic-bezier(0.3, 0, 0.2, 1);
+  pointer-events: none;
+}
+
+.board-games-panel__slide-token--disc::after {
+  content: "";
+  position: absolute;
+  inset: 18%;
+  border-radius: 50%;
+}
+
+.board-games-panel__slide-token--disc.board-games-panel__slide-token--white::after {
+  background: #f0f0f0;
+  border: 2px solid #04070c;
+  box-shadow: 0 0 10px rgba(240, 240, 240, 0.7);
+}
+
+.board-games-panel__slide-token--disc.board-games-panel__slide-token--black::after {
+  background: #1a1a1a;
+  border: 2px solid #f0f0f0;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.7);
+}
+
+.board-games-panel__slide-token--glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.board-games-panel__slide-token-glyph {
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+}
+
+.board-games-panel__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.board-games-panel__label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* Section accent here is red (board-games-panel), but the difficulty
+   slider deliberately uses --accent-red directly instead of the generic
+   --section-accent-driven input[type=range] rule in theme.css, so it stays
+   red even though other range inputs (e.g. CommandPanel's) pick up
+   whichever section they're in. */
+.board-games-panel__difficulty-slider {
+  --range-fill: 50%;
+  background: linear-gradient(90deg, var(--accent-red) var(--range-fill), var(--border) var(--range-fill));
+}
+
+.board-games-panel__difficulty-slider::-webkit-slider-thumb {
+  background: linear-gradient(135deg, var(--accent-red), var(--accent-amber));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent-red) 60%, transparent);
+}
+
+.board-games-panel__difficulty-slider::-moz-range-thumb {
+  background: linear-gradient(135deg, var(--accent-red), var(--accent-amber));
+}
+
+.board-games-panel__finish {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--accent-red);
+  color: var(--accent-red);
+}
+
+.board-games-panel__mistake {
+  margin: 0;
+  font-size: 12px;
+  color: var(--accent-amber);
+}
+
+.board-games-panel__result {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+@keyframes board-games-win-bounce {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.board-games-panel__result--win {
+  color: var(--accent-green);
+  text-shadow: 0 0 16px color-mix(in srgb, var(--accent-green) 70%, transparent);
+  animation: board-games-win-bounce 500ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes board-games-lose-shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-6px);
+  }
+  40% {
+    transform: translateX(5px);
+  }
+  60% {
+    transform: translateX(-4px);
+  }
+  80% {
+    transform: translateX(3px);
+  }
+}
+
+.board-games-panel__result--lose {
+  color: var(--accent-red);
+  animation: board-games-lose-shake 450ms ease-in-out;
+}
+
+.board-games-panel__result--draw {
+  color: var(--text-dim);
+}

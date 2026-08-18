@@ -7,7 +7,7 @@ from typing import Union
 from core.ai_adapter_chain import local_first_chain
 from core.logger import get_logger
 from modules.board_games import chess_adapter, checkers_adapter
-from modules.board_games.domain import GameKind, GameSummary, MoveJudgement
+from modules.board_games.domain import Difficulty, EngineMove, GameKind, GameSummary, MoveJudgement
 
 logger = get_logger(__name__)
 
@@ -18,30 +18,37 @@ _InnerSession = Union[chess_adapter.ChessSession, checkers_adapter.CheckersSessi
 
 @dataclass
 class GameSession:
-    """Lives only as a local variable for the duration of one
-    core/voice/pipeline.py::_resolve_board_game call — the whole game (many
-    voice turns) happens inside that single method's own loop, so there's
-    no need for this to be a module-level singleton or survive across
-    separate dispatcher calls the way e.g. modules.ai_bridge's
-    provider_manager does. One game at a time, by construction (nothing
-    else can run while a voice-loop method is still blocking on it)."""
+    """Held by modules.board_games.ui_session's module-level singleton
+    across separate REST calls and separate voice turns alike — both the
+    click-driven board (core/main.py's /api/boardgames/* + BoardGamesPanel.tsx)
+    and the voice pipeline (core/voice/pipeline.py's _resolve_board_game /
+    _resolve_active_board_game_utterance / _resolve_board_game_move) act on
+    the exact same GameSession, so a move made either way shows up on the
+    same board. One game at a time, by construction — see ui_session.start()."""
 
     kind: GameKind
     inner: _InnerSession
     mistakes: list[MoveJudgement] = field(default_factory=list)
+    difficulty: Difficulty | None = None
 
 
 def _adapter(kind: GameKind):
     return chess_adapter if kind == GameKind.CHESS else checkers_adapter
 
 
-def start_game(kind: GameKind) -> GameSession:
-    inner = chess_adapter.start() if kind == GameKind.CHESS else checkers_adapter.start()
-    return GameSession(kind=kind, inner=inner)
+def start_game(kind: GameKind, difficulty: Difficulty | None = None) -> GameSession:
+    inner = (
+        chess_adapter.start(difficulty) if kind == GameKind.CHESS else checkers_adapter.start(difficulty)
+    )
+    return GameSession(kind=kind, inner=inner, difficulty=difficulty)
 
 
 def legal_move_labels(session: GameSession) -> list[str]:
     return _adapter(session.kind).legal_move_labels(session.inner)
+
+
+def legal_moves_with_squares(session: GameSession) -> list[tuple[str, str, str]]:
+    return _adapter(session.kind).legal_moves_with_squares(session.inner)
 
 
 def _parse_move_index(raw: str, count: int) -> int | None:
@@ -92,12 +99,24 @@ def apply_player_move(session: GameSession, notation: str) -> MoveJudgement:
     return judgement
 
 
-def apply_engine_move(session: GameSession) -> str:
+def apply_engine_move(session: GameSession) -> EngineMove:
     return _adapter(session.kind).apply_engine_move(session.inner)
 
 
 def is_over(session: GameSession) -> bool:
     return _adapter(session.kind).is_over(session.inner)
+
+
+def render_svg(session: GameSession) -> str:
+    """The current board position as SVG — safe to call any time, not just
+    at finish() (which also calls this, for the final position); the UI
+    board (core/main.py's /api/boardgames/* endpoints) calls this after
+    every move to keep the on-screen board in sync."""
+    return _adapter(session.kind).render_svg(session.inner)
+
+
+def result_string(session: GameSession) -> str:
+    return _adapter(session.kind).result_string(session.inner)
 
 
 def is_check(session: GameSession) -> bool:

@@ -11,7 +11,7 @@ from core.state import state_manager
 from core.voice import ai_router, audio_io, confirmation_phrase, wake_word
 from core.voice.barge_in import BargeInMonitor
 from core.voice.config import VoiceSettings, voice_settings
-from core.voice.intent import Command, interpret, is_affirmative, is_resign_command, is_stop_command
+from core.voice.intent import Command, interpret, is_affirmative, is_resign_command
 from core.voice.interruption import TurnCancelled, run_cancellable
 from core.voice.language import resolve_language, resolve_response_language
 from core.voice.phrase_matching import fuzzy_contains_phrase
@@ -23,6 +23,7 @@ from core.voice.tts import TextToSpeech
 from modules.app_catalog import resolver as app_resolver
 from modules.board_games import announce as board_games_announce
 from modules.board_games import service_layer as board_games_service_layer
+from modules.board_games import ui_session as board_games_ui_session
 from modules.board_games.domain import GameKind
 from modules.calendar import extraction as calendar_extraction
 from modules.custom_commands import dispatcher as custom_commands
@@ -665,6 +666,8 @@ class VoiceAssistantLoop:
             "title": extracted.title,
             "event_time": extracted.event_time.isoformat(),
             "remind_before_minutes": str(extracted.remind_before_minutes),
+            "recurrence": extracted.recurrence.value,
+            "category": extracted.category,
         }
         return Command(name="calendar_create_event", params=params), False
 
@@ -819,19 +822,15 @@ class VoiceAssistantLoop:
         core/voice/intent.py's _BOARD_GAME_PHRASES — rule-only; unlike
         every other command this file resolves, there's no dispatcher
         command backing this one for the AI classifier to fall back to,
-        since there's nothing to *dispatch* — the whole game runs
-        synchronously right here). Plays a full game of chess or Russian
-        draughts against the user.
-
-        This is the one genuinely unbounded turn loop in this file — every
-        other _resolve_* method is a single fixed exchange (see
-        modules/board_games/service_layer.py's GameSession docstring for
-        why an ordinary local variable is enough state for it). The engine
-        subprocess (chess only — see modules.board_games.chess_adapter)
-        must always be released once the game ends, however it ends —
-        normal game-over, resignation, a stop phrase, or a barge-in
-        TurnCancelled bubbling up mid-move — hence the try/finally rather
-        than relying on the happy path to reach the cleanup call.
+        since there's nothing to *dispatch* — the whole game runs through
+        modules.board_games.ui_session instead). Starts a new game and
+        announces it; the actual turn-by-turn play happens through ordinary
+        per-utterance commands afterward (see
+        _resolve_active_board_game_utterance and _resolve_board_game_move
+        below) — same shape as every other command in this file, not a
+        captive loop, so the board updates after every half-move and a bare
+        "пешка е4" works without needing to stay inside a special
+        game-only listening state.
 
         Always returns (None, interrupted): like _resolve_ui_action/
         _resolve_task_plan, nothing is left for _handle_command's generic
@@ -855,75 +854,89 @@ class VoiceAssistantLoop:
                 return None, interrupted
 
         kind = GameKind(game_param)
-        session = board_games_service_layer.start_game(kind)
+        session = board_games_ui_session.start(kind)
+        state_manager.request_image(board_games_service_layer.render_svg(session))
 
         state_manager.set_state(AssistantState.SPEAKING)
-        if self._speak_safely(tts, board_games_announce.game_started_text(kind), response_language):
-            board_games_service_layer.finish(session)
-            return None, True
-
-        try:
-            interrupted = self._run_board_game_loop(session, tts, command_stt, response_language)
-        finally:
-            summary = board_games_service_layer.finish(session)
-
-        state_manager.request_image(summary.board_svg)
-
-        lines = [
-            board_games_announce.result_text(summary.result_string),
-            board_games_announce.summary_intro_text(len(summary.mistakes)),
-        ]
-        lines.extend(board_games_announce.mistake_text(m) for m in summary.mistakes)
-        state_manager.set_state(AssistantState.SPEAKING)
-        interrupted = self._speak_safely(tts, " ".join(lines), response_language) or interrupted
+        interrupted = self._speak_safely(tts, board_games_announce.game_started_text(kind), response_language)
         return None, interrupted
 
-    def _run_board_game_loop(
-        self,
-        session: board_games_service_layer.GameSession,
-        tts: TextToSpeech,
-        command_stt: SpeechToText,
-        response_language: str,
-    ) -> bool:
-        """The turn-by-turn loop behind _resolve_board_game, split out only
-        so that method's own try/finally (engine cleanup) reads cleanly.
-        Returns True if a spoken reply got barge-in-cut off mid-sentence —
-        a TurnCancelled raised while resolving/applying a move propagates
-        straight through instead (same as every other resolver in this
-        file); the caller's finally block still releases the engine."""
-        while not board_games_service_layer.is_over(session):
-            state_manager.set_state(AssistantState.LISTENING, "Жду ваш ход")
-            move_audio = audio_io.record_until_silence(self._settings, self._stop_event)
-            move_text = command_stt.transcribe(move_audio).text.strip()
-            if not move_text:
-                continue
-            if is_stop_command(move_text, response_language) or is_resign_command(move_text, response_language):
-                return False
+    def _resolve_active_board_game_utterance(self, text: str, response_language: str) -> Command | None:
+        """Checked in _handle_command before interpret(), whenever
+        modules.board_games.ui_session already has a game in progress — the
+        same singleton the REST API (core/main.py's /api/boardgames/*) and
+        BoardGamesPanel.tsx read from, so this is exactly the game the user
+        is looking at, whether they started it by voice ("давай сыграем") or
+        by clicking "Начать шахматы"/"Начать шашки". Lets a bare move
+        ("пешка е3") apply directly, without first saying a trigger phrase —
+        that gap (no intent pattern at all matched a bare move, and the old
+        voice-only flow ran its own private GameSession the UI never saw)
+        was the actual cause of "голосом не двигаются фигуры".
 
-            matched = run_cancellable(
-                board_games_service_layer.resolve_player_move(session, move_text),
-                self._barge_in,
-                response_language,
-            )
-            if matched is None:
-                state_manager.set_state(AssistantState.SPEAKING)
-                if self._speak_safely(tts, board_games_announce.move_not_understood_text(), response_language):
-                    return True
-                continue
+        Returns None (falls through to the normal interpret()/plugin/AI
+        chain) when no game is active, or when resolve_player_move doesn't
+        confidently match anything — deliberately not forcing a "не поняла
+        ход" reply in that case, since an unrelated command said while a
+        game happens to still be open ("открой браузер") must keep working
+        normally, same trade-off already accepted for
+        modules.ui_automation.grounding/modules.app_catalog.resolver."""
+        session = board_games_ui_session.current()
+        if session is None:
+            return None
+        if is_resign_command(text, response_language):
+            return Command(name="board_game_resign", params={})
+        matched = run_cancellable(
+            board_games_service_layer.resolve_player_move(session, text), self._barge_in, response_language
+        )
+        if matched is None:
+            return None
+        return Command(name="board_game_apply_move", params={"notation": matched})
 
-            board_games_service_layer.apply_player_move(session, matched)
-            if board_games_service_layer.is_over(session):
-                break
+    def _resolve_board_game_move(self, command: Command, tts: TextToSpeech, response_language: str) -> bool:
+        """Applies a move already resolved by
+        _resolve_active_board_game_utterance, lets the engine reply, and
+        pushes the updated board (state_manager.request_image) after each
+        half-move — unlike the old captive loop this replaces, which only
+        pushed the board once, after the whole game ended. Returns whether
+        the spoken reply got barge-in-cut off."""
+        session = board_games_ui_session.require_current()
+        notation = command.params["notation"]
 
-            engine_move = board_games_service_layer.apply_engine_move(session)
-            speak_parts = [f"Вы сыграли {matched}.", board_games_announce.engine_move_text(engine_move)]
-            if board_games_service_layer.is_check(session):
-                speak_parts.append(board_games_announce.check_text())
-            state_manager.set_state(AssistantState.SPEAKING)
-            if self._speak_safely(tts, " ".join(speak_parts), response_language):
-                return True
+        board_games_service_layer.apply_player_move(session, notation)
+        state_manager.request_image(board_games_service_layer.render_svg(session))
+        if board_games_service_layer.is_over(session):
+            return self._finish_board_game(tts, response_language)
 
-        return False
+        engine_move = board_games_service_layer.apply_engine_move(session)
+        state_manager.request_image(board_games_service_layer.render_svg(session))
+
+        speak_parts = [f"Вы сыграли {notation}.", board_games_announce.engine_move_text(engine_move.notation)]
+        if board_games_service_layer.is_check(session):
+            speak_parts.append(board_games_announce.check_text())
+        state_manager.set_state(AssistantState.SPEAKING)
+        interrupted = self._speak_safely(tts, " ".join(speak_parts), response_language)
+
+        if board_games_service_layer.is_over(session):
+            return self._finish_board_game(tts, response_language) or interrupted
+        return interrupted
+
+    def _finish_board_game(self, tts: TextToSpeech, response_language: str, resigned: bool = False) -> bool:
+        """Ends whatever game is current in ui_session (releasing the chess
+        engine subprocess, if any) and speaks the result + mistake summary —
+        called both when a move ends the game naturally and when the player
+        resigns. No-ops (returns False) if there's no active game, which
+        can't normally happen given both call sites check first, but keeps
+        this safe to call defensively."""
+        summary = board_games_ui_session.finish()
+        if summary is None:
+            return False
+        state_manager.request_image(summary.board_svg)
+        lines = [board_games_announce.game_stopped_text()] if resigned else []
+        lines.append(board_games_announce.result_text(summary.result_string))
+        lines.append(board_games_announce.summary_intro_text(len(summary.mistakes)))
+        lines.extend(board_games_announce.mistake_text(m) for m in summary.mistakes)
+        state_manager.set_state(AssistantState.SPEAKING)
+        return self._speak_safely(tts, " ".join(lines), response_language)
 
     def _resolve_pending_message_target(
         self, raw_target: str, tts: TextToSpeech, command_stt: SpeechToText, response_language: str
@@ -1264,7 +1277,13 @@ class VoiceAssistantLoop:
                 name=custom_commands.dispatcher_command_name(custom_match.id), params={}
             )
         else:
-            command = interpret(text_to_interpret, decision.resolved)
+            # Checked before interpret() itself: a bare move ("пешка е3")
+            # against a game already in progress must win over every other
+            # interpretation, the same priority custom commands get above —
+            # see _resolve_active_board_game_utterance's own docstring.
+            command = self._resolve_active_board_game_utterance(text_to_interpret, response_language)
+            if command is None:
+                command = interpret(text_to_interpret, decision.resolved)
             if command is not None and command.name in ("messaging_reply", "messaging_snooze"):
                 # "ответь"/"отложи" are common phrase-openers for plenty of non-
                 # messaging requests too ("ответь, который час", "отложи это на
@@ -1343,6 +1362,14 @@ class VoiceAssistantLoop:
                 if command is None:
                     state_manager.set_state(AssistantState.IDLE)
                     return interrupted
+            elif command.name == "board_game_apply_move":
+                interrupted = self._resolve_board_game_move(command, tts, response_language)
+                state_manager.set_state(AssistantState.IDLE)
+                return interrupted
+            elif command.name == "board_game_resign":
+                interrupted = self._finish_board_game(tts, response_language, resigned=True)
+                state_manager.set_state(AssistantState.IDLE)
+                return interrupted
             elif command.name == "messaging_watch_contact":
                 command, interrupted = self._resolve_messaging_watch_contact(command, tts, response_language)
                 if command is None:

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { createCalendarEvent, deleteCalendarEvent, listUpcomingEvents } from "../api/client";
-import type { CalendarEvent } from "../types";
+import type { CalendarEvent, RecurrenceRule } from "../types";
 import "./PlannerView.css";
 
 const WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -10,6 +10,21 @@ const MONTH_LABELS = [
 ];
 
 const POLL_INTERVAL_MS = 30000;
+
+// Basic swatches match the app's own theme accents (theme.css) — the
+// color-wheel <input type="color"> right next to them covers "or pick
+// anything" for a user who wants something more specific.
+const BASIC_COLORS = ["#2ad8ff", "#a371f7", "#3fb950", "#d29922", "#f85149"];
+
+const RECURRENCE_LABELS: Record<RecurrenceRule, string> = {
+  none: "Не повторяется",
+  daily: "Каждый день",
+  weekly: "Каждую неделю",
+  monthly: "Каждый месяц",
+  yearly: "Каждый год",
+};
+
+const RECURRENCE_OPTIONS = Object.keys(RECURRENCE_LABELS) as RecurrenceRule[];
 
 interface MonthCell {
   day: number;
@@ -89,6 +104,9 @@ export function PlannerView(): JSX.Element {
   const [date, setDate] = useState(todayKey);
   const [time, setTime] = useState("09:00");
   const [remindBefore, setRemindBefore] = useState(30);
+  const [color, setColor] = useState<string>(BASIC_COLORS[0]);
+  const [category, setCategory] = useState("");
+  const [recurrence, setRecurrence] = useState<RecurrenceRule>("none");
   const [submitting, setSubmitting] = useState(false);
 
   async function refresh(): Promise<void> {
@@ -121,6 +139,14 @@ export function PlannerView(): JSX.Element {
 
   const cells = useMemo(() => buildMonthGrid(viewYear, viewMonth), [viewYear, viewMonth]);
 
+  // "Связанные события по блокам" — a shared category label a user already
+  // used (e.g. "Дни рождения") shows up as a one-click suggestion instead
+  // of having to retype it exactly the same way every time.
+  const existingCategories = useMemo(
+    () => Array.from(new Set(events.map((event) => event.category).filter((value): value is string => !!value))),
+    [events],
+  );
+
   function goToPrevMonth(): void {
     if (viewMonth === 0) {
       setViewYear((year) => year - 1);
@@ -150,8 +176,17 @@ export function PlannerView(): JSX.Element {
     }
     setSubmitting(true);
     try {
-      await createCalendarEvent(title.trim(), toEventTimeIso(date, time), remindBefore);
+      await createCalendarEvent(
+        title.trim(),
+        toEventTimeIso(date, time),
+        remindBefore,
+        color,
+        category.trim() || null,
+        recurrence,
+      );
       setTitle("");
+      setCategory("");
+      setRecurrence("none");
       await refresh();
     } catch (error) {
       console.error("Failed to create a calendar event:", error);
@@ -204,7 +239,9 @@ export function PlannerView(): JSX.Element {
             return (
               <button key={cell.dateKey} className={classNames} onClick={() => handleSelectDay(cell)}>
                 <span>{cell.day}</span>
-                {dayEvents.length > 0 && <span className="planner__day-dot" />}
+                {dayEvents.length > 0 && (
+                  <span className="planner__day-dot" style={{ background: dayEvents[0].color ?? undefined }} />
+                )}
               </button>
             );
           })}
@@ -234,6 +271,47 @@ export function PlannerView(): JSX.Element {
               onChange={(event) => setRemindBefore(Number(event.target.value))}
               title="Напомнить за, минут"
             />
+            <select value={recurrence} onChange={(event) => setRecurrence(event.target.value as RecurrenceRule)}>
+              {RECURRENCE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {RECURRENCE_LABELS[option]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <input
+            type="text"
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+            placeholder="Категория (например, Дни рождения)"
+            list="planner-category-suggestions"
+          />
+          <datalist id="planner-category-suggestions">
+            {existingCategories.map((value) => (
+              <option key={value} value={value} />
+            ))}
+          </datalist>
+          <div className="planner__color-row">
+            <span className="planner__color-row-label">Цвет:</span>
+            {BASIC_COLORS.map((swatch) => (
+              <button
+                key={swatch}
+                type="button"
+                className={`planner__color-swatch${color === swatch ? " planner__color-swatch--selected" : ""}`}
+                style={{ background: swatch }}
+                onClick={() => setColor(swatch)}
+                title={swatch}
+              />
+            ))}
+            <input
+              type="color"
+              className="planner__color-wheel"
+              value={color}
+              onChange={(event) => setColor(event.target.value)}
+              title="Свой цвет"
+            />
+          </div>
+          <div className="row">
             <button disabled={submitting} onClick={() => void handleCreate()}>
               Добавить
             </button>
@@ -251,12 +329,20 @@ export function PlannerView(): JSX.Element {
         <div className="planner__events">
           {visibleEvents.length === 0 && <p className="last-message">Событий нет.</p>}
           {visibleEvents.map((event) => (
-            <div key={event.id} className="planner__event-card">
+            <div
+              key={event.id}
+              className="planner__event-card"
+              style={{ borderLeftColor: event.color ?? "var(--border)" }}
+            >
               <div className="planner__event-info">
-                <span className="planner__event-title">{event.title}</span>
+                <span className="planner__event-title">
+                  {event.title}
+                  {event.category && <span className="planner__event-category">{event.category}</span>}
+                </span>
                 <span className="planner__event-time">
                   {formatEventTime(event.event_time)}
                   {event.remind_before_minutes > 0 ? ` · напомнить за ${event.remind_before_minutes} мин` : ""}
+                  {event.recurrence !== "none" ? ` · ${RECURRENCE_LABELS[event.recurrence].toLowerCase()}` : ""}
                 </span>
               </div>
               <button className="danger" onClick={() => void handleDelete(event.id)}>

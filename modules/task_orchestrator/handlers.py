@@ -34,7 +34,7 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         opened)."""
         steps = params.get("steps")
         if not steps or not isinstance(steps, list):
-            raise ValueError("Missing required parameter 'steps'")
+            raise ValueError("Не указаны шаги плана.")
 
         results: list[dict[str, Any]] = []
         for step in steps:
@@ -75,10 +75,9 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         # requires without having gone through the announcement step).
         dangerous=True,
         description=(
-            "Break a composite, multi-step voice instruction (raw_text) into a sequence of this "
-            "system's other commands and run them in order — e.g. 'открой калькулятор и покажи "
-            "список окон'. Use this only when the request clearly names two or more distinct "
-            "actions to perform one after another; a single action should use its own specific "
-            "command instead."
+            "Разбить составную, многошаговую голосовую команду (raw_text) на последовательность "
+            "других команд системы и выполнить их по порядку — например, «открой калькулятор и "
+            "покажи список окон». Использовать только когда запрос явно называет два и более "
+            "отдельных действия подряд; для одного действия — своя отдельная команда."
         ),
     )

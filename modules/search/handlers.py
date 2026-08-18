@@ -19,5 +19,5 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         "web_search",
         _handle_web_search,
         dangerous=False,
-        description="Search Google (query, optional num_results) and return the top parsed results.",
+        description="Найти в Google (query, опционально num_results) и вернуть лучшие результаты.",
     )

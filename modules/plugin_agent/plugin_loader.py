@@ -256,7 +256,7 @@ _registry: PluginRegistry | None = None
 
 def get_registry() -> PluginRegistry:
     if _registry is None:
-        raise RuntimeError("Plugin registry has not been initialized; call init_plugin_loader() first")
+        raise RuntimeError("Реестр плагинов ещё не инициализирован — сначала вызовите init_plugin_loader().")
     return _registry
 
 

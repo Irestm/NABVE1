@@ -9,12 +9,12 @@ extra dependencies beyond Blender's own bundled Python.
 """
 
 bl_info = {
-    "name": "Jarvis Voice Control",
-    "author": "Jarvis",
+    "name": "NABVE Voice Control",
+    "author": "NABVE",
     "version": (1, 0, 0),
     "blender": (3, 0, 0),
     "location": "N/A — background service, no UI panel",
-    "description": "Lets the Jarvis voice assistant control Blender (objects, modifiers, materials, render, ...) over a local HTTP connection.",
+    "description": "Lets the NABVE voice assistant control Blender (objects, modifiers, materials, render, ...) over a local HTTP connection.",
     "category": "System",
 }
 

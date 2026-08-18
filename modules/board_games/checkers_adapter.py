@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import draughts
 import draughts.svg
 
 from core.logger import get_logger
-from modules.board_games.domain import MoveJudgement
+from modules.board_games.domain import Difficulty, EngineMove, MoveJudgement
 
 logger = get_logger(__name__)
 
@@ -16,6 +17,18 @@ _ENGINE_DEPTH = 6
 # threshold, this one was picked empirically against the same engine.
 _MISTAKE_THRESHOLD = 1.0
 
+# Russian draughts has no standard ELO-rated engine scale the way chess
+# does — search depth is the actual knob, so difficulty maps to that
+# instead. HARD (6) matches the pre-difficulty-selector default exactly.
+_DIFFICULTY_DEPTH: dict[Difficulty, int] = {
+    Difficulty.VERY_EASY: 1,
+    Difficulty.EASY: 2,
+    Difficulty.MEDIUM: 4,
+    Difficulty.HARD: 6,
+    Difficulty.VERY_HARD: 9,
+    Difficulty.IMPOSSIBLE: 12,
+}
+
 
 @dataclass
 class CheckersSession:
@@ -23,8 +36,9 @@ class CheckersSession:
     engine: draughts.SimpleEngine
 
 
-def start() -> CheckersSession:
-    return CheckersSession(board=draughts.RussianBoard(), engine=draughts.SimpleEngine(depth_limit=_ENGINE_DEPTH))
+def start(difficulty: Difficulty | None = None) -> CheckersSession:
+    depth = _DIFFICULTY_DEPTH[difficulty] if difficulty is not None else _ENGINE_DEPTH
+    return CheckersSession(board=draughts.RussianBoard(), engine=draughts.SimpleEngine(depth_limit=depth))
 
 
 def legal_move_labels(session: CheckersSession) -> list[str]:
@@ -33,6 +47,21 @@ def legal_move_labels(session: CheckersSession) -> list[str]:
     candidates (see modules.board_games.service_layer.resolve_player_move,
     same shape as chess_adapter.legal_move_labels)."""
     return [str(move) for move in session.board.legal_moves]
+
+
+def legal_moves_with_squares(session: CheckersSession) -> list[tuple[str, str, str]]:
+    """(from_square, to_square, label) for every legal move — same shape as
+    chess_adapter's, using the numbers already embedded in the move's own
+    label ("31-27", or a multi-hop capture like "23x14x5") since Russian
+    draughts notation already names every square unambiguously; only the
+    first and last matter for "which piece is this, and where can it end
+    up" purposes."""
+    result: list[tuple[str, str, str]] = []
+    for move in session.board.legal_moves:
+        label = str(move)
+        squares = re.findall(r"\d+", label)
+        result.append((squares[0], squares[-1], label))
+    return result
 
 
 def apply_player_move(session: CheckersSession, notation: str) -> MoveJudgement:
@@ -64,11 +93,12 @@ def apply_player_move(session: CheckersSession, notation: str) -> MoveJudgement:
     )
 
 
-def apply_engine_move(session: CheckersSession) -> str:
+def apply_engine_move(session: CheckersSession) -> EngineMove:
     move, _ = session.engine.get_best_move(session.board, with_evaluation=True)
     label = str(move)
+    squares = re.findall(r"\d+", label)
     session.board.push(move)
-    return label
+    return EngineMove(notation=label, from_square=squares[0], to_square=squares[-1])
 
 
 def is_over(session: CheckersSession) -> bool:
