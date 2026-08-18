@@ -133,6 +133,19 @@ interface CommandResult {
   stderr: string;
 }
 
+// Carries the child process's exit code alongside the message, so callers
+// that need to react to a *specific* failure (see installWindowsPackage's
+// winget-source-reset retry below) don't have to regex-parse it back out of
+// the formatted error text.
+class CommandError extends Error {
+  constructor(
+    message: string,
+    public readonly exitCode: number | null,
+  ) {
+    super(message);
+  }
+}
+
 // Every process this module spawns goes through here: stdio is always
 // piped (never inherited into a console), and windowsHide guarantees no
 // terminal window flashes on Windows for any of these steps — the whole
@@ -165,7 +178,12 @@ function runCommand(
       if (code === 0) {
         resolve({ stdout, stderr });
       } else {
-        reject(new Error(`${label}: "${command} ${args.join(" ")}" exited with code ${code}\n${stderr.slice(-2000)}`));
+        reject(
+          new CommandError(
+            `${label}: "${command} ${args.join(" ")}" exited with code ${code}\n${stderr.slice(-2000)}`,
+            code,
+          ),
+        );
       }
     });
   });
@@ -269,9 +287,26 @@ async function installLinuxSystemPackages(): Promise<void> {
   });
 }
 
+// winget occasionally fails a fresh install with 0x8a15000f ("Data required
+// by the source is missing") when its local source index was never
+// initialized (or went stale) for the current user profile — a known
+// winget-cli issue (microsoft/winget-cli#4799, #5253), not anything wrong
+// with the package itself. Without handling it here, a first-run user hit
+// by this on their own machine can click "Повторить" in the setup UI
+// forever and never get past it, since the broken source index doesn't fix
+// itself. `winget source reset --force` rebuilds the index; retried once
+// per package before giving up for real.
+const WINGET_SOURCE_DATA_MISSING_CODE = 2316632079; // 0x8a15000f
+
 async function installWindowsPackages(needsPython: boolean): Promise<void> {
   const ids = needsPython ? [WINGET_PYTHON_ID, ...WINGET_PACKAGES] : WINGET_PACKAGES;
   for (const id of ids) {
+    await installWindowsPackage(id);
+  }
+}
+
+async function installWindowsPackage(id: string, retriedAfterSourceReset = false): Promise<void> {
+  try {
     await runCommand(`winget install ${id}`, "winget", [
       "install",
       "--id",
@@ -281,6 +316,16 @@ async function installWindowsPackages(needsPython: boolean): Promise<void> {
       "--accept-package-agreements",
       "--accept-source-agreements",
     ]);
+  } catch (error) {
+    if (
+      retriedAfterSourceReset ||
+      !(error instanceof CommandError) ||
+      error.exitCode !== WINGET_SOURCE_DATA_MISSING_CODE
+    ) {
+      throw error;
+    }
+    await runCommand("winget source reset", "winget", ["source", "reset", "--force"]);
+    await installWindowsPackage(id, true);
   }
 }
 
