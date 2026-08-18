@@ -4,6 +4,7 @@ import re
 from typing import Any, Awaitable, Callable
 
 from core.logger import get_logger
+from modules.quizlet_clone import quizlet_ai_extraction
 from modules.quizlet_clone.models import LibrarySetSummary
 from modules.quizlet_clone.quizlet_auth import QuizletSession
 
@@ -360,6 +361,25 @@ async def _scrape_set_terms_locked(session: QuizletSession, quizlet_set_id: str)
         if pairs:
             logger.info("Scraped %d terms from Quizlet set %s", len(pairs), quizlet_set_id)
             return pairs
+
+    # Every hardcoded selector failed — rather than needing yet another
+    # selector update the next time Quizlet reshuffles this page (see this
+    # module's repeated "Confirmed live" comments above), hand the page's
+    # own visible text to an AI adapter and let it find the term/definition
+    # pairs itself. Best-effort: returns [] on total failure (every adapter
+    # unavailable, or none produced anything parseable), in which case this
+    # just falls through to the same diagnostic+raise as before — nothing
+    # about the existing failure path changes if the fallback can't help.
+    try:
+        page_text = await page.locator("body").inner_text()
+    except Exception as exc:
+        logger.debug("Could not read page text for the AI extraction fallback: %s", exc, exc_info=True)
+        page_text = ""
+    if page_text:
+        ai_pairs = await quizlet_ai_extraction.extract_terms_via_ai(page_text)
+        if ai_pairs:
+            logger.info("Scraped %d terms from Quizlet set %s (AI fallback)", len(ai_pairs), quizlet_set_id)
+            return ai_pairs
 
     # Diagnostic for exactly this failure — mirrors list_library_sets' own
     # empty-result logging, so a future layout change shows what Quizlet's

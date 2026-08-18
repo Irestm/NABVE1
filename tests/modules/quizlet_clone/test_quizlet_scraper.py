@@ -314,11 +314,45 @@ async def test_scrape_set_terms_falls_back_to_a_selector_pair_when_card_sides_ar
 
 
 @pytest.mark.asyncio
-async def test_scrape_set_terms_raises_a_clear_error_when_every_selector_fails() -> None:
+async def test_scrape_set_terms_uses_ai_fallback_when_every_selector_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression coverage for the "решим раз и навсегда" request: when every
+    # hardcoded selector fails (Quizlet reshuffled the page again), the page's
+    # own visible text goes to the AI fallback instead of giving up outright.
     page = _mock_page()
     page.goto = AsyncMock()
     page.wait_for_selector = AsyncMock(side_effect=RuntimeError("selector not found"))
+    body_locator = MagicMock()
+    body_locator.inner_text = AsyncMock(return_value="hola — привет\ngato — кот")
+    page.locator = MagicMock(return_value=body_locator)
     session = _mock_session(page)
+
+    async def fake_extract(page_text: str) -> list[tuple[str, str]]:
+        assert "hola" in page_text  # got the actual page text, not something empty
+        return [("hola", "привет"), ("gato", "кот")]
+
+    monkeypatch.setattr(quizlet_scraper.quizlet_ai_extraction, "extract_terms_via_ai", fake_extract)
+
+    pairs = await quizlet_scraper.scrape_set_terms(session, "123456")
+
+    assert pairs == [("hola", "привет"), ("gato", "кот")]
+
+
+@pytest.mark.asyncio
+async def test_scrape_set_terms_raises_a_clear_error_when_every_selector_and_ai_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _mock_page()
+    page.goto = AsyncMock()
+    page.wait_for_selector = AsyncMock(side_effect=RuntimeError("selector not found"))
+    body_locator = MagicMock()
+    body_locator.inner_text = AsyncMock(return_value="just navigation chrome, no cards")
+    page.locator = MagicMock(return_value=body_locator)
+    session = _mock_session(page)
+
+    async def fake_extract(page_text: str) -> list[tuple[str, str]]:
+        return []
+
+    monkeypatch.setattr(quizlet_scraper.quizlet_ai_extraction, "extract_terms_via_ai", fake_extract)
 
     with pytest.raises(RuntimeError, match="изменил структуру страницы"):
         await quizlet_scraper.scrape_set_terms(session, "123456")
