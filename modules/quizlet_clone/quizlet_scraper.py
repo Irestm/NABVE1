@@ -103,6 +103,7 @@ async def list_library_sets(session: QuizletSession) -> list[LibrarySetSummary]:
     have changed" message on total failure — never returns an empty list to
     mean "something went wrong"."""
     page = await session.library_page()
+    nav_link_found = False
 
     try:
         # Follow the "your library" nav link like a real user clicking it,
@@ -116,7 +117,8 @@ async def list_library_sets(session: QuizletSession) -> list[LibrarySetSummary]:
         # click via JS instead, which still fires the same React onClick/SPA
         # navigation without needing the menu opened first.
         my_library_link = page.locator("a[href^='/user/'][href$='/sets']").first
-        if await my_library_link.count() > 0:
+        nav_link_found = await my_library_link.count() > 0
+        if nav_link_found:
             await my_library_link.evaluate("el => el.click()")
             await page.wait_for_url(re.compile(r"/user/[^/]+/sets"), timeout=15_000)
     except Exception as exc:
@@ -134,6 +136,26 @@ async def list_library_sets(session: QuizletSession) -> list[LibrarySetSummary]:
     # загрузить библиотеку" error to fix, rather than silently returning
     # wrong data that looks like it worked.
     if not re.search(r"/user/[^/]+/sets", page.url):
+        # Diagnostic for exactly this failure — mirrors the empty-result
+        # diagnostics later in this file. nav_link_found distinguishes a
+        # missing/stale selector (element never located at all) from a
+        # located-but-non-navigating link (found, clicked, but the URL never
+        # changed to match — e.g. Quizlet switched to a different URL shape
+        # entirely), since those need different fixes here.
+        try:
+            header_links = await page.eval_on_selector_all(
+                "header a[href], nav a[href]",
+                "els => els.map(el => [el.getAttribute('href'), el.textContent.trim()])",
+            )
+        except Exception as probe_failed:
+            header_links = [f"<could not read header/nav links: {probe_failed}>"]
+        logger.warning(
+            "list_library_sets could not reach the user's own library — nav_link_found=%s, ended up on %s, "
+            "header/nav links: %s",
+            nav_link_found,
+            page.url,
+            header_links[:40],
+        )
         raise RuntimeError(
             "Не удалось открыть вашу личную библиотеку Quizlet (только общая лента) — "
             "возможно, Quizlet изменил структуру страницы. Селекторы: modules/quizlet_clone/quizlet_scraper.py"
