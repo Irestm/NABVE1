@@ -11,7 +11,6 @@ import {
   quizletImportAllSets,
   quizletImportSet,
   quizletImportSession,
-  quizletLogin,
   quizletLogout,
   saveStudySet,
   startQuizletGame,
@@ -623,18 +622,6 @@ export function QuizletPanel(): JSX.Element {
     };
   }, []);
 
-  async function handleLogin(): Promise<void> {
-    setAuthBusy(true);
-    try {
-      await quizletLogin();
-    } catch (err) {
-      console.error("Failed to open the Quizlet login window:", err);
-      setError("Не удалось открыть окно входа в Quizlet.");
-    } finally {
-      setAuthBusy(false);
-    }
-  }
-
   async function handleLogout(): Promise<void> {
     setAuthBusy(true);
     try {
@@ -644,7 +631,7 @@ export function QuizletPanel(): JSX.Element {
       setLibraryOpen(false);
     } catch (err) {
       console.error("Failed to log out of Quizlet:", err);
-      setError("Не удалось выйти из Quizlet.");
+      setError(err instanceof Error ? err.message : "Не удалось выйти из Quizlet.");
     } finally {
       setAuthBusy(false);
     }
@@ -662,7 +649,7 @@ export function QuizletPanel(): JSX.Element {
       await handleLoggedInChange(true);
     } catch (err) {
       console.error("Failed to import a Quizlet browser session:", err);
-      setError("Не удалось импортировать сессию.");
+      setError(err instanceof Error ? err.message : "Не удалось импортировать сессию.");
     } finally {
       setAuthBusy(false);
     }
@@ -680,7 +667,7 @@ export function QuizletPanel(): JSX.Element {
       setLibrary(await listQuizletLibrary());
     } catch (err) {
       console.error("Failed to load the Quizlet library:", err);
-      setLibraryError("Не удалось загрузить библиотеку Quizlet.");
+      setLibraryError(err instanceof Error ? err.message : "Не удалось загрузить библиотеку Quizlet.");
     } finally {
       setLibraryLoading(false);
     }
@@ -695,7 +682,7 @@ export function QuizletPanel(): JSX.Element {
       setLibrary(await listQuizletLibrary());
     } catch (err) {
       console.error("Failed to import the Quizlet set:", err);
-      setLibraryError(`Не удалось импортировать набор «${item.title}».`);
+      setLibraryError(err instanceof Error ? err.message : `Не удалось импортировать набор «${item.title}».`);
     } finally {
       setImportingId(null);
     }
@@ -834,39 +821,37 @@ export function QuizletPanel(): JSX.Element {
           <span className={`quizlet-panel__auth-status${loggedIn ? " quizlet-panel__auth-status--authed" : ""}`}>
             {loggedIn ? "Подключено к Quizlet" : "Не подключено к Quizlet"}
           </span>
-          <p className="status-detail">
-            Вход выполняется в отдельном окне браузера — NABVE не запрашивает и не хранит пароль от Quizlet.
-          </p>
+          {!loggedIn && (
+            <p className="status-detail">
+              1. Зайдите на quizlet.com в своём обычном браузере (Chrome, Firefox — тот, которым обычно пользуетесь)
+              и войдите в свой аккаунт, как всегда.
+              <br />
+              2. Вернитесь сюда и нажмите «Связь с браузером» — NABVE скопирует эту сессию (куки) в свою, без пароля.
+            </p>
+          )}
         </div>
         <div className="quizlet-panel__auth-actions">
-          <button type="button" onClick={() => void (loggedIn ? handleLogout() : handleLogin())} disabled={authBusy}>
-            {authBusy ? "…" : loggedIn ? "Выйти из Quizlet" : "Войти в Quizlet"}
-          </button>
-          {!loggedIn && (
+          {loggedIn ? (
+            <>
+              <button type="button" onClick={() => void handleLogout()} disabled={authBusy}>
+                {authBusy ? "…" : "Выйти из Quizlet"}
+              </button>
+              <button type="button" onClick={() => void toggleLibrary()}>
+                {libraryOpen ? "Скрыть библиотеку" : "Библиотека Quizlet"}
+              </button>
+            </>
+          ) : (
             <button
               type="button"
               className="quizlet-panel__import-session"
               onClick={() => void handleImportSession()}
               disabled={authBusy}
             >
-              {authBusy ? "…" : "Импорт из браузера"}
-            </button>
-          )}
-          {loggedIn && (
-            <button type="button" onClick={() => void toggleLibrary()}>
-              {libraryOpen ? "Скрыть библиотеку" : "Библиотека Quizlet"}
+              {authBusy ? "…" : "Связь с браузером"}
             </button>
           )}
         </div>
       </div>
-
-      {!loggedIn && (
-        <p className="quizlet-panel__import-note">
-          «Импорт из браузера» — это способ входа, если окно входа не срабатывает: сначала зайдите на quizlet.com в
-          своём обычном браузере (Firefox или Chrome), как обычно заходите на сайты, затем нажмите эту кнопку — NABVE
-          скопирует эту сессию себе, без пароля.
-        </p>
-      )}
 
       {libraryOpen && (
         <div className="quizlet-panel__library">

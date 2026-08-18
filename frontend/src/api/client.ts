@@ -101,7 +101,21 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...authHeaders(init?.headers) },
   });
   if (!response.ok) {
-    throw new Error(`Request to ${path} failed with status ${response.status}`);
+    // FastAPI's HTTPException body is {"detail": "..."} — that's the actual,
+    // specific reason ("Сначала войдите в Quizlet", "Quizlet изменил
+    // структуру страницы", ...) callers need to show the user instead of a
+    // bare status code. Falls back to the status-code message only when the
+    // body isn't JSON or has no `detail` at all (a non-FastAPI failure, e.g.
+    // a proxy/network error page).
+    const detail = await response
+      .json()
+      .then((body: unknown) =>
+        typeof body === "object" && body !== null && "detail" in body
+          ? String((body as { detail: unknown }).detail)
+          : null,
+      )
+      .catch(() => null);
+    throw new Error(detail ?? `Request to ${path} failed with status ${response.status}`);
   }
   return (await response.json()) as T;
 }
@@ -470,13 +484,13 @@ export function getQuizletStatus(): Promise<QuizletAuthStatus> {
   return requestJson<QuizletAuthStatus>("/api/quizlet/status");
 }
 
-// Login/logout/import go through the generic dispatcher (like
+// Logout/import go through the generic dispatcher (like
 // ai_bridge_provider_login/logout above) rather than dedicated REST
-// routes — see modules/quizlet_clone/handlers.py.
-export function quizletLogin(): Promise<CommandResponse> {
-  return runCommand("quizlet_login");
-}
-
+// routes — see modules/quizlet_clone/handlers.py. There's no quizletLogin()
+// wrapper here: the automated-browser login (quizlet_login command) reliably
+// hits Quizlet's Cloudflare bot-check, so this panel only ever offers
+// quizletImportSession() (copying an already-logged-in session from the
+// user's real browser) — see QuizletPanel.tsx's auth section.
 export function quizletLogout(): Promise<CommandResponse> {
   return runCommand("quizlet_logout");
 }
