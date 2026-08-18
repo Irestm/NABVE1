@@ -120,11 +120,24 @@ async def list_library_sets(session: QuizletSession) -> list[LibrarySetSummary]:
             await my_library_link.evaluate("el => el.click()")
             await page.wait_for_url(re.compile(r"/user/[^/]+/sets"), timeout=15_000)
     except Exception as exc:
-        # Best-effort navigation — if this fails, fall through and scan
-        # whatever page we're already on; the empty-result check below still
-        # raises a clear "layout changed" error rather than silently
-        # returning nothing.
         logger.debug("Could not navigate to the user's own Quizlet library: %s", exc, exc_info=True)
+
+    # Must actually be on /user/<name>/sets before scanning for set links —
+    # quizlet_auth.LIBRARY_URL (/latest) is a general activity/recommendation
+    # feed, not "sets I own", and used to be scanned anyway as a silent
+    # fallback whenever the click above failed or the nav link wasn't found
+    # at all (e.g. a stale selector after a Quizlet redesign). That fallback
+    # is exactly what made list_library_sets return other people's/
+    # recommended sets mixed in with the user's own — confirmed against a
+    # real user's report ("должен выдавать только мои папки"). Failing loudly
+    # here instead means a stale selector shows up as an obvious "не удалось
+    # загрузить библиотеку" error to fix, rather than silently returning
+    # wrong data that looks like it worked.
+    if not re.search(r"/user/[^/]+/sets", page.url):
+        raise RuntimeError(
+            "Не удалось открыть вашу личную библиотеку Quizlet (только общая лента) — "
+            "возможно, Quizlet изменил структуру страницы. Селекторы: modules/quizlet_clone/quizlet_scraper.py"
+        )
 
     try:
         # The URL changes (wait_for_url above) well before the set list

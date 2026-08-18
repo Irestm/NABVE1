@@ -15,9 +15,17 @@ def _mock_page() -> MagicMock:
     # through list_library_sets/scrape_set_terms needs them mocked async,
     # not just the ones that used to need query_selector_all before that
     # loop existed.
+    #
+    # page.url defaults to already being on the user's own library — the
+    # happy-path landing spot list_library_sets now requires (see its own
+    # "Must actually be on /user/<name>/sets" check) — since most of these
+    # tests are about what happens once scanning that page, not about the
+    # click-through navigation itself. Tests for the navigation failure case
+    # override this back to the general activity feed.
     page = MagicMock()
     page.evaluate = AsyncMock(return_value=1000)
     page.wait_for_timeout = AsyncMock()
+    page.url = "https://quizlet.com/user/testuser/sets"
     return page
 
 
@@ -122,6 +130,28 @@ async def test_list_library_sets_accumulates_sets_revealed_across_multiple_scrol
     result = await quizlet_scraper.list_library_sets(session)
 
     assert {s.quizlet_set_id for s in result} == {str(100000 + i) for i in range(5)}
+
+
+@pytest.mark.asyncio
+async def test_list_library_sets_raises_when_never_reaching_the_users_own_library() -> None:
+    # Regression test for the reported bug: when the "your library" nav link
+    # can't be found/clicked (stale selector after a redesign), the old
+    # behavior silently fell back to scanning whatever page we're still on —
+    # quizlet_auth.LIBRARY_URL's general activity/recommendation feed, NOT
+    # the user's own sets — which is how other people's/recommended sets
+    # ended up mixed into "Библиотека Quizlet". Now it must fail loudly
+    # instead of returning that wrong data.
+    session = MagicMock()
+    page = _mock_page()
+    page.url = "https://quizlet.com/latest"  # never navigated away from this
+    page.query_selector_all = AsyncMock(
+        return_value=[_link("/123456/some-other-persons-set/", "Not mine")]
+    )
+    session.library_page = AsyncMock(return_value=page)
+
+    with pytest.raises(RuntimeError, match="личную библиотеку"):
+        await quizlet_scraper.list_library_sets(session)
+    page.query_selector_all.assert_not_called()
 
 
 @pytest.mark.asyncio
