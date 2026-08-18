@@ -287,15 +287,25 @@ async function installLinuxSystemPackages(): Promise<void> {
   });
 }
 
-// winget occasionally fails a fresh install with 0x8a15000f ("Data required
-// by the source is missing") when its local source index was never
-// initialized (or went stale) for the current user profile — a known
-// winget-cli issue (microsoft/winget-cli#4799, #5253), not anything wrong
-// with the package itself. Without handling it here, a first-run user hit
-// by this on their own machine can click "Повторить" in the setup UI
-// forever and never get past it, since the broken source index doesn't fix
-// itself. `winget source reset --force` rebuilds the index; retried once
-// per package before giving up for real.
+// `winget install` with no `--source` refreshes and searches EVERY
+// configured source, including the built-in `msstore` one — and `msstore`
+// has its own separate one-time agreement (Microsoft Store Terms of
+// Transaction + sending the machine's 2-letter region) that has nothing to
+// do with the winget-pkgs community source our WINGET_PACKAGES/
+// WINGET_PYTHON_ID actually come from. On a machine where that msstore
+// agreement was never accepted, the source refresh fails outright with
+// 0x8a15000f ("Data required by the source is missing") and drags every
+// install down with it, no matter how many times the user clicks
+// "Повторить" — confirmed against a real user's setup.log, which showed the
+// msstore agreement text on the very first attempt. Scoping to
+// `--source winget` sidesteps msstore entirely, since we never need it.
+const WINGET_SOURCE = "winget";
+
+// Kept as a second-layer fallback, not the primary fix above: even scoped
+// to a single source, winget's own local index for it can independently go
+// stale/uninitialized (microsoft/winget-cli#4799, #5253) and fail with this
+// same code. `winget source reset --force` rebuilds it; retried once per
+// package before giving up for real.
 const WINGET_SOURCE_DATA_MISSING_CODE = 2316632079; // 0x8a15000f
 
 async function installWindowsPackages(needsPython: boolean): Promise<void> {
@@ -312,6 +322,8 @@ async function installWindowsPackage(id: string, retriedAfterSourceReset = false
       "--id",
       id,
       "-e",
+      "--source",
+      WINGET_SOURCE,
       "--silent",
       "--accept-package-agreements",
       "--accept-source-agreements",
