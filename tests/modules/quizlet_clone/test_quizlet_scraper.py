@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -29,6 +30,19 @@ def _mock_page() -> MagicMock:
     return page
 
 
+def _mock_session(page: MagicMock) -> MagicMock:
+    # list_library_sets/scrape_set_terms now hold session.lock for their
+    # whole operation (see QuizletSession.lock's own docstring for why) and
+    # call session.navigate_to_library_locked() instead of the old
+    # session.library_page() — a real asyncio.Lock so `async with
+    # session.lock:` actually works against a mock (a bare MagicMock
+    # attribute has no __aenter__/__aexit__).
+    session = MagicMock()
+    session.lock = asyncio.Lock()
+    session.navigate_to_library_locked = AsyncMock(return_value=page)
+    return session
+
+
 def _link(href: str, title: str) -> MagicMock:
     link = MagicMock()
     link.get_attribute = AsyncMock(return_value=href)
@@ -39,7 +53,6 @@ def _link(href: str, title: str) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_list_library_sets_extracts_unique_sets_from_set_links() -> None:
-    session = MagicMock()
     page = _mock_page()
     page.query_selector_all = AsyncMock(
         return_value=[
@@ -49,7 +62,7 @@ async def test_list_library_sets_extracts_unique_sets_from_set_links() -> None:
             _link("/settings/", "Settings"),  # not a set URL — filtered out
         ]
     )
-    session.library_page = AsyncMock(return_value=page)
+    session = _mock_session(page)
 
     result = await quizlet_scraper.list_library_sets(session)
 
@@ -61,7 +74,6 @@ async def test_list_library_sets_matches_absolute_links_with_a_locale_segment_an
     # Confirmed live (2026-08-18): the library page's actual links look like
     # this now, not the old plain root-relative /<id>/<slug>/ shape — see
     # _SET_LINK_PATTERN's own comment.
-    session = MagicMock()
     page = _mock_page()
     page.query_selector_all = AsyncMock(
         return_value=[
@@ -72,7 +84,7 @@ async def test_list_library_sets_matches_absolute_links_with_a_locale_segment_an
             ),
         ]
     )
-    session.library_page = AsyncMock(return_value=page)
+    session = _mock_session(page)
 
     result = await quizlet_scraper.list_library_sets(session)
 
@@ -81,11 +93,11 @@ async def test_list_library_sets_matches_absolute_links_with_a_locale_segment_an
 
 @pytest.mark.asyncio
 async def test_list_library_sets_clicks_through_to_the_users_own_library() -> None:
-    # /latest (session.library_page()'s default landing page) renders its
-    # set cards as JS widgets with no plain <a href> — list_library_sets
-    # must follow the "your library" nav link (matched structurally, by
-    # href shape) to a page that actually has scrapeable set links.
-    session = MagicMock()
+    # /latest (session.navigate_to_library_locked()'s default landing page)
+    # renders its set cards as JS widgets with no plain <a href> —
+    # list_library_sets must follow the "your library" nav link (matched
+    # structurally, by href shape) to a page that actually has scrapeable
+    # set links.
     page = _mock_page()
     page.query_selector_all = AsyncMock(
         return_value=[_link("/123456/spanish-vocab/", "Spanish Vocab")]
@@ -97,7 +109,7 @@ async def test_list_library_sets_clicks_through_to_the_users_own_library() -> No
     locator = MagicMock()
     locator.first = my_library_link
     page.locator = MagicMock(return_value=locator)
-    session.library_page = AsyncMock(return_value=page)
+    session = _mock_session(page)
 
     result = await quizlet_scraper.list_library_sets(session)
 
@@ -114,7 +126,6 @@ async def test_list_library_sets_accumulates_sets_revealed_across_multiple_scrol
     # as _scroll_and_collect scrolls further — scanning once, right after
     # load, silently capped the result at whatever the first screenful
     # happened to contain regardless of the library's real size.
-    session = MagicMock()
     page = _mock_page()
     all_links = [_link(f"/{100000 + i}/set-{i}/", f"Set {i}") for i in range(5)]
     call_count = {"n": 0}
@@ -125,7 +136,7 @@ async def test_list_library_sets_accumulates_sets_revealed_across_multiple_scrol
         return all_links[:revealed]
 
     page.query_selector_all = AsyncMock(side_effect=query_selector_all)
-    session.library_page = AsyncMock(return_value=page)
+    session = _mock_session(page)
 
     result = await quizlet_scraper.list_library_sets(session)
 
@@ -141,13 +152,12 @@ async def test_list_library_sets_raises_when_never_reaching_the_users_own_librar
     # the user's own sets — which is how other people's/recommended sets
     # ended up mixed into "Библиотека Quizlet". Now it must fail loudly
     # instead of returning that wrong data.
-    session = MagicMock()
     page = _mock_page()
     page.url = "https://quizlet.com/latest"  # never navigated away from this
     page.query_selector_all = AsyncMock(
         return_value=[_link("/123456/some-other-persons-set/", "Not mine")]
     )
-    session.library_page = AsyncMock(return_value=page)
+    session = _mock_session(page)
 
     with pytest.raises(RuntimeError, match="личную библиотеку"):
         await quizlet_scraper.list_library_sets(session)
@@ -156,13 +166,68 @@ async def test_list_library_sets_raises_when_never_reaching_the_users_own_librar
 
 @pytest.mark.asyncio
 async def test_list_library_sets_raises_a_clear_error_when_nothing_found() -> None:
-    session = MagicMock()
     page = _mock_page()
     page.query_selector_all = AsyncMock(return_value=[_link("/settings/", "Settings")])
-    session.library_page = AsyncMock(return_value=page)
+    session = _mock_session(page)
 
     with pytest.raises(RuntimeError, match="изменил структуру страницы"):
         await quizlet_scraper.list_library_sets(session)
+
+
+@pytest.mark.asyncio
+async def test_list_library_sets_serializes_against_a_concurrent_scrape() -> None:
+    # Regression test for the reported bug: list_library_sets and
+    # scrape_set_terms used to only hold session.lock while acquiring the
+    # page (via the old session.library_page()), then navigate/scan it
+    # afterward with the lock already released — so a concurrent call could
+    # navigate the one shared page to its own URL mid-scan. Both operations
+    # must now fully serialize: whichever starts second waits for the first
+    # to finish before it ever touches the page.
+    page = _mock_page()
+    page.goto = AsyncMock()
+    page.query_selector_all = AsyncMock(
+        return_value=[_link("/123456/spanish-vocab/", "Spanish Vocab")]
+    )
+    session = _mock_session(page)
+    events: list[str] = []
+
+    real_navigate = session.navigate_to_library_locked
+
+    async def tracked_navigate() -> MagicMock:
+        events.append("list_library_sets:start")
+        await asyncio.sleep(0.01)  # simulate the real awaits in between
+        events.append("list_library_sets:navigated")
+        return await real_navigate()
+
+    session.navigate_to_library_locked = tracked_navigate
+
+    async def tracked_scrape_page_lookup() -> MagicMock:
+        events.append("scrape_set_terms:start")
+        return page
+
+    # scrape_set_terms calls session.navigate_to_library_locked() too — once
+    # list_library_sets's own tracked call above has already been consumed
+    # for that first invocation, subsequent calls (from scrape_set_terms)
+    # should just resolve normally; only the ordering of *when* each
+    # coroutine gets to run matters here, not what it returns.
+    async def scrape_set_terms_stub() -> None:
+        await asyncio.sleep(0)  # let list_library_sets grab the lock first
+        events.append("scrape_set_terms:acquire_attempt")
+        async with session.lock:
+            events.append("scrape_set_terms:acquired")
+
+    results = await asyncio.gather(
+        quizlet_scraper.list_library_sets(session),
+        scrape_set_terms_stub(),
+    )
+
+    # The second task's own lock acquisition only lands after the first
+    # task's whole locked operation ("navigated") has completed — proving
+    # they didn't interleave on the shared page.
+    acquired_index = events.index("scrape_set_terms:acquired")
+    navigated_index = events.index("list_library_sets:navigated")
+    assert navigated_index < acquired_index
+    assert {s.quizlet_set_id for s in results[0]} == {"123456"}
 
 
 def _term_element(text: str) -> MagicMock:
@@ -176,7 +241,6 @@ async def test_scrape_set_terms_returns_pairs_from_the_card_side_selector() -> N
     # Confirmed live (2026-08-18): this is what the set page actually
     # renders now — one element per side (term, definition), strictly
     # alternating, under a single selector rather than two parallel ones.
-    session = MagicMock()
     page = _mock_page()
     page.goto = AsyncMock()
     page.query_selector_all = AsyncMock(
@@ -187,7 +251,7 @@ async def test_scrape_set_terms_returns_pairs_from_the_card_side_selector() -> N
             _term_element("кот"),
         ]
     )
-    session.library_page = AsyncMock(return_value=page)
+    session = _mock_session(page)
 
     pairs = await quizlet_scraper.scrape_set_terms(session, "123456")
 
@@ -200,7 +264,6 @@ async def test_scrape_set_terms_accumulates_terms_revealed_across_multiple_scrol
     # the exact same fixed count as a small one, because scanning happened
     # once, before a virtualized term list had rendered anything past the
     # first screenful.
-    session = MagicMock()
     page = _mock_page()
     page.goto = AsyncMock()
     all_sides = [
@@ -214,7 +277,7 @@ async def test_scrape_set_terms_accumulates_terms_revealed_across_multiple_scrol
         return all_sides[:revealed]
 
     page.query_selector_all = AsyncMock(side_effect=query_selector_all)
-    session.library_page = AsyncMock(return_value=page)
+    session = _mock_session(page)
 
     pairs = await quizlet_scraper.scrape_set_terms(session, "123456")
 
@@ -223,7 +286,6 @@ async def test_scrape_set_terms_accumulates_terms_revealed_across_multiple_scrol
 
 @pytest.mark.asyncio
 async def test_scrape_set_terms_falls_back_to_a_selector_pair_when_card_sides_are_absent() -> None:
-    session = MagicMock()
     page = _mock_page()
     page.goto = AsyncMock()
     page.wait_for_selector = AsyncMock()
@@ -244,7 +306,7 @@ async def test_scrape_set_terms_falls_back_to_a_selector_pair_when_card_sides_ar
         return []
 
     page.query_selector_all = AsyncMock(side_effect=query_selector_all)
-    session.library_page = AsyncMock(return_value=page)
+    session = _mock_session(page)
 
     pairs = await quizlet_scraper.scrape_set_terms(session, "123456")
 
@@ -253,11 +315,10 @@ async def test_scrape_set_terms_falls_back_to_a_selector_pair_when_card_sides_ar
 
 @pytest.mark.asyncio
 async def test_scrape_set_terms_raises_a_clear_error_when_every_selector_fails() -> None:
-    session = MagicMock()
     page = _mock_page()
     page.goto = AsyncMock()
     page.wait_for_selector = AsyncMock(side_effect=RuntimeError("selector not found"))
-    session.library_page = AsyncMock(return_value=page)
+    session = _mock_session(page)
 
     with pytest.raises(RuntimeError, match="изменил структуру страницы"):
         await quizlet_scraper.scrape_set_terms(session, "123456")

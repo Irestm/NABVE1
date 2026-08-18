@@ -158,16 +158,45 @@ class QuizletSession:
             await page.goto(LOGIN_URL, wait_until="domcontentloaded")
             await page.bring_to_front()
 
+    @property
+    def lock(self) -> asyncio.Lock:
+        """Exposed for quizlet_scraper's multi-step operations
+        (list_library_sets/scrape_set_terms), which need EXCLUSIVE use of
+        the shared page across several awaits — navigate, scroll, scan — not
+        just while acquiring it. Every method on this class used to only
+        hold self._lock around page *acquisition* (_ensure_page) and then
+        navigate/read afterward with the lock already released, which let
+        two concurrent Quizlet operations (e.g. two "Импортировать" clicks
+        in quick succession, or a bulk import racing a status poll) navigate
+        the one shared page out from under each other mid-scrape — confirmed
+        live: five concurrent scrape_set_terms calls all landing on the
+        exact same URL and finding zero terms, right after a lock-scoped
+        run against the same account found all 25 sets correctly. Callers
+        that need the page across multiple awaits must do
+        `async with session.lock:` themselves and then call
+        navigate_to_library_locked()/`_ensure_page()` — never
+        library_page(), which re-acquires this same non-reentrant lock and
+        would deadlock nested inside another lock() block."""
+        return self._lock
+
+    async def navigate_to_library_locked(self) -> Any:
+        """Same steps as library_page(), for a caller that already holds
+        `self.lock` for a longer multi-step operation — see that
+        property's docstring for why this split exists."""
+        page = await self._ensure_page()
+        if "quizlet.com" not in page.url:
+            await page.goto(LIBRARY_URL, wait_until="domcontentloaded")
+        return page
+
     async def library_page(self) -> Any:
-        """Page navigated to the user's library — reused by
-        quizlet_scraper. Doesn't force a fresh navigation if already
+        """Page navigated to the user's library — for a caller that only
+        needs the page for one immediate operation of its own (nothing else
+        in this file currently calls this; kept for any single-step,
+        stand-alone caller). Doesn't force a fresh navigation if already
         somewhere on quizlet.com, so a scrape right after login doesn't
         lose the just-authenticated tab."""
         async with self._lock:
-            page = await self._ensure_page()
-            if "quizlet.com" not in page.url:
-                await page.goto(LIBRARY_URL, wait_until="domcontentloaded")
-            return page
+            return await self.navigate_to_library_locked()
 
     async def is_logged_in(self) -> bool:
         """Never launches a browser just to check — a session that isn't
@@ -175,18 +204,23 @@ class QuizletSession:
         rather than popping up a window on every status poll (same
         reasoning as BrowserProviderAdapter.is_logged_in). The persisted
         Chromium profile itself is untouched either way, so the very next
-        login/refresh/import call still picks up the real saved session."""
+        login/refresh/import call still picks up the real saved session.
+
+        Holds self._lock for the whole navigate+read, not just page
+        acquisition — see the `lock` property's docstring for why that
+        used to be a race with concurrent list_library_sets/
+        scrape_set_terms calls."""
         if self._context is None:
             return False
         async with self._lock:
             page = await self._ensure_page()
-        try:
-            if "quizlet.com" not in page.url:
-                await page.goto(LIBRARY_URL, wait_until="domcontentloaded")
-            body_text = (await page.locator("body").inner_text()).lower()
-        except Exception as exc:
-            logger.debug("Could not read Quizlet page text to check login status: %s", exc)
-            return False
+            try:
+                if "quizlet.com" not in page.url:
+                    await page.goto(LIBRARY_URL, wait_until="domcontentloaded")
+                body_text = (await page.locator("body").inner_text()).lower()
+            except Exception as exc:
+                logger.debug("Could not read Quizlet page text to check login status: %s", exc)
+                return False
         return not any(marker in body_text for marker in GUEST_MARKERS)
 
     async def close(self) -> None:
@@ -240,8 +274,12 @@ async def import_session() -> ImportResult:
     session = get_session()
     if not PROFILE_DIR.exists():
         # Bootstrap: launch once just to materialize a real profile skeleton
-        # (cookies.sqlite etc.) for the writer below to write into.
-        await session._ensure_page()
+        # (cookies.sqlite etc.) for the writer below to write into. Locked
+        # like every other _ensure_page() call — see QuizletSession.lock's
+        # docstring for why an unlocked call here could still race a
+        # concurrent list_library_sets/scrape_set_terms/is_logged_in.
+        async with session.lock:
+            await session._ensure_page()
     # Never write into cookies.sqlite while a live context has it open —
     # Firefox's own WAL writes could clobber or race with ours.
     await session.close()
@@ -251,7 +289,8 @@ async def import_session() -> ImportResult:
     # their own docstrings), so without this the very next status poll would
     # still see self._context as None and report "Гость" until something
     # else happened to open it.
-    await session._ensure_page()
+    async with session.lock:
+        await session._ensure_page()
     return result
 
 

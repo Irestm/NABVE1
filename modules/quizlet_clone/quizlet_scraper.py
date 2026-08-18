@@ -101,8 +101,25 @@ async def list_library_sets(session: QuizletSession) -> list[LibrarySetSummary]:
     """Scrapes the signed-in user's Quizlet library: title + term count for
     every set they own. Raises RuntimeError with an explicit "layout may
     have changed" message on total failure — never returns an empty list to
-    mean "something went wrong"."""
-    page = await session.library_page()
+    mean "something went wrong".
+
+    Holds session.lock for the whole operation (delegated to
+    _list_library_sets_locked) — this is several awaits (navigate, wait,
+    scroll, scan) against the one shared browser tab/page, and releasing
+    the lock in between steps (the old behavior, via session.library_page())
+    let a concurrent scrape_set_terms/list_library_sets/is_logged_in call
+    navigate that same tab away mid-operation. Confirmed live: several
+    concurrent "Импортировать" clicks each finding zero terms because they
+    were all racing on one page — see QuizletSession.lock's own docstring."""
+    async with session.lock:
+        return await _list_library_sets_locked(session)
+
+
+async def _list_library_sets_locked(session: QuizletSession) -> list[LibrarySetSummary]:
+    """The actual body of list_library_sets — split out only so the caller
+    can hold session.lock across it via a plain `async with` instead of a
+    manual acquire/release. Assumes the lock is already held."""
+    page = await session.navigate_to_library_locked()
     nav_link_found = False
 
     try:
@@ -252,8 +269,21 @@ async def scrape_set_terms(session: QuizletSession, quizlet_set_id: str) -> list
     """Extracts every (term, definition) pair from one Quizlet set's own
     page. Raises RuntimeError with an explicit "layout may have changed"
     message if none of the known selector pairs find a consistent,
-    non-empty term/definition list."""
-    page: Any = await session.library_page()
+    non-empty term/definition list.
+
+    Holds session.lock for the whole operation — see list_library_sets'
+    own docstring and QuizletSession.lock's for why: this navigates the one
+    shared page to a specific set's URL and scans it over several awaits,
+    and letting a concurrent call touch the same page mid-scrape is exactly
+    what made concurrent imports find zero terms."""
+    async with session.lock:
+        return await _scrape_set_terms_locked(session, quizlet_set_id)
+
+
+async def _scrape_set_terms_locked(session: QuizletSession, quizlet_set_id: str) -> list[tuple[str, str]]:
+    """The actual body of scrape_set_terms — see _list_library_sets_locked
+    for why this is split out. Assumes the lock is already held."""
+    page: Any = await session.navigate_to_library_locked()
     try:
         await page.goto(f"https://quizlet.com/{quizlet_set_id}", wait_until="domcontentloaded")
     except Exception as exc:
