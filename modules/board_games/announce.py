@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from core.voice import gender as gender_module
 from modules.board_games.domain import GameKind, MoveJudgement
 
 # The player always moves first (see modules.board_games.service_layer's
@@ -37,7 +38,10 @@ def check_text() -> str:
 
 
 def move_not_understood_text() -> str:
-    return "Не поняла, какой ход вы имеете в виду. Повторите, пожалуйста."
+    return gender_module.pick(
+        "Не понял, какой ход вы имеете в виду. Повторите, пожалуйста.",
+        "Не поняла, какой ход вы имеете в виду. Повторите, пожалуйста.",
+    )
 
 
 def game_stopped_text() -> str:
@@ -60,8 +64,9 @@ def mistake_text(judgement: MoveJudgement) -> str:
 
 
 def summary_intro_text(mistake_count: int) -> str:
+    found = gender_module.pick("нашёл", "нашла")
     if mistake_count == 0:
-        return "Разбор партии: ошибок не нашла, хорошая игра."
+        return f"Разбор партии: ошибок не {found}, хорошая игра."
     if mistake_count == 1:
-        return "Разбор партии: нашла один ход, который можно было сыграть сильнее."
-    return f"Разбор партии: нашла {mistake_count} ходов, которые можно было сыграть сильнее."
+        return f"Разбор партии: {found} один ход, который можно было сыграть сильнее."
+    return f"Разбор партии: {found} {mistake_count} ходов, которые можно было сыграть сильнее."

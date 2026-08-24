@@ -10,7 +10,9 @@
   gap: 6px;
   padding: 8px 10px;
   border-radius: 10px;
-  background: var(--bg-panel);
+  background: var(--bg-panel-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border);
 }
 
@@ -21,7 +23,7 @@
 }
 
 .planner__month-nav button {
-  background: var(--bg-elevated);
+  background: var(--bg-elevated-glass);
   color: var(--text);
   border: 1px solid var(--border);
   width: 22px;
@@ -84,7 +86,7 @@
   border-radius: 0;
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-  background: var(--bg-elevated);
+  background: var(--bg-elevated-glass);
   color: var(--text);
   font-size: var(--font-size-sm);
   font-weight: 500;
@@ -132,10 +134,10 @@
 
 .planner__clear-filter {
   align-self: flex-start;
-  background: var(--bg-elevated);
+  background: var(--bg-elevated-glass);
   color: var(--text-dim);
   border: 1px solid var(--border);
-  font-size: 11px;
+  font-size: 12px;
   padding: 3px 9px;
 }
 
@@ -152,7 +154,9 @@
   gap: 10px;
   padding: 7px 9px;
   border-radius: 8px;
-  background: var(--bg-panel);
+  background: var(--bg-panel-glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--border);
   border-left-width: 3px;
 }
@@ -161,10 +165,10 @@
   margin-left: 8px;
   padding: 1px 7px;
   border-radius: 999px;
-  background: var(--bg-elevated);
+  background: var(--bg-elevated-glass);
   border: 1px solid var(--border);
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   text-transform: none;
   vertical-align: middle;
@@ -236,6 +240,6 @@
 }
 
 .planner__event-time {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-faint);
 }

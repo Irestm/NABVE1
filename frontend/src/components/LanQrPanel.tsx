@@ -65,8 +65,7 @@ export function LanQrPanel(): JSX.Element | null {
   }
 
   return (
-    <div className="section lan-qr-panel">
-      <h3>Подключить телефон</h3>
+    <div className="lan-qr-panel">
       {error && <p className="status-error">{error}</p>}
       {qrDataUrl && <img src={qrDataUrl} alt={`QR-код для ${url}`} width={160} height={160} />}
       {url && <p className="lan-url">{url}</p>}

@@ -1,83 +1,27 @@
-.integrations-panel__card {
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.integrations-panel__card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.integrations-panel__card-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.integrations-panel__card-tagline {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-dim);
-  line-height: 1.4;
-}
-
-.integrations-panel__download {
+/* Everything else the old text-list layout needed now lives in
+   IntegrationTile.css (tiles + the expanding detail panel) and
+   ApiKeyField.css (api-key-field__toggle/__steps, reused as-is) — see the
+   2026-08-24 redesign. Only the "Скачать" link is specific to this panel. */
+.integration-detail__download {
   min-height: var(--control-height-sm);
-  padding: 6px 16px;
+  padding: 9px 20px;
   border-radius: 8px;
-  background: var(--accent-blue);
+  background: linear-gradient(135deg, var(--section-accent, var(--accent-blue)), var(--accent-blue));
   color: #04070c;
   font-weight: 600;
-  font-size: var(--font-size-xs);
+  font-size: 15px;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: filter var(--transition-fast);
+  transition: filter var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
-.integrations-panel__download:hover {
+.integration-detail__download:hover {
   filter: brightness(1.1);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--section-accent, var(--accent-blue)) 60%, transparent);
 }
 
-.integrations-panel__toggle {
-  min-height: var(--control-height-sm);
-  padding: 6px 12px;
-  font-size: var(--font-size-xs);
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  align-self: flex-start;
-}
-
-.integrations-panel__toggle:hover:not(:disabled) {
-  border-color: var(--accent-blue);
-  color: var(--text);
-}
-
-.integrations-panel__toggle--secondary {
-  border-style: dashed;
-  color: var(--text-faint);
-}
-
-.integrations-panel__steps {
-  margin: 4px 0 0;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-dim);
-}
-
-.integrations-panel__steps li {
-  padding-left: 2px;
+.integration-detail__download:active {
+  transform: scale(0.97);
 }

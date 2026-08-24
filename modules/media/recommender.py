@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.ai_adapter_chain import local_first_chain
+from core.ai_adapter_chain import candidate_chain
 from core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -19,14 +19,14 @@ def _build_prompt(kind: str, mood: str) -> str:
 
 async def recommend(kind: str, mood: str) -> str | None:
     """Turns a spoken mood into a concrete YouTube search query, trying
-    local_first_chain()'s adapters in order (local model, then the
+    candidate_chain()'s adapters in order (local model, then the
     ai_bridge cloud chain — same as everywhere else an AI call doesn't have
     its own reason to prefer cloud first). Returns None if every adapter
     failed or replied with nothing usable; the caller then falls back to
     the same "not understood" response used elsewhere when an AI call comes
     back empty-handed."""
     prompt = _build_prompt(kind, mood)
-    for adapter in local_first_chain():
+    for adapter in candidate_chain(prompt):
         try:
             raw = await adapter.send_prompt(prompt, fast_mode=True)
         except Exception as exc:

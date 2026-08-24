@@ -27,6 +27,14 @@ const TRAY_HIDE_PHRASE_KEY = "tray_hide_phrase";
 const TRAY_SHOW_PHRASE_KEY = "tray_show_phrase";
 const CUSTOM_COMMANDS_REQUIRE_CONFIRMATION_KEY = "custom_commands_require_confirmation";
 
+// A too-short wake phrase (e.g. 2-3 characters) matches too much background
+// noise/speech via the fuzzy matcher (core/voice/phrase_matching.py) to be a
+// usable activation word — mirrored server-side in
+// core/voice/wake_word.py.resolve_wake_phrases, which silently drops a
+// too-short stored phrase rather than trusting old data saved before this
+// check existed.
+const MIN_WAKE_PHRASE_LENGTH = 4;
+
 const ACTION_TYPE_LABELS: Record<CustomCommandActionType, string> = {
   open_link: "Открыть ссылку",
   play_audio: "Воспроизвести аудио",
@@ -166,6 +174,10 @@ export function CustomCommandsPanel(): JSX.Element {
   async function handleSaveWakePhrase(): Promise<void> {
     const trimmed = wakePhraseInput.trim();
     if (!trimmed) {
+      return;
+    }
+    if (trimmed.length < MIN_WAKE_PHRASE_LENGTH) {
+      setError(`Активационная фраза слишком короткая — минимум ${MIN_WAKE_PHRASE_LENGTH} символа, иначе она будет срабатывать на случайный шум.`);
       return;
     }
     try {

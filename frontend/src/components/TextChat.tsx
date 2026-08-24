@@ -69,8 +69,7 @@ export function TextChat(): JSX.Element {
   }
 
   return (
-    <div className="section text-chat">
-      <h3>Текстовый ввод</h3>
+    <div className="text-chat">
       {error && <p className="status-error">{error}</p>}
 
       <div className="text-chat__log" ref={logRef}>

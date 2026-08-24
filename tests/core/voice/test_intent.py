@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from core.voice.intent import Command, interpret, is_affirmative, is_resign_command, is_stop_command
+from core.voice.intent import (
+    Command,
+    interpret,
+    is_affirmative,
+    is_fitness_exit_command,
+    is_resign_command,
+    is_stop_command,
+)
 
 
 def test_bare_music_request_has_empty_query() -> None:
@@ -255,6 +262,74 @@ def test_interpret_start_board_game_checkers_phrase_carries_kind() -> None:
     assert command == Command(name="start_board_game", params={"game": "checkers"})
 
 
+# --- start_os_agent (modules/os_agent) ---------------------------------
+
+
+def test_interpret_start_os_agent_ru() -> None:
+    assert interpret("включи режим агента", "ru") == Command(name="start_os_agent", params={})
+    assert interpret("активируй режим агента", "ru") == Command(name="start_os_agent", params={})
+
+
+def test_interpret_start_os_agent_en() -> None:
+    assert interpret("turn on agent mode", "en") == Command(name="start_os_agent", params={})
+
+
+def test_interpret_open_app_launch_verb_drift_is_not_swallowed_by_os_agent() -> None:
+    # Regression guard for the fuzzy-match collision found while adding
+    # _OS_AGENT_START_PHRASES: a short "запусти X"-shaped phrase must not be
+    # part of that set (see its own comment) precisely because it would
+    # otherwise fuzzy-collide with unrelated open_app launch-verb phrasing.
+    assert interpret("запустим стим", "ru") == Command(name="open_app", params={"target": "стим"})
+
+
+# --- fitness_activate_context (modules/fitness_tracker) --------------------
+
+
+def test_interpret_fitness_activate_context_ru() -> None:
+    assert interpret("перейди в фитнес трекер", "ru") == Command(name="fitness_activate_context", params={})
+    assert interpret("открой модуль спорта", "ru") == Command(name="fitness_activate_context", params={})
+
+
+def test_interpret_fitness_activate_context_en() -> None:
+    assert interpret("open the fitness tracker", "en") == Command(name="fitness_activate_context", params={})
+
+
+def test_interpret_start_board_game_is_not_swallowed_by_fitness_activation() -> None:
+    # Regression guard for the fuzzy-match collision found while choosing
+    # _FITNESS_START_PHRASES: short "давай..."/"хочу..." openers (as the
+    # task spec's own example "давай про показатели" was worded) collide
+    # with _BOARD_GAME_PHRASES's "давай поиграем"/"хочу поиграть" — dropped
+    # from the final phrase set for exactly this reason.
+    assert interpret("давай сыграем", "ru") == Command(name="start_board_game", params={"game": ""})
+
+
+def test_interpret_start_os_agent_is_not_swallowed_by_fitness_activation() -> None:
+    # Same collision class: "активируй режим X" was considered for fitness
+    # too and dropped because it fuzzy-collides with
+    # _OS_AGENT_START_PHRASES's "активируй режим агента".
+    assert interpret("активируй режим агента", "ru") == Command(name="start_os_agent", params={})
+
+
+def test_is_fitness_exit_command_true_for_exit_phrase() -> None:
+    assert is_fitness_exit_command("выйди из фитнес трекера", "ru")
+
+
+def test_is_fitness_exit_command_true_for_bare_stop_word() -> None:
+    # "хватит про спорт" literally contains the word "хватит", so a bare
+    # "хватит" also matches via the same fuzzy window — consistent with
+    # every other in-progress mode here treating a bare stop word as an
+    # implicit exit.
+    assert is_fitness_exit_command("хватит", "ru")
+
+
+def test_is_fitness_exit_command_false_for_unrelated_speech() -> None:
+    assert not is_fitness_exit_command("какая погода сегодня", "ru")
+
+
+def test_is_fitness_exit_command_empty_text_is_false() -> None:
+    assert not is_fitness_exit_command("", "ru")
+
+
 # --- is_resign_command (mid-game "сдаюсь", distinct from is_stop_command) --
 
 
@@ -319,3 +394,174 @@ def test_shutdown_trigger_tolerates_stt_noise() -> None:
 def test_restart_trigger_tolerates_stt_noise() -> None:
     command = interpret("перезагрузи компьютир", "ru")
     assert command == Command(name="restart", params={})
+
+
+# --- YouTube (modules/youtube_control) --------------------------------------
+
+
+def test_youtube_search_and_play_carries_the_query() -> None:
+    command = interpret("включи на ютубе лоу фай бит", "ru")
+    assert command == Command(name="youtube_search_and_play", params={"query": "лоу фай бит"})
+
+
+def test_youtube_search_is_not_swallowed_by_open_media() -> None:
+    # Regression: "видео" inside the query is itself an open_media kind
+    # word, and "включи" is shared with both open_media and open_app.
+    command = interpret("включи на ютубе видео с котиками", "ru")
+    assert command == Command(name="youtube_search_and_play", params={"query": "видео с котиками"})
+
+
+def test_bare_video_open_media_still_works_after_adding_youtube_patterns() -> None:
+    assert interpret("открой видео", "ru") == Command(name="open_media", params={"kind": "video", "query": ""})
+
+
+def test_bare_pause_is_generic_media_pause() -> None:
+    assert interpret("пауза", "ru") == Command(name="media_pause", params={})
+
+
+def test_bare_resume_is_generic_media_resume() -> None:
+    assert interpret("продолжи", "ru") == Command(name="media_resume", params={})
+
+
+def test_bare_next_is_generic_media_next() -> None:
+    assert interpret("следующее", "ru") == Command(name="media_next", params={})
+
+
+def test_explicit_video_pause_targets_youtube() -> None:
+    assert interpret("пауза видео", "ru") == Command(name="youtube_pause", params={})
+
+
+def test_explicit_video_resume_targets_youtube() -> None:
+    assert interpret("продолжи видео", "ru") == Command(name="youtube_resume", params={})
+
+
+def test_explicit_video_next_targets_youtube() -> None:
+    assert interpret("следующее видео", "ru") == Command(name="youtube_next", params={})
+
+
+def test_explicit_music_pause_targets_spotify() -> None:
+    assert interpret("пауза музыки", "ru") == Command(name="spotify_pause", params={})
+
+
+def test_explicit_music_resume_targets_spotify() -> None:
+    assert interpret("продолжи музыку", "ru") == Command(name="spotify_resume", params={})
+
+
+def test_explicit_music_next_targets_spotify() -> None:
+    assert interpret("следующий трек", "ru") == Command(name="spotify_next", params={})
+
+
+def test_spotify_search_and_play_carries_the_query() -> None:
+    command = interpret("включи на спотифае лоу фай бит", "ru")
+    assert command == Command(name="spotify_search_and_play", params={"query": "лоу фай бит"})
+
+
+def test_spotify_set_volume_requires_the_word_music() -> None:
+    command = interpret("громкость музыки на 70 процентов", "ru")
+    assert command == Command(name="spotify_set_volume", params={"percent": "70"})
+
+
+def test_bare_system_volume_phrase_is_not_claimed_by_spotify() -> None:
+    assert interpret("сделай потише", "ru") is None
+
+
+def test_youtube_seek_forward_defaults_to_ten_seconds() -> None:
+    assert interpret("перемотай вперёд", "ru") == Command(name="youtube_seek", params={"offset_seconds": "10"})
+
+
+def test_youtube_seek_forward_with_an_explicit_duration() -> None:
+    command = interpret("перемотай вперёд на 30 секунд", "ru")
+    assert command == Command(name="youtube_seek", params={"offset_seconds": "30"})
+
+
+def test_youtube_seek_backward_is_negative() -> None:
+    command = interpret("перемотай назад на 15 секунд", "ru")
+    assert command == Command(name="youtube_seek", params={"offset_seconds": "-15"})
+
+
+def test_youtube_set_volume_requires_the_word_video() -> None:
+    command = interpret("громкость видео на 70 процентов", "ru")
+    assert command == Command(name="youtube_set_volume", params={"percent": "70"})
+
+
+def test_bare_system_volume_phrase_is_not_claimed_by_youtube() -> None:
+    # "громче"/"сделай потише" etc. must keep falling through to
+    # modules/hardware_adaptive/command_classifier.py (checked later in
+    # core/voice/pipeline.py) — interpret() must return None for these so
+    # they aren't permanently shadowed by the YouTube volume pattern.
+    assert interpret("сделай потише", "ru") is None
+    assert interpret("громче", "ru") is None
+
+
+def test_youtube_set_speed_is_voiced_as_a_percentage() -> None:
+    # "1.5" doesn't survive _normalize() (it strips "."), so speed is voiced
+    # as a whole-number percentage instead, same convention as volume.
+    command = interpret("скорость видео на 150 процентов", "ru")
+    assert command == Command(name="youtube_set_speed", params={"rate": "1.5"})
+
+
+def test_youtube_set_speed_at_full_speed() -> None:
+    command = interpret("скорость видео на 100", "ru")
+    assert command == Command(name="youtube_set_speed", params={"rate": "1.0"})
+
+
+# --- image generation (modules/image_generation) ----------------------------
+
+
+def test_generate_image_carries_the_prompt() -> None:
+    command = interpret("сгенерируй изображение кот в очках", "ru")
+    assert command == Command(name="generate_image", params={"prompt": "кот в очках"})
+
+
+def test_draw_alias_also_triggers_image_generation() -> None:
+    command = interpret("нарисуй космический корабль", "ru")
+    assert command == Command(name="generate_image", params={"prompt": "космический корабль"})
+
+
+def test_generate_image_english() -> None:
+    command = interpret("generate an image of a cat", "en")
+    assert command == Command(name="generate_image", params={"prompt": "a cat"})
+
+
+# --- text editing (modules/text_editing) ------------------------------------
+
+
+def test_edit_pending_message_bare() -> None:
+    assert interpret("отредактируй сообщение", "ru") == Command(
+        name="edit_pending_message", params={"raw_target": ""}
+    )
+
+
+def test_edit_pending_message_with_target() -> None:
+    assert interpret("отредактируй сообщение от Иры", "ru") == Command(
+        name="edit_pending_message", params={"raw_target": "иры"}
+    )
+
+
+def test_edit_pending_message_english() -> None:
+    assert interpret("edit message from Ira", "en") == Command(
+        name="edit_pending_message", params={"raw_target": "ira"}
+    )
+
+
+# --- code analysis (modules/code_analysis) -----------------------------------
+
+
+def test_analyze_code_trigger() -> None:
+    assert interpret("проанализируй код", "ru") == Command(name="analyze_active_editor", params={})
+
+
+def test_explain_code_trigger() -> None:
+    assert interpret("объясни код", "ru") == Command(name="analyze_active_editor", params={})
+
+
+def test_analyze_code_trigger_english() -> None:
+    assert interpret("explain the code", "en") == Command(name="analyze_active_editor", params={})
+
+
+def test_analyze_code_trigger_does_not_match_with_extra_words() -> None:
+    # Deliberately exact-match, no captured group — anything beyond the bare
+    # trigger phrase (the actual instruction) is asked as a follow-up
+    # question instead, see core/voice/pipeline.py's
+    # _resolve_analyze_active_editor.
+    assert interpret("проанализируй код на баги", "ru") is None

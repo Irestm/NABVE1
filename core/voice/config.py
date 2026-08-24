@@ -12,21 +12,24 @@ VOICES_DIR: Path = DATA_DIR / "voices"
 logger = get_logger(__name__)
 
 
+def _detect_whisper_device() -> str:
+    try:
+        import torch
+
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        logger.warning("Could not check torch.cuda.is_available(); defaulting whisper_device to cpu", exc_info=True)
+        return "cpu"
+
+
 @dataclass(frozen=True)
 class VoiceSettings:
     wake_word: str = os.environ.get("ASSISTANT_WAKE_WORD", "ассистент")
     sample_rate: int = 16000
 
-    # "tiny" was the original default for max response speed, but real-world
-    # Russian accuracy suffered too much (misheard words like "паук" ->
-    # "поук", plus more stock-phrase hallucinations on noisy segments) — see
-    # SpeechToText.transcribe's beam_size for the matching decoding-side
-    # trade-off. "base" is still fast enough on CPU for a single short
-    # command/question and meaningfully more accurate; ASSISTANT_WHISPER_MODEL
-    # can push it to "small" for still better accuracy at more CPU cost.
-    whisper_model_size: str = os.environ.get("ASSISTANT_WHISPER_MODEL", "base")
+    whisper_model_size: str = os.environ.get("ASSISTANT_WHISPER_MODEL", "small")
     whisper_wake_model_size: str = os.environ.get("ASSISTANT_WHISPER_WAKE_MODEL", "tiny")
-    whisper_device: str = os.environ.get("ASSISTANT_WHISPER_DEVICE", "cpu")
+    whisper_device: str = os.environ.get("ASSISTANT_WHISPER_DEVICE") or _detect_whisper_device()
     whisper_compute_type: str = os.environ.get("ASSISTANT_WHISPER_COMPUTE", "int8")
 
     supported_languages: tuple[str, ...] = ("ru", "uk", "en")

@@ -5,7 +5,7 @@ from typing import Callable
 
 import numpy as np
 
-from core.ai_adapter_chain import local_first_chain
+from core.ai_adapter_chain import candidate_chain
 from core.logger import get_logger
 from core.voice.ai_router import is_degenerate_answer
 from core.voice.config import voice_settings
@@ -93,13 +93,13 @@ class LocalFirstSummarizer:
     """Adapter satisfying modules.meeting_recorder.ports.SummarizerPort —
     reuses the same local-model-first / ai_bridge-fallback adapter chain
     core.voice.ai_router uses for free-text answers (core.ai_adapter_chain.
-    local_first_chain), instead of standing up a separate LLM client just
+    candidate_chain), instead of standing up a separate LLM client just
     for this module."""
 
     async def summarize(self, transcript_text: str) -> str:
         prompt = _SUMMARY_PROMPT_TEMPLATE.format(transcript=transcript_text)
         last_error: Exception | None = None
-        for adapter in local_first_chain():
+        for adapter in candidate_chain(transcript_text):
             try:
                 answer = await adapter.send_prompt(prompt, fast_mode=False)
                 if is_degenerate_answer(answer):

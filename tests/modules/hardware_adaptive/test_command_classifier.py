@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
-import numpy as np
 import pytest
 
 from modules.hardware_adaptive import command_classifier as cc
@@ -98,9 +95,7 @@ def test_match_system_command_returns_none_when_classifier_unavailable(monkeypat
 
 def test_match_system_command_matches_best_scoring_phrase(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cc, "_ensure_initialized", lambda: True)
-    monkeypatch.setattr(cc, "_model", SimpleNamespace(encode=lambda texts, **kw: np.array([[1.0, 0.0]])))
-    monkeypatch.setattr(cc, "_phrase_embeddings", np.array([[1.0, 0.0], [0.0, 1.0]]))
-    monkeypatch.setattr(cc, "_phrase_commands", ["set_volume", "mute"])
+    monkeypatch.setattr(cc._matcher, "best_match", lambda query: ("set_volume", 0.95))
 
     result = cc.match_system_command("поставь громкость 60")
 
@@ -111,27 +106,22 @@ def test_match_system_command_matches_best_scoring_phrase(monkeypatch: pytest.Mo
 
 def test_match_system_command_returns_none_below_similarity_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cc, "_ensure_initialized", lambda: True)
-    monkeypatch.setattr(cc, "_model", SimpleNamespace(encode=lambda texts, **kw: np.array([[0.5, 0.5]])))
-    monkeypatch.setattr(cc, "_phrase_embeddings", np.array([[1.0, 0.0]]))
-    monkeypatch.setattr(cc, "_phrase_commands", ["set_volume"])
+    monkeypatch.setattr(cc._matcher, "best_match", lambda query: ("set_volume", 0.5))
 
     assert cc.match_system_command("что-то совсем нерелевантное") is None
 
 
 def test_match_system_command_returns_none_when_extractor_declines(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cc, "_ensure_initialized", lambda: True)
-    monkeypatch.setattr(cc, "_model", SimpleNamespace(encode=lambda texts, **kw: np.array([[1.0, 0.0]])))
-    monkeypatch.setattr(cc, "_phrase_embeddings", np.array([[1.0, 0.0]]))
-    monkeypatch.setattr(cc, "_phrase_commands", ["switch_keyboard_layout"])
+    monkeypatch.setattr(cc._matcher, "best_match", lambda query: ("switch_keyboard_layout", 0.95))
 
     assert cc.match_system_command("смени раскладку без указания языка") is None
 
 
 def test_unavailable_reason_reflects_initialization_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _fake_ensure_initialized() -> bool:
-        cc._unavailable_reason = "sentence-transformers is not installed: boom"
-        return False
-
-    monkeypatch.setattr(cc, "_ensure_initialized", _fake_ensure_initialized)
+    monkeypatch.setattr(cc, "_ensure_initialized", lambda: False)
+    monkeypatch.setattr(
+        cc.semantic_matcher, "unavailable_reason", lambda model_name: "sentence-transformers is not installed: boom"
+    )
 
     assert cc.unavailable_reason() == "sentence-transformers is not installed: boom"

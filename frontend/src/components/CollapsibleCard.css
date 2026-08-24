@@ -1,0 +1,96 @@
+.collapsible-card {
+  border-radius: 12px;
+  background: var(--bg-panel-glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--section-accent, var(--border));
+  overflow: hidden;
+  transition: box-shadow var(--transition-med);
+}
+
+.collapsible-card:has(.collapsible-card__header--open) {
+  box-shadow: 0 0 22px color-mix(in srgb, var(--section-accent) 18%, transparent);
+}
+
+.collapsible-card__header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: var(--text);
+  font-family: var(--font-heading);
+  font-weight: 500;
+  font-size: var(--font-size-md);
+  cursor: pointer;
+  transition: background var(--transition-fast), filter var(--transition-fast), transform var(--transition-fast);
+}
+
+.collapsible-card__header:hover {
+  background: color-mix(in srgb, var(--section-accent) 10%, transparent);
+  filter: none;
+  box-shadow: none;
+}
+
+.collapsible-card__header:active {
+  transform: scale(0.99);
+}
+
+.collapsible-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--section-accent) 20%, transparent);
+  color: var(--section-accent);
+  flex-shrink: 0;
+}
+
+.collapsible-card__title {
+  flex: 1;
+  text-align: left;
+}
+
+.collapsible-card__chevron {
+  color: var(--section-accent);
+  font-size: 18px;
+  line-height: 1;
+  transition: transform var(--transition-med);
+}
+
+.collapsible-card__header--open .collapsible-card__chevron {
+  transform: rotate(90deg);
+}
+
+.collapsible-card__body-wrapper {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--transition-med);
+}
+
+.collapsible-card__body-wrapper--open {
+  grid-template-rows: 1fr;
+}
+
+.collapsible-card__body {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Replaces the display:flex/flex-direction:column/gap that .section used to
+   give every wrapped panel before the 2026-08-24 redesign stripped their
+   own .section wrapper — one rule here instead of repeating it on each of
+   TextChat/TextEditingPanel/CodeAnalysisPanel/ImageGenerationPanel/
+   BoardGamesPanel/LanQrPanel/PlannerView's own root element. */
+.collapsible-card__body > * {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 14px 14px;
+}

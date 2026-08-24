@@ -1,7 +1,7 @@
 .command-panel {
   padding: 12px 14px;
   border-radius: 12px;
-  background: var(--bg-panel);
+  background: var(--bg-panel-glass);
   border: 1px solid var(--border);
 }
 
@@ -20,19 +20,35 @@
   gap: 6px;
   padding: 14px 8px;
   border-radius: 10px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
+  /* Colored BORDER carries the per-button accent, not the fill — the user
+     explicitly asked for the outline back after a filled-background
+     iteration (2026-08-24 follow-up). Background stays the neutral glass
+     surface every other card uses. */
+  background: var(--bg-elevated-glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 2px solid var(--item-accent, var(--accent-blue));
+  color: var(--text);
   cursor: pointer;
   text-align: center;
   font-size: 12px;
-  transition: border-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+  font-weight: 500;
+  transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+/* Border carries the per-button accent color; the icon itself stays a
+   uniform white regardless of accent (explicit follow-up request — colored
+   icons on 17 different hues read as visually noisy next to each other). */
+.command-panel__button svg {
+  color: #ffffff;
 }
 
 .command-panel__button:hover:not(:disabled) {
-  border-color: var(--accent-blue);
+  background: color-mix(in srgb, var(--item-accent, var(--accent-blue)) 18%, var(--bg-elevated-glass));
   color: var(--text);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--accent-blue) 35%, transparent);
+  transform: translateY(-1px);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--item-accent, var(--accent-blue)) 45%, transparent);
 }
 
 .command-panel__button:disabled {

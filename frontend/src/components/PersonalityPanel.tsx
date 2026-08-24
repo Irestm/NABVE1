@@ -1,16 +1,17 @@
-import { useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import { getProfileFact, listCommunicationStyles, setProfileFact } from "../api/client";
 import type { CommunicationStyle } from "../types";
 import "./PersonalityPanel.css";
 
 // Matches modules/user_profile/domain.py's COMMUNICATION_STYLE_KEY/
 // BREATH_EFFECT_KEY/DELAY_EFFECT_ENABLED_KEY/DELAY_SECONDS_KEY/
-// VOICE_FX_MODE_KEY/ASSISTANT_VOLUME_KEY/CONFIRMATION_PHRASE_ENABLED_KEY
-// string values exactly - these are
-// stable, already-established fact keys, not something this panel invents.
-// (assistant_name lives in components/SettingsPanel.tsx's "Профиль" tab;
-// стоп-слово/активационная фраза/фразы трея moved to
+// VOICE_FX_MODE_KEY/CONFIRMATION_PHRASE_ENABLED_KEY string values exactly -
+// these are stable, already-established fact keys, not something this panel
+// invents. (assistant_name lives in components/SettingsPanel.tsx's
+// "Профиль" tab; ASSISTANT_VOLUME_KEY moved to components/
+// VoiceSettingsPanel.tsx as of the 2026-08-24 redesign — "громкость" now
+// groups with "голос" in Settings, not with the personality-trait fields
+// this panel owns; стоп-слово/активационная фраза/фразы трея moved to
 // components/CustomCommandsPanel.tsx's "Системные команды" section, so
 // they're no longer read/written here.)
 const COMMUNICATION_STYLE_KEY = "communication_style";
@@ -19,9 +20,7 @@ const DELAY_EFFECT_ENABLED_KEY = "delay_effect_enabled";
 const DELAY_SECONDS_KEY = "delay_seconds";
 const VOICE_FX_MODE_KEY = "voice_fx_mode";
 const CONFIRMATION_PHRASE_ENABLED_KEY = "confirmation_phrase_enabled";
-const ASSISTANT_VOLUME_KEY = "assistant_volume";
 const DEFAULT_DELAY_SECONDS = "0.3";
-const DEFAULT_ASSISTANT_VOLUME = 100;
 type VoiceFxMode = "none" | "tunnel" | "robotic";
 const DEFAULT_STYLE_KEY = "polite";
 // Matches modules/user_profile/communication_styles.py's MAX_SELECTED_STYLES.
@@ -66,9 +65,6 @@ export function PersonalityPanel(): JSX.Element {
   const [confirmationPhrase, setConfirmationPhrase] = useState(false);
   const [savingConfirmationPhrase, setSavingConfirmationPhrase] = useState(false);
 
-  const [assistantVolume, setAssistantVolume] = useState(DEFAULT_ASSISTANT_VOLUME);
-  const [savingAssistantVolume, setSavingAssistantVolume] = useState(false);
-
   const [error, setError] = useState<string>("");
   const [loaded, setLoaded] = useState(false);
 
@@ -90,7 +86,7 @@ export function PersonalityPanel(): JSX.Element {
     async function load(): Promise<void> {
       attempt += 1;
       try {
-        const [availableStyles, style, breath, delayOn, delaySecondsFact, fxMode, volume, confirmPhrase] =
+        const [availableStyles, style, breath, delayOn, delaySecondsFact, fxMode, confirmPhrase] =
           await Promise.all([
             listCommunicationStyles(),
             getProfileFact(COMMUNICATION_STYLE_KEY),
@@ -98,7 +94,6 @@ export function PersonalityPanel(): JSX.Element {
             getProfileFact(DELAY_EFFECT_ENABLED_KEY),
             getProfileFact(DELAY_SECONDS_KEY),
             getProfileFact(VOICE_FX_MODE_KEY),
-            getProfileFact(ASSISTANT_VOLUME_KEY),
             getProfileFact(CONFIRMATION_PHRASE_ENABLED_KEY),
           ]);
         if (cancelled) {
@@ -111,8 +106,6 @@ export function PersonalityPanel(): JSX.Element {
         setDelaySeconds(delaySecondsFact ?? DEFAULT_DELAY_SECONDS);
         setVoiceFxMode(fxMode === "tunnel" || fxMode === "robotic" ? fxMode : "none");
         setConfirmationPhrase(confirmPhrase === "1");
-        const parsedVolume = volume ? Number(volume) : DEFAULT_ASSISTANT_VOLUME;
-        setAssistantVolume(Number.isFinite(parsedVolume) ? parsedVolume : DEFAULT_ASSISTANT_VOLUME);
         setLoaded(true);
       } catch (error) {
         if (cancelled) {
@@ -225,27 +218,8 @@ export function PersonalityPanel(): JSX.Element {
     }
   }
 
-  const volumeSaveTimeout = useRef<number | null>(null);
-
-  function handleAssistantVolumeChange(value: number): void {
-    setAssistantVolume(value);
-    if (volumeSaveTimeout.current !== null) {
-      window.clearTimeout(volumeSaveTimeout.current);
-    }
-    volumeSaveTimeout.current = window.setTimeout(() => {
-      setSavingAssistantVolume(true);
-      setProfileFact(ASSISTANT_VOLUME_KEY, String(value))
-        .catch((error) => {
-          console.error("Failed to save the assistant volume:", error);
-          setError("Не удалось сохранить громкость.");
-        })
-        .finally(() => setSavingAssistantVolume(false));
-    }, 300);
-  }
-
   return (
-    <div className="section personality-panel">
-      <h3>Личность ассистента</h3>
+    <div className="personality-panel">
       {error && <p className="status-error">{error}</p>}
       {!loaded && !error && <p className="status-detail">Загрузка…</p>}
 
@@ -351,22 +325,6 @@ export function PersonalityPanel(): JSX.Element {
             />
             Роботизированный голос
           </label>
-        </div>
-      </div>
-
-      <div className="personality-panel__field">
-        <span className="personality-panel__label">Громкость голоса NABVE</span>
-        <div className="row">
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={assistantVolume}
-            disabled={savingAssistantVolume}
-            onChange={(event) => handleAssistantVolumeChange(Number(event.target.value))}
-            style={{ "--range-fill": `${assistantVolume}%` } as CSSProperties}
-          />
-          <span className="personality-panel__unit">{assistantVolume}%</span>
         </div>
       </div>
     </div>

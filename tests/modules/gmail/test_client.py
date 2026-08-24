@@ -41,11 +41,15 @@ class _FakeExecutable:
 
 
 class _FakeMessages:
-    def __init__(self, details_by_id: dict[str, dict]) -> None:
+    def __init__(self, details_by_id: dict[str, dict], list_response: dict | None = None) -> None:
         self._details_by_id = details_by_id
+        self._list_response = list_response
 
-    def get(self, userId, id, format, metadataHeaders):
+    def get(self, userId, id, format, metadataHeaders=None):
         return _FakeExecutable(self._details_by_id[id])
+
+    def list(self, userId, q, maxResults):
+        return _FakeExecutable(self._list_response)
 
 
 class _FakeHistory:
@@ -239,3 +243,83 @@ def test_load_stored_credentials_complete_blob_succeeds(monkeypatch) -> None:
 
     assert creds.refresh_token == "refresh"
     assert creds.client_id == "id"
+
+
+def test_search_messages_returns_expected_shape() -> None:
+    list_response = {"messages": [{"id": "m1"}, {"id": "m2"}]}
+    details = {
+        "m1": {
+            "payload": {"headers": [{"name": "From", "value": "Ira <ira@example.com>"}, {"name": "Subject", "value": "Hi"}]},
+            "snippet": "hello there",
+        },
+        "m2": {
+            "payload": {"headers": [{"name": "From", "value": "bob@example.com"}, {"name": "Subject", "value": ""}]},
+            "snippet": "yo",
+        },
+    }
+    service = _FakeService(_FakeHistory(), _FakeMessages(details, list_response))
+
+    messages = gmail_client.search_messages(service, "from:ira", max_results=5)
+
+    assert messages == [
+        {"id": "m1", "from_email": "ira@example.com", "from_name": "Ira", "subject": "Hi", "snippet": "hello there"},
+        {"id": "m2", "from_email": "bob@example.com", "from_name": "bob@example.com", "subject": "", "snippet": "yo"},
+    ]
+
+
+def test_search_messages_no_results_returns_empty_list() -> None:
+    service = _FakeService(_FakeHistory(), _FakeMessages({}, {}))
+
+    assert gmail_client.search_messages(service, "from:nobody", max_results=5) == []
+
+
+def test_extract_plain_text_top_level_body() -> None:
+    import base64
+
+    encoded = base64.urlsafe_b64encode(b"hello world").decode().rstrip("=")
+    payload = {"mimeType": "text/plain", "body": {"data": encoded}}
+
+    assert gmail_client._extract_plain_text(payload) == "hello world"
+
+
+def test_extract_plain_text_recurses_into_nested_multipart() -> None:
+    import base64
+
+    encoded = base64.urlsafe_b64encode(b"nested body text").decode().rstrip("=")
+    payload = {
+        "mimeType": "multipart/mixed",
+        "parts": [
+            {
+                "mimeType": "multipart/alternative",
+                "parts": [
+                    {"mimeType": "text/html", "body": {"data": "aWdub3JlZA=="}},
+                    {"mimeType": "text/plain", "body": {"data": encoded}},
+                ],
+            }
+        ],
+    }
+
+    assert gmail_client._extract_plain_text(payload) == "nested body text"
+
+
+def test_extract_plain_text_returns_empty_when_no_plain_part() -> None:
+    payload = {"mimeType": "text/html", "body": {"data": "aWdub3JlZA=="}}
+
+    assert gmail_client._extract_plain_text(payload) == ""
+
+
+def test_get_message_body_falls_back_to_snippet_when_no_plain_text() -> None:
+    detail = {"payload": {"mimeType": "text/html", "body": {"data": "aWdub3JlZA=="}}, "snippet": "fallback snippet"}
+    service = _FakeService(_FakeHistory(), _FakeMessages({"m1": detail}))
+
+    assert gmail_client.get_message_body(service, "m1") == "fallback snippet"
+
+
+def test_get_message_body_returns_decoded_plain_text() -> None:
+    import base64
+
+    encoded = base64.urlsafe_b64encode(b"the actual body").decode().rstrip("=")
+    detail = {"payload": {"mimeType": "text/plain", "body": {"data": encoded}}, "snippet": "short snippet"}
+    service = _FakeService(_FakeHistory(), _FakeMessages({"m1": detail}))
+
+    assert gmail_client.get_message_body(service, "m1") == "the actual body"

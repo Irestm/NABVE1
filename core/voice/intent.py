@@ -147,6 +147,173 @@ _MESSAGING_WATCH_PATTERNS: dict[str, re.Pattern[str]] = {
     "en": re.compile(r"^(?:watch|track)\s+(.+)$"),
 }
 
+# The captured group is a target name/empty string, same shape as
+# _MESSAGING_REPLY_PATTERNS — core/voice/pipeline.py's
+# _resolve_edit_pending_message resolves which pending message it means
+# (reusing _resolve_pending_message_target) and always asks a follow-up
+# "какую инструкцию дать?" itself, so there's no separate captured-
+# instruction group here to try to split out.
+_TEXT_EDIT_MESSAGE_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(r"^отредактируй сообщение\s*(?:от\s+)?(.*)$"),
+    "uk": re.compile(r"^відредагуй повідомлення\s*(?:від\s+)?(.*)$"),
+    "en": re.compile(r"^edit\s+(?:the\s+)?message\s*(?:from\s+)?(.*)$"),
+}
+
+# No captured group — core/voice/pipeline.py's _resolve_analyze_active_editor
+# always asks a follow-up "что именно сделать с кодом?" itself, same
+# reasoning as _resolve_edit_pending_message above (no rule-based way to
+# guess an arbitrary analysis instruction from the bare trigger phrase).
+_CODE_ANALYSIS_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(r"^(?:проанализируй код|объясни код|проверь код)$"),
+    "uk": re.compile(r"^(?:проаналізуй код|поясни код)$"),
+    "en": re.compile(r"^(?:analyze|explain|review)\s+(?:the\s+)?code$"),
+}
+
+# Checked before _MEDIA_VERB_PATTERNS/_OPEN_APP_PATTERNS in interpret():
+# "включи"/"открой"/"запусти"/"поставь" are also open_media/open_app trigger
+# verbs, and "видео" is itself an open_media kind word ("включи видео"
+# alone means "play some local video"), so "включи на ютубе X" would
+# otherwise get swallowed by the open_media branch (kind="video", losing
+# "на ютубе" and the real query) or misread by open_app as an app literally
+# named "на ютубе x". Volume/speed deliberately require an explicit
+# "видео"/"ютуб" word rather than a bare "громче"/"тише"/"поставь громкость
+# N" — those already mean system volume (see
+# modules/hardware_adaptive/command_classifier.py, checked later in
+# core/voice/pipeline.py's chain, after interpret()), so an unqualified
+# match here would permanently shadow system volume control for every
+# utterance, video open or not.
+_YOUTUBE_SEARCH_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(
+        r"^(?:включи|включим|найди|найду|найдём|открой|открою|откроем|запусти|запустим)\s+"
+        r"(?:на\s+ютубе|в\s+ютубе|на\s+youtube)\s+(.+)$"
+    ),
+    "uk": re.compile(r"^(?:увімкни|знайди|відкрий|запусти)\s+(?:на\s+ютубі|на\s+youtube)\s+(.+)$"),
+    "en": re.compile(r"^(?:play|find|open|search)\s+(.+?)\s+on\s+youtube$"),
+}
+
+# A bare "пауза"/"продолжи"/"следующее" doesn't say WHICH service it means
+# — modules.media_control resolves that at dispatch time by checking what's
+# actually playing/loaded right now (YouTube's open tab, Spotify's player
+# state). An utterance that ALSO contains a target word ("пауза видео"/
+# "пауза музыки") skips that guesswork and goes straight to the named
+# service instead — see _VIDEO_QUALIFIER_WORDS/_MUSIC_QUALIFIER_WORDS below.
+#
+# Deliberately two separate checks (verb, then a plain substring scan for a
+# qualifier word) rather than one combined multi-word phrase set matched via
+# fuzzy_matches_any — that was the first attempt here, and it doesn't work:
+# fuzzy_contains_phrase slides a window sized to the SHORTER side, so a
+# short real utterance like "поставь музыку" (2 words) matches as a
+# near-identical *chunk* of a longer stored phrase like "поставь музыку на
+# паузу" (4 words) even though it means something completely different
+# (that's modules.calendar's open-media "поставь музыку", not a pause). A
+# plain `word in normalized` scan for the qualifier has no such false
+# positive, since it only ever looks for a literal, distinct word.
+_PAUSE_VERB_PHRASES: dict[str, set[str]] = {
+    "ru": {"пауза", "поставь на паузу"},
+    "uk": {"пауза", "постав на паузу"},
+    "en": {"pause"},
+}
+
+_RESUME_VERB_PHRASES: dict[str, set[str]] = {
+    "ru": {"продолжи", "играй", "сними с паузы"},
+    "uk": {"продовжуй", "грай"},
+    "en": {"resume", "continue"},
+}
+
+_NEXT_VERB_PHRASES: dict[str, set[str]] = {
+    "ru": {"следующее"},
+    "uk": {"наступне"},
+    "en": {"next"},
+}
+
+_VIDEO_QUALIFIER_WORDS: dict[str, set[str]] = {
+    "ru": {"видео", "ютуб", "youtube"},
+    "uk": {"відео", "ютуб", "youtube"},
+    "en": {"video", "youtube"},
+}
+
+# Word stems, not full words — a plain substring check, so "музык" alone
+# covers "музыку"/"музыки"/"музыка"/"музыкой" etc. without enumerating every
+# inflected form. None of these stems collide with an unrelated Russian/
+# Ukrainian word, so the shorter form is safe here (contrast with
+# _VIDEO_QUALIFIER_WORDS' "видео", which doesn't decline at all as a
+# borrowed word and so didn't need this).
+_MUSIC_QUALIFIER_WORDS: dict[str, set[str]] = {
+    "ru": {"музык", "трек", "песн", "спотифа", "spotify"},
+    "uk": {"музик", "трек", "пісн", "спотифа", "spotify"},
+    "en": {"music", "track", "song", "spotify"},
+}
+
+
+def _contains_any_word(normalized: str, words: set[str]) -> bool:
+    return any(word in normalized for word in words)
+
+# The captured group is optional — a bare "перемотай вперёд" with no
+# explicit duration falls back to _YOUTUBE_DEFAULT_SEEK_SECONDS.
+_YOUTUBE_SEEK_FORWARD_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(r"^перемотай(?:\s+видео)?\s+вперёд(?:\s+на\s+(\d+)\s*секунд\w*)?$"),
+    "uk": re.compile(r"^перемотай(?:\s+відео)?\s+вперед(?:\s+на\s+(\d+)\s*секунд\w*)?$"),
+    "en": re.compile(r"^(?:seek|skip)(?:\s+the\s+video)?\s+forward(?:\s+(\d+)\s*seconds?)?$"),
+}
+
+_YOUTUBE_SEEK_BACKWARD_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(r"^перемотай(?:\s+видео)?\s+назад(?:\s+на\s+(\d+)\s*секунд\w*)?$"),
+    "uk": re.compile(r"^перемотай(?:\s+відео)?\s+назад(?:\s+на\s+(\d+)\s*секунд\w*)?$"),
+    "en": re.compile(r"^(?:seek|skip)(?:\s+the\s+video)?\s+back(?:ward)?(?:\s+(\d+)\s*seconds?)?$"),
+}
+
+_YOUTUBE_DEFAULT_SEEK_SECONDS = 10
+
+_YOUTUBE_VOLUME_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(r"^(?:поставь\s+)?громкост[ьи]\s+видео(?:\s+на)?\s+(\d+)(?:\s*процент\w*)?$"),
+    "uk": re.compile(r"^гучність\s+відео(?:\s+на)?\s+(\d+)(?:\s*відсотк\w*)?$"),
+    "en": re.compile(r"^(?:set\s+)?(?:the\s+)?video\s+volume(?:\s+to)?\s+(\d+)(?:\s*percent)?$"),
+}
+
+# _normalize() strips all punctuation, including "."/"," — a literal
+# decimal ("1.5") never survives it, so speed is voiced/parsed as a whole-
+# number percentage instead ("скорость видео 150 процентов" -> rate 1.5),
+# same units convention _YOUTUBE_VOLUME_PATTERNS already uses.
+_YOUTUBE_SPEED_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(r"^(?:поставь\s+)?скорость\s+видео(?:\s+на)?\s+(\d+)(?:\s*процент\w*)?$"),
+    "uk": re.compile(r"^швидкість\s+відео(?:\s+на)?\s+(\d+)(?:\s*відсотк\w*)?$"),
+    "en": re.compile(r"^(?:set\s+)?(?:the\s+)?video\s+speed(?:\s+to)?\s+(\d+)(?:\s*percent)?$"),
+}
+
+# Same reasoning as _YOUTUBE_SEARCH_PATTERNS above: checked before
+# _MEDIA_VERB_PATTERNS/_OPEN_APP_PATTERNS so "включи на спотифае X" isn't
+# swallowed by open_media/open_app first. "на спотифае", not "в спотифае" —
+# the latter was tried first and dropped: "включи в спотифае ..." fuzzy-
+# matched _SHUTDOWN_PHRASES' "выключи пк" closely enough on the "включи в"
+# chunk (short strings, high accidental SequenceMatcher ratio) to return
+# `shutdown` instead of ever reaching this pattern — measured directly, not
+# assumed. "на спотифае" doesn't share that risk.
+_SPOTIFY_SEARCH_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(
+        r"^(?:включи|включим|найди|найду|найдём|открой|открою|откроем|запусти|запустим)\s+"
+        r"(?:на\s+спотифае|на\s+spotify)\s+(.+)$"
+    ),
+    "uk": re.compile(r"^(?:увімкни|знайди|відкрий|запусти)\s+(?:на\s+спотіфаї|на\s+spotify)\s+(.+)$"),
+    "en": re.compile(r"^(?:play|find|open|search)\s+(.+?)\s+on\s+spotify$"),
+}
+
+# Same "explicit word required" reasoning as _YOUTUBE_VOLUME_PATTERNS —
+# bare "громче"/"тише" must keep meaning system volume.
+_SPOTIFY_VOLUME_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(r"^(?:поставь\s+)?громкост[ьи]\s+музык(?:и|у)(?:\s+на)?\s+(\d+)(?:\s*процент\w*)?$"),
+    "uk": re.compile(r"^гучність\s+музики(?:\s+на)?\s+(\d+)(?:\s*відсотк\w*)?$"),
+    "en": re.compile(r"^(?:set\s+)?(?:the\s+)?music\s+volume(?:\s+to)?\s+(\d+)(?:\s*percent)?$"),
+}
+
+# Checked before _OPEN_APP_PATTERNS for the same reason as _YOUTUBE_SEARCH_
+# PATTERNS above — "нарисуй"/"сгенерируй" aren't claimed by anything else,
+# but placed alongside the other media-search patterns for locality.
+_IMAGE_GENERATION_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(r"^(?:сгенерируй|сгенерируем|нарисуй|нарисуем)(?:\s+изображение|\s+картинку)?\s+(.+)$"),
+    "uk": re.compile(r"^(?:згенеруй|намалюй)(?:\s+зображення|\s+картинку)?\s+(.+)$"),
+    "en": re.compile(r"^(?:generate|draw)\s+(?:an?\s+)?(?:image|picture)\s+(?:of\s+)?(.+)$"),
+}
+
 _MEDIA_KIND_BY_WORD: dict[str, str] = {
     "музыку": "music", "песню": "music", "музику": "music", "пісню": "music",
     "music": "music", "a song": "music",
@@ -299,6 +466,78 @@ def is_resign_command(text: str, language: str) -> bool:
     return fuzzy_matches_any(normalized, RESIGN_PHRASES.get(language, set()))
 
 
+# Trigger phrases for modules.os_agent — starts agent mode itself only; the
+# task description that follows is free text, matched directly in
+# core/voice/pipeline.py::_resolve_active_os_agent_utterance (checked before
+# interpret() even runs), same shape as a chess/checkers move never needing
+# its own intent.py pattern once _BOARD_GAME_PHRASES has started the game.
+_OS_AGENT_START_PHRASES: dict[str, set[str]] = {
+    # Deliberately no bare "запусти агента"/"запусти режим агента" — the short
+    # "запусти X" shape already collides (via fuzzy_contains_phrase's
+    # character-level ratio) with open_app's own launch-verb-drift tolerance
+    # ("запустим стим"), same false-positive class documented for
+    # "поставь музыку"/"поставь музыку на паузу" elsewhere.
+    "ru": {"включи режим агента", "активируй режим агента"},
+    "uk": {"увімкни режим агента", "активуй режим агента"},
+    "en": {
+        "turn on agent mode", "enable agent mode", "start agent mode", "activate agent mode",
+    },
+}
+
+# Trigger phrases for modules.fitness_tracker's voice context (see
+# core/voice/pipeline.py::_resolve_active_fitness_context_utterance) — same
+# shape as _OS_AGENT_START_PHRASES: only the *entry* into the context is
+# recognized here via interpret(); everything said once the context is
+# active is handled by modules.fitness_tracker.intent_parser instead, not by
+# a fixed phrase list. Deliberately no short "давай..."/"хочу..." openers
+# (as the task spec's own examples suggested, e.g. "давай про показатели")
+# — those collide with _BOARD_GAME_PHRASES's "давай поиграем"/"хочу
+# поиграть" via fuzzy_contains_phrase's character-level ratio, and no
+# "активируй режим X" shape either, which collides with
+# _OS_AGENT_START_PHRASES's "активируй режим агента" the same way. Checked
+# empirically against every other fuzzy-matched phrase catalog in this file
+# before being finalized — see the fitness_tracker plan's note on this bug
+# class.
+_FITNESS_START_PHRASES: dict[str, set[str]] = {
+    "ru": {
+        "перейди в фитнес трекер", "открой фитнес трекер",
+        "включи режим отслеживания фитнеса", "открой модуль спорта",
+        "запусти дневник тренировок",
+    },
+    "uk": {
+        "перейди в фітнес трекер", "відкрий фітнес трекер",
+        "увімкни режим відстеження фітнесу",
+    },
+    "en": {
+        "open the fitness tracker", "switch to fitness tracking mode",
+        "activate fitness tracking mode",
+    },
+}
+
+# Distinct from STOP_PHRASES/is_stop_command, same reasoning as
+# RESIGN_PHRASES above: exiting the fitness context is a deliberate,
+# fitness-specific action, not the general "stop talking" barge-in phrase —
+# checked only while modules.fitness_tracker.context_state.is_active() (see
+# core/voice/pipeline.py). A bare "хватит"/"досить"/"stop" still exits the
+# context too (it's a real word of these phrases, matched via the same
+# fuzzy window), which mirrors every other "in-progress mode" here already
+# treating a bare stop word as an implicit exit.
+_FITNESS_EXIT_PHRASES: dict[str, set[str]] = {
+    "ru": {
+        "выйди из фитнес трекера", "закончи с отслеживанием фитнеса",
+        "вернись в обычный режим работы", "хватит про фитнес", "хватит про спорт",
+    },
+    "uk": {"вийди з фітнес трекера", "досить про фітнес"},
+    "en": {"exit fitness tracker", "stop tracking fitness", "leave fitness mode"},
+}
+
+
+def is_fitness_exit_command(text: str, language: str) -> bool:
+    normalized = _normalize(text)
+    if not normalized:
+        return False
+    return fuzzy_matches_any(normalized, _FITNESS_EXIT_PHRASES.get(language, set()))
+
 # Trigger words for modules.figma_control (see that module's
 # command_parser.py for the actual action/params parsing — this only
 # decides whether an utterance should be routed there at all).
@@ -358,6 +597,90 @@ def interpret(text: str, language: str) -> Command | None:
                 break
         return Command(name="start_board_game", params={"game": kind})
 
+    if fuzzy_matches_any(normalized, _OS_AGENT_START_PHRASES.get(language, set())):
+        return Command(name="start_os_agent", params={})
+
+    if fuzzy_matches_any(normalized, _FITNESS_START_PHRASES.get(language, set())):
+        return Command(name="fitness_activate_context", params={})
+
+    youtube_search_pattern = _YOUTUBE_SEARCH_PATTERNS.get(language)
+    if youtube_search_pattern:
+        youtube_search_match = youtube_search_pattern.match(normalized)
+        if youtube_search_match:
+            return Command(
+                name="youtube_search_and_play", params={"query": youtube_search_match.group(1).strip()}
+            )
+
+    spotify_search_pattern = _SPOTIFY_SEARCH_PATTERNS.get(language)
+    if spotify_search_pattern:
+        spotify_search_match = spotify_search_pattern.match(normalized)
+        if spotify_search_match:
+            return Command(
+                name="spotify_search_and_play", params={"query": spotify_search_match.group(1).strip()}
+            )
+
+    # Verb first, then (only on a match) a plain word scan decides the
+    # target — see the block comment above _PAUSE_VERB_PHRASES for why this
+    # is two separate checks rather than one combined fuzzy phrase set.
+    if fuzzy_matches_any(normalized, _PAUSE_VERB_PHRASES.get(language, set())):
+        if _contains_any_word(normalized, _VIDEO_QUALIFIER_WORDS.get(language, set())):
+            return Command(name="youtube_pause", params={})
+        if _contains_any_word(normalized, _MUSIC_QUALIFIER_WORDS.get(language, set())):
+            return Command(name="spotify_pause", params={})
+        return Command(name="media_pause", params={})
+
+    if fuzzy_matches_any(normalized, _RESUME_VERB_PHRASES.get(language, set())):
+        if _contains_any_word(normalized, _VIDEO_QUALIFIER_WORDS.get(language, set())):
+            return Command(name="youtube_resume", params={})
+        if _contains_any_word(normalized, _MUSIC_QUALIFIER_WORDS.get(language, set())):
+            return Command(name="spotify_resume", params={})
+        return Command(name="media_resume", params={})
+
+    if fuzzy_matches_any(normalized, _NEXT_VERB_PHRASES.get(language, set())):
+        if _contains_any_word(normalized, _VIDEO_QUALIFIER_WORDS.get(language, set())):
+            return Command(name="youtube_next", params={})
+        if _contains_any_word(normalized, _MUSIC_QUALIFIER_WORDS.get(language, set())):
+            return Command(name="spotify_next", params={})
+        return Command(name="media_next", params={})
+
+    spotify_volume_pattern = _SPOTIFY_VOLUME_PATTERNS.get(language)
+    if spotify_volume_pattern:
+        spotify_volume_match = spotify_volume_pattern.match(normalized)
+        if spotify_volume_match:
+            return Command(name="spotify_set_volume", params={"percent": spotify_volume_match.group(1)})
+
+    image_generation_pattern = _IMAGE_GENERATION_PATTERNS.get(language)
+    if image_generation_pattern:
+        image_generation_match = image_generation_pattern.match(normalized)
+        if image_generation_match:
+            return Command(name="generate_image", params={"prompt": image_generation_match.group(1).strip()})
+
+    seek_forward_pattern = _YOUTUBE_SEEK_FORWARD_PATTERNS.get(language)
+    if seek_forward_pattern:
+        seek_forward_match = seek_forward_pattern.match(normalized)
+        if seek_forward_match:
+            seconds = int(seek_forward_match.group(1)) if seek_forward_match.group(1) else _YOUTUBE_DEFAULT_SEEK_SECONDS
+            return Command(name="youtube_seek", params={"offset_seconds": str(seconds)})
+
+    seek_backward_pattern = _YOUTUBE_SEEK_BACKWARD_PATTERNS.get(language)
+    if seek_backward_pattern:
+        seek_backward_match = seek_backward_pattern.match(normalized)
+        if seek_backward_match:
+            seconds = int(seek_backward_match.group(1)) if seek_backward_match.group(1) else _YOUTUBE_DEFAULT_SEEK_SECONDS
+            return Command(name="youtube_seek", params={"offset_seconds": str(-seconds)})
+
+    volume_pattern = _YOUTUBE_VOLUME_PATTERNS.get(language)
+    if volume_pattern:
+        volume_match = volume_pattern.match(normalized)
+        if volume_match:
+            return Command(name="youtube_set_volume", params={"percent": volume_match.group(1)})
+
+    speed_pattern = _YOUTUBE_SPEED_PATTERNS.get(language)
+    if speed_pattern:
+        speed_match = speed_pattern.match(normalized)
+        if speed_match:
+            return Command(name="youtube_set_speed", params={"rate": str(int(speed_match.group(1)) / 100)})
+
     schedule_pattern = _SCHEDULE_PATTERNS.get(language)
     if schedule_pattern:
         schedule_match = schedule_pattern.match(normalized)
@@ -407,6 +730,18 @@ def interpret(text: str, language: str) -> Command | None:
             return Command(
                 name="messaging_watch_contact", params={"raw_text": watch_match.group(1).strip()}
             )
+
+    text_edit_pattern = _TEXT_EDIT_MESSAGE_PATTERNS.get(language)
+    if text_edit_pattern:
+        text_edit_match = text_edit_pattern.match(normalized)
+        if text_edit_match:
+            return Command(
+                name="edit_pending_message", params={"raw_target": text_edit_match.group(1).strip()}
+            )
+
+    code_analysis_pattern = _CODE_ANALYSIS_PATTERNS.get(language)
+    if code_analysis_pattern and code_analysis_pattern.match(normalized):
+        return Command(name="analyze_active_editor", params={})
 
     if _mentions_figma(normalized, language):
         return Command(name="figma_command", params={"text": text})

@@ -10,22 +10,33 @@ import type {
   CommunicationStyle,
   CustomCommand,
   CustomCommandActionType,
-  GameMode,
   ImageRequest,
   LanUrlResponse,
   MeetingRecording,
   PluginSuggestion,
-  QuizletAuthStatus,
   RecurrenceRule,
-  QuizletGameStateResponse,
-  QuizletLibrarySet,
-  QuizletVoiceGameAnswerResponse,
-  QuizletVoiceGameStartResponse,
+  ClaudeKeyStatus,
+  FitnessBioProfile,
+  FitnessGoal,
+  FitnessGoalType,
+  FitnessMeal,
+  FitnessMeasurement,
+  FitnessProgressPhoto,
+  FitnessWeightHistoryEntry,
+  GeminiKeyStatus,
+  GeneratedImage,
+  GithubStatus,
+  PendingMessage,
   SpeakResponse,
+  SpotifyStatus,
   StatusResponse,
-  StudySet,
+  TelegramAccount,
+  TelegramContact,
+  TelegramCredentialsStatus,
+  TelegramLoginCodeResult,
   VoiceOptionsResponse,
   VoiceQueryResponse,
+  YouTubeStatus,
 } from "../types";
 
 // Electron always provides an absolute backendBaseUrl (its preload script
@@ -272,6 +283,28 @@ export async function sendVoiceQuery(
   return (await response.json()) as VoiceQueryResponse;
 }
 
+export async function transcribeAudio(
+  audio: Blob,
+  filename = "input.webm",
+  language?: string | null,
+): Promise<string> {
+  const form = new FormData();
+  form.append("audio", audio, filename);
+  if (language) {
+    form.append("language", language);
+  }
+  const response = await fetch(`${BASE_URL}/api/voice/transcribe`, {
+    method: "POST",
+    body: form,
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Transcription failed with status ${response.status}`);
+  }
+  const body = (await response.json()) as { text: string };
+  return body.text;
+}
+
 export async function sendVoiceConfirmation(
   audio: Blob,
   token: string,
@@ -322,6 +355,158 @@ export function selectVoice(speaker: string): Promise<VoiceOptionsResponse> {
     method: "POST",
     body: JSON.stringify({ speaker }),
   });
+}
+
+export function getYoutubeStatus(): Promise<YouTubeStatus> {
+  return requestJson<YouTubeStatus>("/api/youtube/status");
+}
+
+export function saveYoutubeApiKey(apiKey: string): Promise<YouTubeStatus> {
+  return requestJson<YouTubeStatus>("/api/youtube/api_key", {
+    method: "POST",
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+}
+
+export function deleteYoutubeApiKey(): Promise<YouTubeStatus> {
+  return requestJson<YouTubeStatus>("/api/youtube/api_key", { method: "DELETE" });
+}
+
+export function getGeminiKeyStatus(): Promise<GeminiKeyStatus> {
+  return requestJson<GeminiKeyStatus>("/api/ai_bridge/gemini_api_key");
+}
+
+export function saveGeminiApiKey(apiKey: string): Promise<GeminiKeyStatus> {
+  return requestJson<GeminiKeyStatus>("/api/ai_bridge/gemini_api_key", {
+    method: "POST",
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+}
+
+export function deleteGeminiApiKey(): Promise<GeminiKeyStatus> {
+  return requestJson<GeminiKeyStatus>("/api/ai_bridge/gemini_api_key", { method: "DELETE" });
+}
+
+export function getClaudeKeyStatus(): Promise<ClaudeKeyStatus> {
+  return requestJson<ClaudeKeyStatus>("/api/ai_bridge/claude_api_key");
+}
+
+export function saveClaudeApiKey(apiKey: string): Promise<ClaudeKeyStatus> {
+  return requestJson<ClaudeKeyStatus>("/api/ai_bridge/claude_api_key", {
+    method: "POST",
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+}
+
+export function deleteClaudeApiKey(): Promise<ClaudeKeyStatus> {
+  return requestJson<ClaudeKeyStatus>("/api/ai_bridge/claude_api_key", { method: "DELETE" });
+}
+
+export function getGithubPatStatus(): Promise<GithubStatus> {
+  return requestJson<GithubStatus>("/api/integrations/github_pat");
+}
+
+export function saveGithubPat(pat: string): Promise<GithubStatus> {
+  return requestJson<GithubStatus>("/api/integrations/github_pat", {
+    method: "POST",
+    body: JSON.stringify({ pat }),
+  });
+}
+
+export function deleteGithubPat(): Promise<GithubStatus> {
+  return requestJson<GithubStatus>("/api/integrations/github_pat", { method: "DELETE" });
+}
+
+export function getTelegramCredentialsStatus(): Promise<TelegramCredentialsStatus> {
+  return requestJson<TelegramCredentialsStatus>("/api/telegram/credentials");
+}
+
+export function saveTelegramCredentials(apiId: number, apiHash: string): Promise<TelegramCredentialsStatus> {
+  return requestJson<TelegramCredentialsStatus>("/api/telegram/credentials", {
+    method: "POST",
+    body: JSON.stringify({ api_id: apiId, api_hash: apiHash }),
+  });
+}
+
+export function listTelegramAccounts(): Promise<TelegramAccount[]> {
+  return requestJson<TelegramAccount[]>("/api/telegram/accounts");
+}
+
+export async function deleteTelegramAccount(accountId: number): Promise<void> {
+  await requestJson(`/api/telegram/accounts/${accountId}`, { method: "DELETE" });
+}
+
+export async function startTelegramLogin(label: string, phoneNumber: string): Promise<string> {
+  const response = await requestJson<{ token: string }>("/api/telegram/accounts/login/start", {
+    method: "POST",
+    body: JSON.stringify({ label, phone_number: phoneNumber }),
+  });
+  return response.token;
+}
+
+export function submitTelegramLoginCode(token: string, code: string): Promise<TelegramLoginCodeResult> {
+  return requestJson<TelegramLoginCodeResult>("/api/telegram/accounts/login/code", {
+    method: "POST",
+    body: JSON.stringify({ token, code }),
+  });
+}
+
+export function submitTelegramLoginPassword(token: string, password: string): Promise<TelegramAccount> {
+  return requestJson<TelegramAccount>("/api/telegram/accounts/login/password", {
+    method: "POST",
+    body: JSON.stringify({ token, password }),
+  });
+}
+
+export function listTelegramContacts(): Promise<TelegramContact[]> {
+  return requestJson<TelegramContact[]>("/api/telegram/contacts");
+}
+
+export function addTelegramContact(identifier: string, note = ""): Promise<TelegramContact> {
+  return requestJson<TelegramContact>("/api/telegram/contacts", {
+    method: "POST",
+    body: JSON.stringify({ identifier, note }),
+  });
+}
+
+export async function deleteTelegramContact(contactId: number): Promise<void> {
+  await requestJson(`/api/telegram/contacts/${contactId}`, { method: "DELETE" });
+}
+
+export function listPendingMessages(): Promise<PendingMessage[]> {
+  return requestJson<PendingMessage[]>("/api/messaging/pending");
+}
+
+export function getSpotifyStatus(): Promise<SpotifyStatus> {
+  return requestJson<SpotifyStatus>("/api/spotify/status");
+}
+
+export function saveSpotifyClientId(clientId: string): Promise<SpotifyStatus> {
+  return requestJson<SpotifyStatus>("/api/spotify/client_id", {
+    method: "POST",
+    body: JSON.stringify({ client_id: clientId }),
+  });
+}
+
+export async function startSpotifyLogin(): Promise<string> {
+  const response = await requestJson<{ authorize_url: string }>("/api/spotify/login", { method: "POST" });
+  return response.authorize_url;
+}
+
+export function disconnectSpotify(): Promise<SpotifyStatus> {
+  return requestJson<SpotifyStatus>("/api/spotify/connection", { method: "DELETE" });
+}
+
+export async function listGeneratedImages(): Promise<GeneratedImage[]> {
+  return requestJson<GeneratedImage[]>("/api/images");
+}
+
+export function getGeneratedImageFileUrl(imageId: number): string {
+  return withTokenParam(`${BASE_URL}/api/images/${imageId}/file`);
+}
+
+export async function deleteGeneratedImage(imageId: number): Promise<void> {
+  await requestJson(`/api/images/${imageId}`, { method: "DELETE" });
 }
 
 export async function listCustomCommands(): Promise<CustomCommand[]> {
@@ -478,109 +663,137 @@ export async function deleteMeetingRecording(
   return (await response.json()) as { deleted: boolean; pending: boolean };
 }
 
-// --- modules/quizlet_clone ---------------------------------------------
-
-export function getQuizletStatus(): Promise<QuizletAuthStatus> {
-  return requestJson<QuizletAuthStatus>("/api/quizlet/status");
+export function getFitnessProfile(): Promise<FitnessBioProfile | null> {
+  return requestJson<FitnessBioProfile | null>("/api/fitness/profile");
 }
 
-// Logout/import go through the generic dispatcher (like
-// ai_bridge_provider_login/logout above) rather than dedicated REST
-// routes — see modules/quizlet_clone/handlers.py. There's no quizletLogin()
-// wrapper here: the automated-browser login (quizlet_login command) reliably
-// hits Quizlet's Cloudflare bot-check, so this panel only ever offers
-// quizletImportSession() (copying an already-logged-in session from the
-// user's real browser) — see QuizletPanel.tsx's auth section.
-export function quizletLogout(): Promise<CommandResponse> {
-  return runCommand("quizlet_logout");
+export interface FitnessBioProfileUpdate {
+  sex?: string | null;
+  age?: number | null;
+  height_cm?: number | null;
+  weight_kg?: number | null;
 }
 
-export function quizletImportSession(): Promise<CommandResponse> {
-  return runCommand("quizlet_import_session");
-}
-
-export function quizletImportAllSets(): Promise<CommandResponse> {
-  return runCommand("quizlet_import_all_sets");
-}
-
-export function quizletImportSet(quizletSetId: string, title: string): Promise<CommandResponse> {
-  return runCommand("quizlet_import_set", { quizlet_set_id: quizletSetId, title });
-}
-
-export async function listQuizletLibrary(): Promise<QuizletLibrarySet[]> {
-  const response = await requestJson<{ sets: QuizletLibrarySet[] }>("/api/quizlet/library");
-  return response.sets;
-}
-
-export async function listStudySets(): Promise<StudySet[]> {
-  const response = await requestJson<{ sets: StudySet[] }>("/api/quizlet/sets");
-  return response.sets;
-}
-
-export function saveStudySet(
-  setId: string | undefined,
-  title: string,
-  terms: { term: string; definition: string }[],
-): Promise<StudySet> {
-  return requestJson<StudySet>("/api/quizlet/sets", {
+export function updateFitnessProfile(update: FitnessBioProfileUpdate): Promise<FitnessBioProfile> {
+  return requestJson<FitnessBioProfile>("/api/fitness/profile", {
     method: "POST",
-    body: JSON.stringify({ set_id: setId ?? null, title, terms }),
+    body: JSON.stringify(update),
   });
 }
 
-export async function deleteStudySet(setId: string): Promise<void> {
-  const response = await fetch(`${BASE_URL}/api/quizlet/sets/${encodeURIComponent(setId)}`, {
-    method: "DELETE",
-    headers: authHeaders(),
-  });
-  if (!response.ok) {
-    throw new Error(`Deleting the study set failed with status ${response.status}`);
-  }
+export function getFitnessWeightHistory(): Promise<FitnessWeightHistoryEntry[]> {
+  return requestJson<FitnessWeightHistoryEntry[]>("/api/fitness/weight_history");
 }
 
-export function startQuizletGame(setId: string, mode: GameMode): Promise<QuizletGameStateResponse> {
-  return requestJson<QuizletGameStateResponse>("/api/quizlet/game/start", {
+export function listFitnessMeasurements(bodyPart?: string): Promise<FitnessMeasurement[]> {
+  const query = bodyPart ? `?body_part=${encodeURIComponent(bodyPart)}` : "";
+  return requestJson<FitnessMeasurement[]>(`/api/fitness/measurements${query}`);
+}
+
+export function addFitnessMeasurement(bodyPart: string, valueCm: number): Promise<FitnessMeasurement> {
+  return requestJson<FitnessMeasurement>("/api/fitness/measurements", {
     method: "POST",
-    body: JSON.stringify({ set_id: setId, mode }),
+    body: JSON.stringify({ body_part: bodyPart, value_cm: valueCm }),
   });
 }
 
-export function getQuizletGameState(sessionId: string): Promise<QuizletGameStateResponse> {
-  return requestJson<QuizletGameStateResponse>(`/api/quizlet/game/${encodeURIComponent(sessionId)}`);
+export function listFitnessGoals(): Promise<FitnessGoal[]> {
+  return requestJson<FitnessGoal[]>("/api/fitness/goals");
 }
 
-export function answerQuizletGame(
-  sessionId: string,
-  payload: Record<string, unknown>,
-): Promise<QuizletGameStateResponse> {
-  return requestJson<QuizletGameStateResponse>(`/api/quizlet/game/${encodeURIComponent(sessionId)}/answer`, {
+export function addFitnessGoal(
+  goalType: FitnessGoalType,
+  description: string,
+  targetValue?: number | null,
+  unit?: string | null,
+  deadline?: string | null,
+): Promise<FitnessGoal> {
+  return requestJson<FitnessGoal>("/api/fitness/goals", {
     method: "POST",
-    body: JSON.stringify({ payload }),
+    body: JSON.stringify({
+      goal_type: goalType,
+      description,
+      target_value: targetValue ?? null,
+      unit: unit ?? null,
+      deadline: deadline ?? null,
+    }),
   });
 }
 
-export function startQuizletVoiceGame(setId: string): Promise<QuizletVoiceGameStartResponse> {
-  return requestJson<QuizletVoiceGameStartResponse>("/api/quizlet/voice/start", {
+export async function deleteFitnessGoal(goalId: number): Promise<void> {
+  await requestJson(`/api/fitness/goals/${goalId}`, { method: "DELETE" });
+}
+
+export function listFitnessMeals(limit?: number): Promise<FitnessMeal[]> {
+  const query = limit ? `?limit=${limit}` : "";
+  return requestJson<FitnessMeal[]>(`/api/fitness/meals${query}`);
+}
+
+export function logFitnessMealText(description: string, grams?: number | null): Promise<FitnessMeal> {
+  return requestJson<FitnessMeal>("/api/fitness/meals/text", {
     method: "POST",
-    body: JSON.stringify({ set_id: setId, mode: "voice" }),
+    body: JSON.stringify({ description, grams: grams ?? null }),
   });
 }
 
-export async function answerQuizletVoiceGame(
-  sessionId: string,
-  audio: Blob,
-  filename = "answer.webm",
-): Promise<QuizletVoiceGameAnswerResponse> {
+export async function logFitnessMealPhoto(photo: File, note?: string): Promise<FitnessMeal> {
   const form = new FormData();
-  form.append("session_id", sessionId);
-  form.append("audio", audio, filename);
-  const response = await fetch(`${BASE_URL}/api/quizlet/voice/answer`, {
+  form.append("photo", photo);
+  if (note) {
+    form.append("note", note);
+  }
+  const response = await fetch(`${BASE_URL}/api/fitness/meals/photo`, {
     method: "POST",
     body: form,
     headers: authHeaders(),
   });
   if (!response.ok) {
-    throw new Error(`Voice answer failed with status ${response.status}`);
+    throw new Error(`Meal photo upload failed with status ${response.status}`);
   }
-  return (await response.json()) as QuizletVoiceGameAnswerResponse;
+  return (await response.json()) as FitnessMeal;
+}
+
+export function getFitnessMealPhotoUrl(mealId: number): string {
+  return withTokenParam(`${BASE_URL}/api/fitness/meals/${mealId}/photo`);
+}
+
+export async function deleteFitnessMeal(mealId: number): Promise<void> {
+  await requestJson(`/api/fitness/meals/${mealId}`, { method: "DELETE" });
+}
+
+export function listFitnessProgressPhotos(): Promise<FitnessProgressPhoto[]> {
+  return requestJson<FitnessProgressPhoto[]>("/api/fitness/progress_photos");
+}
+
+export async function addFitnessProgressPhoto(photo: File, note?: string): Promise<FitnessProgressPhoto> {
+  const form = new FormData();
+  form.append("photo", photo);
+  if (note) {
+    form.append("note", note);
+  }
+  const response = await fetch(`${BASE_URL}/api/fitness/progress_photos`, {
+    method: "POST",
+    body: form,
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Progress photo upload failed with status ${response.status}`);
+  }
+  return (await response.json()) as FitnessProgressPhoto;
+}
+
+export function getFitnessProgressPhotoFileUrl(photoId: number): string {
+  return withTokenParam(`${BASE_URL}/api/fitness/progress_photos/${photoId}/file`);
+}
+
+export async function deleteFitnessProgressPhoto(photoId: number): Promise<void> {
+  await requestJson(`/api/fitness/progress_photos/${photoId}`, { method: "DELETE" });
+}
+
+export async function sendFitnessChatMessage(text: string): Promise<string> {
+  const response = await requestJson<{ reply: string }>("/api/fitness/chat", {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+  return response.reply;
 }

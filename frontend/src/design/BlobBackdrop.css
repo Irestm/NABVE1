@@ -1,0 +1,154 @@
+.blob-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Split into an outer (drift: translate only) + inner (breathe: scale
+   only) element — two @keyframes animations on the *same* element would
+   each set `transform` independently and the later one simply wins
+   (browsers don't multiply/compose them by default), so drift and breathe
+   need separate elements to run at once without one overwriting the
+   other. */
+.blob-backdrop__blob {
+  position: absolute;
+  width: 42vmax;
+  height: 42vmax;
+  will-change: transform;
+}
+
+.blob-backdrop__blob--a {
+  top: -16vmax;
+  left: -18vmax;
+  animation: blob-drift-a 70s ease-in-out infinite;
+}
+
+.blob-backdrop__blob--b {
+  bottom: -20vmax;
+  right: -16vmax;
+  animation: blob-drift-b 85s ease-in-out infinite;
+}
+
+/* The blobs keep their own colors always (blue/red, or each theme's own
+   pair) — this is a THIRD, separate glow shown only where they actually
+   meet (see BlobBackdrop.tsx's tick(), which pins it to the convergence
+   target and ramps its opacity up only for the final stretch of the
+   approach), so the neon-purple payoff is specific to the overlap rather
+   than a side effect of changing what color the blobs themselves are. */
+.blob-backdrop__merge-glow {
+  position: absolute;
+  top: -17vmax;
+  left: -17vmax;
+  width: 34vmax;
+  height: 34vmax;
+  border-radius: 50%;
+  /* White-hot center + a wider fully-saturated color ring (was 30%, now
+     50%) than a real photo-blob would have — reads as much brighter/more
+     "neon" than a smooth photographic falloff. Blur cut down too (was
+     75px) so the core stays punchy instead of softening away. */
+  background: radial-gradient(
+    circle,
+    #ffffff 0%,
+    var(--merge-glow-color, #b400ff) 14%,
+    var(--merge-glow-color, #b400ff) 50%,
+    transparent 78%
+  );
+  filter: blur(50px);
+  mix-blend-mode: screen;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.blob-backdrop__blob-inner {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  filter: blur(90px);
+  /* Screen blend is what makes the overlap read as purple/magenta — it's
+     additive light mixing, so color-a-light + color-b-light lands there
+     automatically, over any (dark) theme backdrop underneath, without
+     having to compute the overlap shape by hand. */
+  mix-blend-mode: screen;
+  opacity: 0.68;
+  will-change: transform;
+  /* Slow inhale/exhale — grows to ~1.3x then settles back, not a hard
+     back-and-forth. The two blobs breathe on different periods/delays so
+     they don't pulse in visible lockstep. */
+  animation: blob-breathe ease-in-out infinite;
+}
+
+.blob-backdrop__blob-inner--a {
+  background: radial-gradient(circle, var(--blob-color-a, #2f6dff) 0%, var(--blob-color-a, #2f6dff) 30%, transparent 68%);
+  animation-duration: 11s;
+}
+
+.blob-backdrop__blob-inner--b {
+  background: radial-gradient(circle, var(--blob-color-b, #ff3b3b) 0%, var(--blob-color-b, #ff3b3b) 30%, transparent 68%);
+  animation-duration: 13s;
+  animation-delay: -4s;
+}
+
+@keyframes blob-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.3);
+  }
+}
+
+/* Irregular waypoints (not a simple back-and-forth) so the drift reads as
+   chaotic rather than a mechanical ping-pong; 0%/100% match so the loop is
+   seamless. The two blobs run on different durations/paths so they cross
+   paths at unpredictable points instead of moving in lockstep. */
+@keyframes blob-drift-a {
+  0% {
+    transform: translate(0, 0);
+  }
+  18% {
+    transform: translate(28vw, 12vh);
+  }
+  38% {
+    transform: translate(14vw, 46vh);
+  }
+  57% {
+    transform: translate(42vw, 58vh);
+  }
+  76% {
+    transform: translate(20vw, 20vh);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes blob-drift-b {
+  0% {
+    transform: translate(0, 0);
+  }
+  22% {
+    transform: translate(-24vw, -22vh);
+  }
+  44% {
+    transform: translate(-46vw, 6vh);
+  }
+  63% {
+    transform: translate(-18vw, -38vh);
+  }
+  82% {
+    transform: translate(-32vw, -8vh);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .blob-backdrop__blob,
+  .blob-backdrop__blob-inner {
+    animation: none;
+  }
+}

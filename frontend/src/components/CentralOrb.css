@@ -2,11 +2,16 @@
   --glow: var(--glow-idle);
   --glow-strength: 0.55;
   position: relative;
-  width: 132px;
-  height: 132px;
+  width: 150px;
+  height: 150px;
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Needed so central-orb__ring--outer's rotateY below actually reads as a
+     tumbling 3D ring (foreshortening into an ellipse and back) instead of
+     just silently doing nothing — rotateY has no visible effect without a
+     perspective somewhere in the chain. */
+  perspective: 700px;
   transition: filter var(--transition-slow);
 }
 
@@ -130,25 +135,43 @@
   transition: filter var(--transition-slow);
 }
 
+/* The middle ring (ticks stays the plain flat spin outside it, __inner
+   gets the chaotic wobble below) — tumbles on Z+Y together instead of a
+   flat clock-spin, so it visibly reads as its own distinct ring instead of
+   silently tracking ticks' rotation a beat behind. */
 .central-orb__ring--outer {
   inset: 0;
+  animation-name: orb-spin-3d;
 }
 
 .central-orb__ring--inner {
   inset: 18px;
-  animation-direction: reverse;
-  animation-duration: calc(var(--spin-duration) * 0.7);
+  animation-name: orb-chaotic-spin;
+  animation-duration: calc(var(--spin-duration) * 1.1);
   opacity: 0.7;
 }
 
 .central-orb__core {
   position: relative;
-  width: 46px;
-  height: 46px;
+  width: 54px;
+  height: 54px;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #ffffff 0%, var(--glow) 45%, #05070a 100%);
+  overflow: hidden;
   box-shadow: 0 0 24px color-mix(in srgb, var(--glow) 70%, transparent);
   transition: box-shadow var(--transition-med), transform var(--transition-med);
+}
+
+/* Separate element for the rotation — .central-orb__core itself already
+   carries the scale pulse below (orb-pulse), and two @keyframes animations
+   both touching `transform` on the same element don't combine (the later
+   one just wins each frame), so the slow spin has to live one level down
+   to run at the same time as the pulse instead of fighting it. */
+.central-orb__core-spin {
+  position: absolute;
+  inset: -10%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffffff 0%, var(--glow) 45%, #05070a 100%);
+  animation: orb-spin 48s linear infinite;
 }
 
 .central-orb--speaking .central-orb__core,
@@ -180,6 +203,47 @@
   }
 }
 
+/* Middle ring — spins flat (Z) and tumbles edge-on (Y) at once, so it
+   reads as a distinct 3D ring rather than a copy of ticks' plain spin. */
+@keyframes orb-spin-3d {
+  from {
+    transform: rotateZ(0deg) rotateY(0deg);
+  }
+  to {
+    transform: rotateZ(360deg) rotateY(360deg);
+  }
+}
+
+/* Inner ring — irregular, non-monotonic angle steps (occasionally
+   doubling back) instead of a clean sweep, so it reads as wobbling
+   chaotically around the core rather than spinning on rails. */
+@keyframes orb-chaotic-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  11% {
+    transform: rotate(58deg);
+  }
+  23% {
+    transform: rotate(34deg);
+  }
+  39% {
+    transform: rotate(140deg);
+  }
+  52% {
+    transform: rotate(100deg);
+  }
+  68% {
+    transform: rotate(245deg);
+  }
+  81% {
+    transform: rotate(198deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes orb-breathe {
   0%,
   100% {
@@ -203,7 +267,8 @@
 @media (prefers-reduced-motion: reduce) {
   .central-orb__ring,
   .central-orb__halo,
-  .central-orb__core {
+  .central-orb__core,
+  .central-orb__core-spin {
     animation: none;
   }
 }

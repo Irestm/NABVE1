@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 from core.logger import get_logger
 from core.voice.intent import Command
+from modules.ai_bridge.semantic_matcher import SemanticMatcher
+from modules.ai_bridge import semantic_matcher
 
 logger = get_logger(__name__)
 
@@ -338,61 +340,35 @@ _PARAM_EXTRACTORS: dict[str, Callable[[str], dict[str, str] | None]] = {
 }
 
 
-_model: object | None = None
-_phrase_embeddings: object | None = None
-_phrase_commands: list[str] = []
-_initialized = False
-_unavailable_reason: str | None = None
-_init_lock = threading.Lock()
+_matcher = SemanticMatcher(model_name=_MODEL_NAME)
+_catalog_built = False
+_available = False
 
 
 def _ensure_initialized() -> bool:
-    """Loads the embedding model and precomputes every catalog phrase's
-    embedding, once per process. Never raises: any failure (package not
-    installed, no internet on first run to fetch the model, ...) just
-    leaves the classifier unavailable so callers fall back to the normal
-    interpret() -> plugin match -> AI classifier pipeline, same shape as
-    modules.hardware_adaptive.local_ai's "never break the caller" contract."""
-    global _model, _phrase_embeddings, _phrase_commands, _initialized, _unavailable_reason
-    if _initialized:
-        return _model is not None
+    """Builds the shared SemanticMatcher against this module's own catalog,
+    once per process. Never raises: any failure (package not installed, no
+    internet on first run to fetch the model, ...) just leaves the
+    classifier unavailable so callers fall back to the normal interpret() ->
+    plugin match -> AI classifier pipeline, same shape as
+    modules.hardware_adaptive.local_ai's "never break the caller" contract.
+    The model itself is loaded (and cached) by
+    modules.ai_bridge.semantic_matcher.get_shared_model — see that module
+    for why this no longer loads its own private copy."""
+    global _catalog_built, _available
+    if _catalog_built:
+        return _available
 
-    with _init_lock:
-        if _initialized:
-            return _model is not None
-
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError as exc:
-            _unavailable_reason = f"sentence-transformers is not installed: {exc}"
-            logger.warning(_unavailable_reason)
-            _initialized = True
-            return False
-
-        try:
-            model = SentenceTransformer(_MODEL_NAME)
-            phrases: list[str] = []
-            commands: list[str] = []
-            for spec in _CATALOG:
-                for phrase in spec.phrases:
-                    phrases.append(phrase)
-                    commands.append(spec.command)
-            embeddings = model.encode(phrases, normalize_embeddings=True, convert_to_numpy=True)
-        except Exception as exc:  # noqa: BLE001 - any load/encode failure just disables the fast path
-            _unavailable_reason = f"Local command classifier failed to initialize: {exc}"
-            logger.warning(_unavailable_reason, exc_info=True)
-            _initialized = True
-            return False
-
-        _model = model
-        _phrase_embeddings = embeddings
-        _phrase_commands = commands
-        _initialized = True
+    catalog = {spec.command: spec.phrases for spec in _CATALOG}
+    _available = _matcher.build(catalog)
+    _catalog_built = True
+    if _available:
+        phrase_count = sum(len(spec.phrases) for spec in _CATALOG)
         logger.info(
             "Local command classifier ready (%d example phrases across %d commands)",
-            len(phrases), len(_CATALOG),
+            phrase_count, len(_CATALOG),
         )
-        return True
+    return _available
 
 
 def warm_up() -> None:
@@ -419,17 +395,25 @@ def match_system_command(text: str) -> Command | None:
     if not _ensure_initialized():
         return None
 
-    query_embedding = _model.encode([stripped], normalize_embeddings=True, convert_to_numpy=True)[0]  # type: ignore[attr-defined]
-    similarities = _phrase_embeddings @ query_embedding  # type: ignore[operator]
-    best_idx = int(similarities.argmax())
-    best_score = float(similarities[best_idx])
+    match = _matcher.best_match(stripped)
+    if match is None:
+        return None
+    command_name, best_score = match
     if best_score < _SIMILARITY_THRESHOLD:
+        logger.info(
+            "Local command classifier: no match for %r (closest was '%s', score=%.3f < threshold=%.2f)",
+            text, command_name, best_score, _SIMILARITY_THRESHOLD,
+        )
         return None
 
-    command_name = _phrase_commands[best_idx]
     extractor = _PARAM_EXTRACTORS.get(command_name, _no_params)
     params = extractor(stripped)
     if params is None:
+        logger.info(
+            "Local command classifier: '%s' scored above threshold (score=%.3f) for %r but its "
+            "param extractor declined (missing/unparseable required parameter)",
+            command_name, best_score, text,
+        )
         return None
 
     logger.info(
@@ -444,4 +428,4 @@ def unavailable_reason() -> str | None:
     if it is. Mainly for status/diagnostics — mirrors
     modules.hardware_adaptive.local_ai.unavailable_reason()."""
     _ensure_initialized()
-    return _unavailable_reason
+    return semantic_matcher.unavailable_reason(_MODEL_NAME)

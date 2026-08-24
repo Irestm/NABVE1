@@ -1,0 +1,240 @@
+.fitness-panel {
+  --section-accent: var(--accent-green);
+}
+
+.fitness-panel__toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.fitness-panel__edit-toggle {
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-green) 16%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--accent-green) 55%, transparent);
+  color: var(--accent-green);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.fitness-panel__edit-toggle:hover {
+  background: color-mix(in srgb, var(--accent-green) 28%, transparent);
+}
+
+.fitness-stat-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin: 4px 0 2px;
+}
+
+@media (max-width: 480px) {
+  .fitness-stat-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.fitness-stat-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 8px;
+  border-radius: 14px;
+  background: var(--bg-elevated-glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+}
+
+.fitness-stat-tile__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-green) 20%, transparent);
+  color: var(--accent-green);
+}
+
+.fitness-stat-tile__value {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 20px;
+  color: var(--text);
+  line-height: 1;
+}
+
+.fitness-stat-tile__label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.fitness-panel__edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--bg-elevated-glass);
+  border: 1px solid var(--border);
+}
+
+/* Deliberately no red/green "bad/good" coloring — a single neutral hue
+   with varying opacity per band, so the visualization itself doesn't
+   editorialize about which range is "good" (see the task's ethical
+   requirements for this module). */
+.fitness-panel__bmi-scale {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fitness-panel__bmi-caption {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.fitness-panel__bmi-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.fitness-panel__bmi-number {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 22px;
+  color: var(--text);
+}
+
+.fitness-panel__bmi-chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-blue) 20%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 45%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.fitness-panel__bmi-track {
+  position: relative;
+  display: flex;
+  height: 16px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+/* Segment labels moved out into .fitness-panel__bmi-legend below — cramming
+   readable text inside the narrowest band (barely 12% of the track's
+   width) was exactly the "особенно шкала нормы" complaint; a legend row
+   has room for a normal font-size regardless of how narrow any one band
+   is. */
+.fitness-panel__bmi-band {
+  background: var(--bg-elevated-glass);
+  border-right: 1px solid var(--border);
+}
+
+.fitness-panel__bmi-band:nth-child(1) {
+  background: color-mix(in srgb, var(--accent-blue) 18%, var(--bg-elevated-glass));
+}
+.fitness-panel__bmi-band:nth-child(2) {
+  background: color-mix(in srgb, var(--accent-blue) 34%, var(--bg-elevated-glass));
+}
+.fitness-panel__bmi-band:nth-child(3) {
+  background: color-mix(in srgb, var(--accent-blue) 50%, var(--bg-elevated-glass));
+}
+.fitness-panel__bmi-band:nth-child(4) {
+  background: color-mix(in srgb, var(--accent-blue) 66%, var(--bg-elevated-glass));
+  border-right: none;
+}
+
+.fitness-panel__bmi-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 2px;
+}
+
+.fitness-panel__bmi-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.fitness-panel__bmi-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.fitness-panel__bmi-legend-dot--0 {
+  background: color-mix(in srgb, var(--accent-blue) 18%, var(--bg-elevated-glass));
+  border: 1px solid var(--border);
+}
+.fitness-panel__bmi-legend-dot--1 {
+  background: color-mix(in srgb, var(--accent-blue) 34%, var(--bg-elevated-glass));
+}
+.fitness-panel__bmi-legend-dot--2 {
+  background: color-mix(in srgb, var(--accent-blue) 50%, var(--bg-elevated-glass));
+}
+.fitness-panel__bmi-legend-dot--3 {
+  background: color-mix(in srgb, var(--accent-blue) 66%, var(--bg-elevated-glass));
+}
+
+.fitness-panel__bmi-marker {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--text);
+  box-shadow: 0 0 6px var(--text);
+}
+
+.fitness-panel__chart {
+  margin-top: 4px;
+}
+
+.fitness-panel__chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.fitness-panel__chart-title {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.fitness-panel__trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.fitness-panel__trend--up {
+  background: color-mix(in srgb, var(--accent-red) 18%, transparent);
+  color: var(--accent-red);
+}
+
+.fitness-panel__trend--down {
+  background: color-mix(in srgb, var(--accent-green) 18%, transparent);
+  color: var(--accent-green);
+}

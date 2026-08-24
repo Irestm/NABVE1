@@ -36,6 +36,12 @@ pygetwindow>=0.0.9 ; sys_platform == 'win32'
 # import time, not merely transitive.
 pycaw>=20240210 ; sys_platform == 'win32'
 comtypes>=1.2 ; sys_platform == 'win32'
+# Windows/win32com Office automation bridge — office_bridge/server_win.py and
+# win_*_handlers.py (Word/Excel/PowerPoint/Access COM automation, the
+# Windows counterpart of the Linux/pyuno bridge). A pip wheel, unlike pyuno
+# on Linux, so no separate system-Python interpreter is needed for it — see
+# modules/office_writer/bridge_client.py's _IS_WINDOWS branch.
+pywin32>=306 ; sys_platform == 'win32'
 
 # --- core/os_adapter/screenshot.py, modules/ui_automation/ocr_adapter.py (implemented) ---
 # OCR vision fallback for modules/ui_automation, tried only when neither CDP
@@ -99,6 +105,11 @@ google-auth-oauthlib>=1.4.0
 
 # --- modules/ai_bridge, modules/search (implemented, lazy-imported) ---
 # also requires a one-time browser download: playwright install chromium
+# Linux additionally requires: sudo apt-get install xvfb — modules/ai_bridge/
+# virtual_display.py runs the Playwright browser headed-but-invisible on a
+# hidden Xvfb X server for routine ai_bridge questions (headless=True gets
+# detected/blocked by some providers, see providers/base.py); without Xvfb
+# on PATH it silently falls back to a real, visible browser window instead.
 playwright>=1.44
 # modules/ai_bridge/api_providers.py: async HTTP client for the optional
 # free-tier Groq API adapter (only used when GROQ_API_KEY is set)
@@ -170,6 +181,14 @@ pypdf>=4.0
 # OpenCV; -headless (no Qt/GUI bindings) is enough since this only ever
 # calls matchTemplate/imread/cvtColor on already-captured screenshots.
 opencv-python-headless>=4.9
+
+# --- modules/telegram_userbot (implemented) ---
+# MTProto client (logs in as the user's own account via my.telegram.org
+# api_id/api_hash — NOT the Bot API) so modules/messaging finally has a
+# real source of incoming messages, and can actually send replies, instead
+# of only ever being fed by an external bridge process (see
+# modules/messaging/BRIDGE.md).
+telethon>=1.36
 
 # --- dev/test only ---
 pytest>=8.0

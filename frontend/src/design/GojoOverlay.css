@@ -1,0 +1,176 @@
+.gojo-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 4px;
+  z-index: 2;
+  animation: gojo-appear 0.2s ease-out;
+}
+
+@keyframes gojo-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* User-uploaded art (GojoArtUploader) — a fixed zone around where the
+   single eye normally sits, not a full-screen takeover. */
+.gojo-overlay--custom {
+  gap: 8px;
+}
+
+.gojo-overlay__custom-art {
+  /* max-width/max-height + auto sizing (not a fixed width) so the whole
+     image always fits inside the zone regardless of its own aspect ratio
+     — object-fit: contain as a backstop for the rare case both caps are
+     hit at once, but nothing gets cropped either way. */
+  width: auto;
+  height: auto;
+  max-width: min(80vw, 400px);
+  max-height: min(42vh, 300px);
+  object-fit: contain;
+  border-radius: 14px;
+  border: 2px solid #05070a;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55), 0 0 24px color-mix(in srgb, #2ad8ff 45%, transparent);
+}
+
+/* Same shape drawn twice (outline behind, fill on top, inset a few px)
+   instead of a soft gradient blob — a flat, thick black-ink outline
+   around a flat white fill is what actually reads as "manga panel" rather
+   than "airbrushed anime render". Both absolutely positioned inside a
+   fixed-size wrapper so the outline peeks out evenly on every edge,
+   instead of the earlier relative+negative-margin layout hack. */
+.gojo-overlay__hair-wrap {
+  position: relative;
+  width: 228px;
+  height: 96px;
+  margin-bottom: -26px;
+  z-index: 0;
+}
+
+.gojo-overlay__hair-outline,
+.gojo-overlay__hair {
+  position: absolute;
+  clip-path: polygon(
+    0% 90%,
+    5% 38%,
+    15% 64%,
+    23% 8%,
+    33% 54%,
+    45% 0%,
+    57% 46%,
+    69% 6%,
+    81% 50%,
+    93% 18%,
+    100% 86%,
+    89% 68%,
+    77% 80%,
+    63% 66%,
+    50% 100%,
+    37% 64%,
+    23% 82%,
+    11% 66%
+  );
+}
+
+.gojo-overlay__hair-outline {
+  inset: 0;
+  background: #05070a;
+}
+
+.gojo-overlay__hair {
+  inset: 6px 8px 10px 8px;
+  background: #f5f7fb;
+}
+
+.gojo-overlay__eyes {
+  position: relative;
+  display: flex;
+  gap: 16px;
+  z-index: 1;
+}
+
+.gojo-overlay__eye {
+  position: relative;
+  width: 76px;
+  height: 50px;
+}
+
+/* Narrow, sharp-cornered eye shape (not a circle) — much closer to how
+   the character's eyes are actually drawn than the earlier round-lens
+   version. */
+.gojo-overlay__eye-outline,
+.gojo-overlay__sclera,
+.gojo-overlay__iris {
+  clip-path: polygon(0% 52%, 16% 18%, 44% 4%, 74% 8%, 100% 34%, 90% 68%, 56% 94%, 20% 82%);
+}
+
+.gojo-overlay__eye-outline {
+  position: absolute;
+  inset: -5px;
+  background: #05070a;
+}
+
+.gojo-overlay__sclera {
+  position: absolute;
+  inset: 0;
+  background: #f2f6f8;
+}
+
+.gojo-overlay__iris {
+  position: absolute;
+  inset: 10px 14px;
+  background: radial-gradient(circle at 38% 35%, #b6f4ff 0%, #2ad8ff 45%, #0a4a5c 100%);
+}
+
+.gojo-overlay__pupil {
+  position: absolute;
+  top: 50%;
+  left: 45%;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #030405;
+  transform: translate(-50%, -50%);
+}
+
+.gojo-overlay__glint {
+  position: absolute;
+  top: 26%;
+  left: 32%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ffffff;
+}
+
+.gojo-overlay__caption {
+  margin: 8px 0 0;
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 22px;
+  font-style: italic;
+  letter-spacing: 0.02em;
+  color: #ffffff;
+  -webkit-text-stroke: 1.5px #05070a;
+  text-shadow: 0 3px 0 #05070a, 0 0 18px color-mix(in srgb, #2ad8ff 70%, transparent);
+  white-space: nowrap;
+}
+
+.gojo-overlay__caption--bold {
+  font-weight: 800;
+  font-size: 36px;
+  color: #ffffff;
+  -webkit-text-stroke: 1.25px #05070a;
+  /* Sharp offset shadow (0 blur) for depth instead of the base rule's
+     blurred glow — a soft blur reads as fuzzy at this size, a crisp
+     offset reads as a solid printed sticker edge. */
+  text-shadow: 0 3px 0 #05070a;
+}

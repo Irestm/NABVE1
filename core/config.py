@@ -63,7 +63,7 @@ class Settings:
     log_file: Path = LOGS_DIR / "assistant.log"
     db_path: Path = DATA_DIR / "assistant.db"
     confirmation_ttl_seconds: int = int(os.environ.get("ASSISTANT_CONFIRM_TTL", "60"))
-    voice_autostart: bool = os.environ.get("ASSISTANT_VOICE_AUTOSTART", "false").lower() == "true"
+    voice_autostart: bool = os.environ.get("ASSISTANT_VOICE_AUTOSTART", "true").lower() == "true"
     # "*" is safe here because allow_credentials=False (see main.py's
     # CORSMiddleware setup) — the real access boundary is api_token above,
     # not origin checking. A specific-origins allowlist (previously just the
@@ -112,12 +112,53 @@ class Settings:
     # modules/blender_control/ws_client.py.
     blender_host: str = os.environ.get("ASSISTANT_BLENDER_HOST", "127.0.0.1")
     blender_port: int = int(os.environ.get("ASSISTANT_BLENDER_PORT", "8766"))
+    # Where office_bridge/server.py's local HTTP server listens — one shared
+    # bridge for every LibreOffice app Jarvis controls (Writer, Calc, ...;
+    # see office_bridge/server.py's own docstring for why one process), used
+    # by both modules/office_writer/bridge_client.py and
+    # modules/office_excel/bridge_client.py. That server runs under the
+    # system Python (it needs pyuno, which isn't pip-installable into this
+    # project's venv), spawned on demand by bridge_client.ensure_bridge_running()
+    # rather than started at app boot, so most sessions never launch
+    # LibreOffice at all.
+    office_bridge_host: str = os.environ.get("ASSISTANT_OFFICE_BRIDGE_HOST", "127.0.0.1")
+    office_bridge_port: int = int(os.environ.get("ASSISTANT_OFFICE_BRIDGE_PORT", "8767"))
+    # The interpreter bridge_client.py spawns office_bridge/server.py with.
+    # Linux-only setting: Ubuntu ships python3-uno as a system dist-packages
+    # module, not a pip wheel, hence a separate interpreter path; override if
+    # pyuno lives somewhere else. Ignored on Windows — bridge_client.py's
+    # _IS_WINDOWS branch spawns office_bridge/server_win.py with this
+    # backend's own sys.executable instead, since pywin32 (that bridge's
+    # dependency) installs straight into this project's venv.
+    office_bridge_system_python: str = os.environ.get("ASSISTANT_OFFICE_BRIDGE_PYTHON", "/usr/bin/python3")
+    # How long modules.fitness_tracker's voice context (core/voice/module_context.py)
+    # stays active with no fitness-related utterance before it silently
+    # resets to the normal command pipeline — see
+    # modules/fitness_tracker/context_state.py. Mid-range of the "5-10
+    # minutes" the task spec asked for.
+    fitness_context_timeout_seconds: int = int(os.environ.get("ASSISTANT_FITNESS_CONTEXT_TIMEOUT_SECONDS", "420"))
 
 
 settings = Settings()
 
 MEETING_RECORDINGS_DIR: Path = DATA_DIR / "meeting_recordings"
 MEETING_RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+
+GENERATED_IMAGES_DIR: Path = DATA_DIR / "generated_images"
+GENERATED_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+# modules/office_notes' notebooks — LibreOffice has no OneNote analog, so a
+# "notebook" is just a Writer .odt file here, addressed by name rather than
+# a full path (see modules/office_notes/dispatcher.py's _resolve_path).
+NOTES_DIR: Path = DATA_DIR / "notebooks"
+NOTES_DIR.mkdir(parents=True, exist_ok=True)
+
+# modules/fitness_tracker's meal/progress photos — stored locally only, per
+# the task spec's privacy requirement (never uploaded anywhere except the
+# one AI provider call that analyzes a given photo, same one-shot exposure
+# modules.code_analysis's screenshot vision path already has).
+FITNESS_MEDIA_DIR: Path = DATA_DIR / "fitness_media"
+FITNESS_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Prepended to every prompt sent to any model — local or via ai_bridge — so the
 # assistant's tone stays consistent no matter which provider actually answers.

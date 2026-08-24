@@ -16,7 +16,7 @@
 }
 
 .personality-panel__style {
-  background: var(--bg-elevated);
+  background: var(--bg-elevated-glass);
   color: var(--text-dim);
   border: 1px solid var(--border);
   font-size: 12px;

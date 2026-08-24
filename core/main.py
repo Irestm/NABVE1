@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import date
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from core.bootstrap import compose
@@ -17,9 +19,11 @@ from core.logger import get_logger
 from core.message_bus import message_bus
 from core.models import (
     AIBridgeStatus,
+    ApiKeyRequest,
     BoardGameMoveRequest,
     BoardGameStartRequest,
     BoardGameStateResponse,
+    ClaudeKeyStatusResponse,
     CommandButtonDescriptor,
     CommandDescriptor,
     CommandParamField,
@@ -28,13 +32,25 @@ from core.models import (
     ConfirmRequest,
     CustomCommandListResponse,
     CustomCommandResponse,
-    GameAnswerRequest,
-    GameStartRequest,
-    GameStateResponse,
+    FitnessBioProfileResponse,
+    FitnessBioProfileUpdateRequest,
+    FitnessChatRequest,
+    FitnessChatResponse,
+    FitnessGoalCreateRequest,
+    FitnessGoalResponse,
+    FitnessMealResponse,
+    FitnessMealTextRequest,
+    FitnessMeasurementCreateRequest,
+    FitnessMeasurementResponse,
+    FitnessProgressPhotoResponse,
+    FitnessWeightHistoryEntryResponse,
+    GeminiKeyStatusResponse,
+    GeneratedImageResponse,
+    GithubPatRequest,
+    GithubStatusResponse,
     ImageRequest,
     LanUrlResponse,
     LegalMoveSquares,
-    LibrarySetResponse,
     MeetingRecordingChunkResponse,
     MeetingRecordingCreateRequest,
     MeetingRecordingCreateResponse,
@@ -47,41 +63,69 @@ from core.models import (
     MessagingIncomingResponse,
     MessagingOutboundAckRequest,
     MessagingOutboundItem,
-    QuizletAuthStatus,
-    QuizletLibraryResponse,
-    SaveStudySetRequest,
+    PendingMessageResponse,
     SelectVoiceRequest,
     SpeakRequest,
     SpeakResponse,
+    SpotifyClientIdRequest,
+    SpotifyLoginResponse,
+    SpotifyStatusResponse,
     StatusResponse,
-    StudySetListResponse,
-    StudySetResponse,
-    TermResponse,
+    TelegramAccountResponse,
+    TelegramContactRequest,
+    TelegramContactResponse,
+    TelegramCredentialsRequest,
+    TelegramCredentialsStatusResponse,
+    TelegramLoginCodeRequest,
+    TelegramLoginCodeResponse,
+    TelegramLoginPasswordRequest,
+    TelegramLoginStartRequest,
+    TelegramLoginStartResponse,
     TextQueryRequest,
+    TranscribeResponse,
     UIVisibilityRequest,
-    VoiceGameAnswerResponse,
-    VoiceGameStartResponse,
     VoiceLoopStatus,
     VoiceOptionsResponse,
     VoiceQueryResponse,
     WordPressJobStatusResponse,
     WordPressUploadResponse,
+    YouTubeApiKeyRequest,
+    YouTubeStatusResponse,
 )
+from core.secret_store import SecretStoreUnavailableError, delete_secret, get_secret, store_secret
 from core.state import state_manager
+from core.voice import module_context as voice_module_context
 from core.voice import web_pipeline
-from modules.ai_bridge import provider_auth, virtual_display
+from modules.ai_bridge import api_providers, provider_auth, virtual_display
+from modules.spotify_control import oauth as spotify_oauth
+from modules.spotify_control import token_store as spotify_token_store
+from modules.youtube_control import service_layer as youtube_service_layer
 from modules.ai_bridge.provider_manager import get_provider_manager
+from modules.ai_bridge.quota_tracker import quota_tracker
 from modules.board_games import announce as board_games_announce
 from modules.board_games import service_layer as board_games_service_layer
 from modules.board_games import ui_session as board_games_ui_session
 from modules.board_games.domain import Difficulty as BoardGameDifficulty
 from modules.board_games.domain import GameKind
+from modules.code_analysis import service_layer as code_analysis_service_layer
 from modules.custom_commands import dispatcher as custom_commands_registry
 from modules.custom_commands import service_layer as custom_commands_service_layer
 from modules.custom_commands.domain import ActionType
 from modules.custom_commands.uow import CustomCommandsUnitOfWork
 from modules.figma_control.ws_server import WEBSOCKET_PATH as FIGMA_WEBSOCKET_PATH
 from modules.figma_control.ws_server import figma_ws_server
+from modules.fitness_tracker import calculations as fitness_calculations
+from modules.fitness_tracker import fitness_chat
+from modules.fitness_tracker import meal_analyzer as fitness_meal_analyzer
+from modules.fitness_tracker import progress_photos as fitness_progress_photos
+from modules.fitness_tracker import service_layer as fitness_service_layer
+from modules.fitness_tracker.domain import BioProfileSnapshot as FitnessBioProfileSnapshot
+from modules.fitness_tracker.domain import BodyMeasurement as FitnessBodyMeasurement
+from modules.fitness_tracker.domain import Goal as FitnessGoal
+from modules.fitness_tracker.domain import GoalType as FitnessGoalType
+from modules.fitness_tracker.domain import MealLogEntry as FitnessMealLogEntry
+from modules.image_generation import service_layer as image_generation_service_layer
+from modules.image_generation.domain import GeneratedImage
 from modules.integrations import packager as integrations_packager
 from modules.meeting_recorder import service_layer as meeting_service_layer
 from modules.meeting_recorder.domain import Recording as MeetingRecording
@@ -91,11 +135,10 @@ from modules.meeting_recorder.domain import TranscriptStatus as MeetingTranscrip
 from modules.meeting_recorder.uow import MeetingRecordingUnitOfWork
 from modules.messaging import service_layer as messaging_service_layer
 from modules.messaging.uow import MessagingUnitOfWork
-from modules.quizlet_clone import game_modes as quizlet_game_modes
-from modules.quizlet_clone import quizlet_auth, quizlet_scraper
-from modules.quizlet_clone import service_layer as quizlet_service_layer
-from modules.quizlet_clone.models import GameMode as QuizletGameMode
-from modules.quizlet_clone.storage import QuizletUnitOfWork as QuizletCloneUnitOfWork
+from modules.telegram_userbot import client_manager as telegram_client_manager
+from modules.telegram_userbot import login as telegram_login
+from modules.telegram_userbot import outbound_poller as telegram_outbound_poller
+from modules.telegram_userbot import service_layer as telegram_service_layer
 from modules.wordpress_bridge import service_layer as wordpress_service_layer
 
 logger = get_logger(__name__)
@@ -132,6 +175,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Degrades gracefully: logs and stays idle if no Gmail credentials
     # are configured yet (python -m modules.gmail.login not run).
     gmail_poller.start()
+    # Same graceful-degradation idea: connect_account skips (and logs) any
+    # account missing app credentials or a valid stored session instead of
+    # raising, so a broken/never-configured Telegram setup can't block
+    # startup — see modules.telegram_userbot.client_manager.connect_account.
+    await telegram_client_manager.connect_all_stored_accounts()
+    telegram_outbound_task = asyncio.create_task(telegram_outbound_poller.run_forever())
     yield
     voice_loop.stop()
     reminder_checker.stop()
@@ -140,9 +189,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     recording_transcriber.stop()
     messaging_snooze_checker.stop()
     gmail_poller.stop()
+    telegram_outbound_poller.stop()
+    telegram_outbound_task.cancel()
     await get_provider_manager().close_all()
     virtual_display.stop()
-    await quizlet_auth.get_session().close()
     logger.info("Assistant core service shutting down")
 
 
@@ -158,6 +208,15 @@ app.add_middleware(
 
 _TOKEN_HEADER = "x-assistant-token"
 
+# Spotify's own redirect after the user approves login lands here directly
+# from their browser — it was never our frontend, so it can't carry
+# x-assistant-token/?token=. Safe to exempt: the callback's own `state`
+# param (see modules/spotify_control/oauth.py's consume_pending_login) is
+# itself unforgeable CSRF protection, generated by us moments earlier and
+# required to match before anything is done with the `code` that comes
+# with it.
+_UNAUTHENTICATED_PATHS = {"/api/spotify/callback"}
+
 
 @app.middleware("http")
 async def require_api_token(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -169,8 +228,15 @@ async def require_api_token(request: Request, call_next):  # type: ignore[no-unt
     unauthenticated so CORS preflight (which never carries custom headers)
     keeps working; the static frontend build below isn't under /api/ so the
     page itself always loads, it just can't call anything until the token
-    is attached (see frontend/src/api/client.ts)."""
-    if request.method != "OPTIONS" and request.url.path.startswith("/api/"):
+    is attached (see frontend/src/api/client.ts). _UNAUTHENTICATED_PATHS is
+    a narrow, explicit exception list for the handful of routes (currently
+    just Spotify's OAuth callback) that a third party redirects straight to
+    and so can never carry our token."""
+    if (
+        request.method != "OPTIONS"
+        and request.url.path.startswith("/api/")
+        and request.url.path not in _UNAUTHENTICATED_PATHS
+    ):
         header_token = request.headers.get(_TOKEN_HEADER)
         query_token = request.query_params.get("token")
         if settings.api_token not in (header_token, query_token):
@@ -181,7 +247,11 @@ async def require_api_token(request: Request, call_next):  # type: ignore[no-unt
 
 @app.get("/api/status", response_model=StatusResponse)
 async def get_status() -> StatusResponse:
-    return StatusResponse(state=state_manager.state, detail=state_manager.detail)
+    return StatusResponse(
+        state=state_manager.state,
+        detail=state_manager.detail,
+        active_module_context=voice_module_context.current(),
+    )
 
 
 @app.get("/api/commands", response_model=list[CommandDescriptor])
@@ -301,6 +371,25 @@ async def voice_query(
             status_code=500, detail="Internal error while processing the voice query."
         ) from None
     return result
+
+
+@app.post("/api/voice/transcribe", response_model=TranscribeResponse)
+async def voice_transcribe(
+    audio: UploadFile = File(...), language: str | None = Form(None)
+) -> TranscribeResponse:
+    """Transcription only — no intent resolution or command dispatch, unlike
+    /api/voice/query above. For one-shot mic-to-field voice input (see
+    frontend/src/hooks/useOneShotVoiceInput.ts): dictating an instruction
+    into a text field must never risk running it as a command."""
+    data = await audio.read()
+    try:
+        text = await web_pipeline.transcribe_uploaded_audio(data, audio.filename or "audio.webm", language)
+    except web_pipeline.InvalidAudioError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        logger.exception("Unhandled error processing /api/voice/transcribe")
+        raise HTTPException(status_code=500, detail="Internal error while transcribing audio.") from None
+    return TranscribeResponse(text=text)
 
 
 _WORDPRESS_UPLOAD_DIR = DATA_DIR / "wordpress_uploads"
@@ -449,224 +538,6 @@ async def delete_custom_command(command_id: str) -> dict[str, bool]:
         raise HTTPException(status_code=404, detail=f"Unknown custom command: {command_id}")
     custom_commands_registry.refresh()
     return {"removed": True}
-
-
-def _quizlet_term_to_response(term: Any) -> TermResponse:
-    return TermResponse(
-        id=term.id,
-        term=term.term,
-        definition=term.definition,
-        times_seen=term.times_seen,
-        times_correct=term.times_correct,
-        times_wrong=term.times_wrong,
-        learned=term.learned,
-    )
-
-
-def _quizlet_set_to_response(study_set: Any) -> StudySetResponse:
-    return StudySetResponse(
-        id=study_set.id,
-        title=study_set.title,
-        source=study_set.source.value,
-        quizlet_set_id=study_set.quizlet_set_id,
-        created_at=study_set.created_at.isoformat() if study_set.created_at else "",
-        progress_percent=study_set.progress_percent,
-        attempts_count=study_set.attempts_count,
-        terms=[_quizlet_term_to_response(t) for t in study_set.terms],
-    )
-
-
-@app.get("/api/quizlet/status", response_model=QuizletAuthStatus)
-async def get_quizlet_status() -> QuizletAuthStatus:
-    return QuizletAuthStatus(logged_in=await quizlet_auth.is_logged_in())
-
-
-@app.get("/api/quizlet/sets", response_model=StudySetListResponse)
-async def list_quizlet_sets() -> StudySetListResponse:
-    sets = quizlet_service_layer.list_sets(QuizletCloneUnitOfWork())
-    return StudySetListResponse(sets=[_quizlet_set_to_response(s) for s in sets])
-
-
-@app.post("/api/quizlet/sets", response_model=StudySetResponse)
-async def save_quizlet_set(request: SaveStudySetRequest) -> StudySetResponse:
-    """Create (set_id omitted) or fully replace (set_id set) a manually
-    entered study set — JSON counterpart of POST /api/custom_commands's
-    create-or-update-by-optional-id shape, without that route's multipart/
-    file handling (no attachments here)."""
-    pairs = [(t.term.strip(), t.definition.strip()) for t in request.terms if t.term.strip() and t.definition.strip()]
-    if not pairs:
-        raise HTTPException(status_code=400, detail="At least one non-empty term/definition pair is required")
-
-    uow = QuizletCloneUnitOfWork()
-    if request.set_id:
-        study_set = quizlet_service_layer.update_set(uow, request.set_id, request.title, pairs)
-        if study_set is None:
-            raise HTTPException(status_code=404, detail=f"Unknown study set: {request.set_id}")
-    else:
-        study_set = quizlet_service_layer.create_manual_set(uow, request.title, pairs)
-    return _quizlet_set_to_response(study_set)
-
-
-@app.delete("/api/quizlet/sets/{set_id}")
-async def delete_quizlet_set(set_id: str) -> dict[str, bool]:
-    removed = quizlet_service_layer.delete_set(QuizletCloneUnitOfWork(), set_id)
-    if not removed:
-        raise HTTPException(status_code=404, detail=f"Unknown study set: {set_id}")
-    return {"removed": True}
-
-
-@app.get("/api/quizlet/library", response_model=QuizletLibraryResponse)
-async def list_quizlet_library() -> QuizletLibraryResponse:
-    session = quizlet_auth.get_session()
-    if not await session.is_logged_in():
-        raise HTTPException(status_code=409, detail="Сначала войдите в Quizlet.")
-    try:
-        library = await quizlet_scraper.list_library_sets(session)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    local_sets = quizlet_service_layer.list_sets(QuizletCloneUnitOfWork())
-    local_by_quizlet_id = {s.quizlet_set_id: s for s in local_sets if s.quizlet_set_id}
-    return QuizletLibraryResponse(
-        sets=[
-            LibrarySetResponse(
-                quizlet_set_id=item.quizlet_set_id,
-                title=item.title,
-                term_count=item.term_count,
-                already_imported=item.quizlet_set_id in local_by_quizlet_id,
-                local_set_id=(
-                    local_by_quizlet_id[item.quizlet_set_id].id if item.quizlet_set_id in local_by_quizlet_id else None
-                ),
-            )
-            for item in library
-        ]
-    )
-
-
-def _parse_quizlet_game_mode(mode: str) -> QuizletGameMode:
-    try:
-        return QuizletGameMode(mode)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Unknown game mode: {mode}") from None
-
-
-@app.post("/api/quizlet/game/start", response_model=GameStateResponse)
-async def start_quizlet_game(request: GameStartRequest) -> GameStateResponse:
-    mode = _parse_quizlet_game_mode(request.mode)
-    if mode is QuizletGameMode.VOICE:
-        raise HTTPException(status_code=400, detail="Голосовой режим запускается через /api/quizlet/voice/start")
-
-    distractor_pool: list[str] | None = None
-    if mode is QuizletGameMode.TEST:
-        # Fallback distractor pool for sets with fewer than 4 terms of their
-        # own — pulled from every other local set (ТЗ п.3's "генерация
-        # неверных вариантов ... случайный выбор определений из того же
-        # набора", extended to other sets only when this one alone can't
-        # supply 3 distractors — see game_modes.TestSession).
-        all_sets = quizlet_service_layer.list_sets(QuizletCloneUnitOfWork())
-        distractor_pool = [t.definition for s in all_sets if s.id != request.set_id for t in s.terms]
-
-    try:
-        session_id, state = quizlet_game_modes.start(
-            QuizletCloneUnitOfWork(), request.set_id, mode, distractor_pool=distractor_pool
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return GameStateResponse(session_id=session_id, state=state)
-
-
-@app.get("/api/quizlet/game/{session_id}", response_model=GameStateResponse)
-async def get_quizlet_game_state(session_id: str) -> GameStateResponse:
-    try:
-        state = quizlet_game_modes.get_state(session_id)
-    except quizlet_game_modes.UnknownSessionError:
-        raise HTTPException(status_code=404, detail=f"Unknown game session: {session_id}") from None
-    return GameStateResponse(session_id=session_id, state=state)
-
-
-@app.post("/api/quizlet/game/{session_id}/answer", response_model=GameStateResponse)
-async def answer_quizlet_game(session_id: str, request: GameAnswerRequest) -> GameStateResponse:
-    try:
-        state = quizlet_game_modes.answer(QuizletCloneUnitOfWork(), session_id, request.payload)
-    except quizlet_game_modes.UnknownSessionError:
-        raise HTTPException(status_code=404, detail=f"Unknown game session: {session_id}") from None
-    except (ValueError, quizlet_game_modes.GameOverError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return GameStateResponse(session_id=session_id, state=state)
-
-
-@app.post("/api/quizlet/voice/start", response_model=VoiceGameStartResponse)
-async def start_quizlet_voice_game(request: GameStartRequest) -> VoiceGameStartResponse:
-    """Голосовой режим (ТЗ п.3), implemented as a stateful turn-based HTTP
-    flow rather than a spoken trigger phrase inside core/voice/pipeline.py's
-    always-on wake-word mic loop: that loop only reacts to the desktop's own
-    microphone via a fixed set of rule-matched phrases (see
-    VoiceAssistantLoop._resolve_board_game's docstring on why board games
-    and messaging replies are scoped to it specifically) and launching a
-    second concurrent capture from the same device would contend for the
-    mic. Here the browser records each answer instead (the same
-    MediaRecorder flow VoiceRecorder.tsx already uses for
-    POST /api/voice/query), and turn state lives server-side in
-    modules.quizlet_clone.game_modes, keyed by session_id, across requests —
-    so this stays a stateless-per-request endpoint despite the multi-turn
-    game underneath."""
-    try:
-        session_id, state = quizlet_game_modes.start(QuizletCloneUnitOfWork(), request.set_id, QuizletGameMode.VOICE)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    term_text = state.get("term")
-    audio_b64 = await asyncio.to_thread(web_pipeline.synthesize_speech, term_text, "ru") if term_text else None
-    return VoiceGameStartResponse(
-        session_id=session_id,
-        finished=state.get("finished", False),
-        term_text=term_text,
-        term_audio_base64=audio_b64,
-        remaining=state.get("remaining", 0),
-        total=state.get("total", 0),
-    )
-
-
-@app.post("/api/quizlet/voice/answer", response_model=VoiceGameAnswerResponse)
-async def answer_quizlet_voice_game(
-    session_id: str = Form(...), audio: UploadFile = File(...), language: str | None = Form(None)
-) -> VoiceGameAnswerResponse:
-    data = await audio.read()
-    try:
-        transcribed_text = await web_pipeline.transcribe_uploaded_audio(data, audio.filename or "audio.webm", language)
-    except web_pipeline.InvalidAudioError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    try:
-        result = quizlet_game_modes.answer_spoken(QuizletCloneUnitOfWork(), session_id, transcribed_text)
-    except quizlet_game_modes.UnknownSessionError:
-        raise HTTPException(status_code=404, detail=f"Unknown game session: {session_id}") from None
-    except (ValueError, quizlet_game_modes.GameOverError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    correct = bool(result.get("correct"))
-    result_text = "Верно!" if correct else f"Неверно. Правильный ответ: {result.get('expected_definition', '')}"
-    result_audio_b64 = await asyncio.to_thread(web_pipeline.synthesize_speech, result_text, "ru")
-
-    finished = bool(result.get("finished"))
-    next_term_text = None if finished else result.get("term")
-    next_term_audio_b64 = (
-        await asyncio.to_thread(web_pipeline.synthesize_speech, next_term_text, "ru") if next_term_text else None
-    )
-
-    return VoiceGameAnswerResponse(
-        session_id=session_id,
-        transcribed_text=transcribed_text,
-        correct=correct,
-        answered_term=result.get("answered_term", ""),
-        expected_definition=result.get("expected_definition", ""),
-        result_audio_base64=result_audio_b64,
-        finished=finished,
-        next_term_text=next_term_text,
-        next_term_audio_base64=next_term_audio_b64,
-        remaining=result.get("remaining", 0),
-        total=result.get("total", 0),
-    )
 
 
 def _board_game_state_response(
@@ -916,6 +787,344 @@ async def download_blender_addon() -> Response:
     )
 
 
+def _youtube_status_response() -> YouTubeStatusResponse:
+    quota = youtube_service_layer.quota_status()
+    return YouTubeStatusResponse(
+        key_configured=get_secret(youtube_service_layer.API_KEY_SECRET_NAME) is not None,
+        units_used=quota.units_used,
+        daily_limit=quota.daily_limit,
+        remaining_searches=quota.remaining_searches,
+        near_limit=quota.near_limit,
+        exhausted=quota.exhausted,
+    )
+
+
+@app.get("/api/youtube/status", response_model=YouTubeStatusResponse)
+async def get_youtube_status() -> YouTubeStatusResponse:
+    return _youtube_status_response()
+
+
+@app.post("/api/youtube/api_key", response_model=YouTubeStatusResponse)
+async def save_youtube_api_key(request: YouTubeApiKeyRequest) -> YouTubeStatusResponse:
+    try:
+        store_secret(youtube_service_layer.API_KEY_SECRET_NAME, request.api_key)
+    except SecretStoreUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return _youtube_status_response()
+
+
+@app.delete("/api/youtube/api_key", response_model=YouTubeStatusResponse)
+async def delete_youtube_api_key() -> YouTubeStatusResponse:
+    try:
+        delete_secret(youtube_service_layer.API_KEY_SECRET_NAME)
+    except SecretStoreUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return _youtube_status_response()
+
+
+def _gemini_key_status_response() -> GeminiKeyStatusResponse:
+    return GeminiKeyStatusResponse(
+        key_configured=get_secret(api_providers.GEMINI_API_KEY_SECRET_NAME) is not None,
+        requests_used_today=quota_tracker.daily_count(api_providers.GeminiApiAdapter.name),
+        daily_limit=api_providers.GEMINI_RPD_LIMIT,
+    )
+
+
+@app.get("/api/ai_bridge/gemini_api_key", response_model=GeminiKeyStatusResponse)
+async def get_gemini_key_status() -> GeminiKeyStatusResponse:
+    return _gemini_key_status_response()
+
+
+@app.post("/api/ai_bridge/gemini_api_key", response_model=GeminiKeyStatusResponse)
+async def save_gemini_api_key(request: ApiKeyRequest) -> GeminiKeyStatusResponse:
+    try:
+        store_secret(api_providers.GEMINI_API_KEY_SECRET_NAME, request.api_key)
+    except SecretStoreUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return _gemini_key_status_response()
+
+
+@app.delete("/api/ai_bridge/gemini_api_key", response_model=GeminiKeyStatusResponse)
+async def delete_gemini_api_key() -> GeminiKeyStatusResponse:
+    try:
+        delete_secret(api_providers.GEMINI_API_KEY_SECRET_NAME)
+    except SecretStoreUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return _gemini_key_status_response()
+
+
+def _claude_key_status_response() -> ClaudeKeyStatusResponse:
+    return ClaudeKeyStatusResponse(
+        key_configured=get_secret(api_providers.CLAUDE_API_KEY_SECRET_NAME) is not None
+    )
+
+
+@app.get("/api/ai_bridge/claude_api_key", response_model=ClaudeKeyStatusResponse)
+async def get_claude_key_status() -> ClaudeKeyStatusResponse:
+    return _claude_key_status_response()
+
+
+@app.post("/api/ai_bridge/claude_api_key", response_model=ClaudeKeyStatusResponse)
+async def save_claude_api_key(request: ApiKeyRequest) -> ClaudeKeyStatusResponse:
+    try:
+        store_secret(api_providers.CLAUDE_API_KEY_SECRET_NAME, request.api_key)
+    except SecretStoreUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return _claude_key_status_response()
+
+
+@app.delete("/api/ai_bridge/claude_api_key", response_model=ClaudeKeyStatusResponse)
+async def delete_claude_api_key() -> ClaudeKeyStatusResponse:
+    try:
+        delete_secret(api_providers.CLAUDE_API_KEY_SECRET_NAME)
+    except SecretStoreUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return _claude_key_status_response()
+
+
+def _spotify_status_response() -> SpotifyStatusResponse:
+    return SpotifyStatusResponse(
+        client_id_configured=spotify_token_store.get_client_id() is not None,
+        connected=spotify_token_store.is_connected(),
+        redirect_uri=spotify_oauth.redirect_uri(),
+    )
+
+
+@app.get("/api/spotify/status", response_model=SpotifyStatusResponse)
+async def get_spotify_status() -> SpotifyStatusResponse:
+    return _spotify_status_response()
+
+
+@app.post("/api/spotify/client_id", response_model=SpotifyStatusResponse)
+async def save_spotify_client_id(request: SpotifyClientIdRequest) -> SpotifyStatusResponse:
+    try:
+        spotify_token_store.store_client_id(request.client_id)
+    except SecretStoreUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return _spotify_status_response()
+
+
+@app.post("/api/spotify/login", response_model=SpotifyLoginResponse)
+async def start_spotify_login() -> SpotifyLoginResponse:
+    client_id = spotify_token_store.get_client_id()
+    if not client_id:
+        raise HTTPException(status_code=400, detail="Сначала укажите Spotify Client ID.")
+    return SpotifyLoginResponse(authorize_url=spotify_oauth.start_login(client_id))
+
+
+@app.delete("/api/spotify/connection", response_model=SpotifyStatusResponse)
+async def disconnect_spotify() -> SpotifyStatusResponse:
+    try:
+        spotify_token_store.disconnect()
+    except SecretStoreUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return _spotify_status_response()
+
+
+@app.get("/api/spotify/callback")
+async def spotify_oauth_callback(request: Request) -> HTMLResponse:
+    error = request.query_params.get("error")
+    if error:
+        return HTMLResponse(f"<p>Spotify отказал в авторизации: {error}. Можно закрыть эту вкладку.</p>")
+
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    if not code or not state:
+        return HTMLResponse("<p>Некорректный ответ от Spotify. Можно закрыть эту вкладку.</p>", status_code=400)
+
+    code_verifier = spotify_oauth.consume_pending_login(state)
+    if code_verifier is None:
+        return HTMLResponse(
+            "<p>Эта ссылка авторизации устарела или уже была использована. "
+            "Вернитесь в настройки и нажмите «Войти» ещё раз.</p>",
+            status_code=400,
+        )
+
+    client_id = spotify_token_store.get_client_id()
+    if not client_id:
+        return HTMLResponse("<p>Spotify Client ID не найден. Можно закрыть эту вкладку.</p>", status_code=400)
+
+    try:
+        payload = await spotify_oauth.exchange_code(code, code_verifier, client_id)
+    except spotify_oauth.SpotifyOAuthError as exc:
+        logger.exception("Spotify OAuth code exchange failed")
+        return HTMLResponse(f"<p>Не удалось завершить авторизацию: {exc}. Можно закрыть эту вкладку.</p>")
+
+    spotify_token_store.store_refresh_token(payload["refresh_token"])
+    return HTMLResponse("<p>Spotify подключён. Можно закрыть эту вкладку и вернуться в NABVE.</p>")
+
+
+def _generated_image_response(image: GeneratedImage) -> GeneratedImageResponse:
+    assert image.id is not None
+    assert image.created_at is not None
+    return GeneratedImageResponse(
+        id=image.id, prompt=image.prompt, source=image.source, created_at=image.created_at.isoformat()
+    )
+
+
+@app.get("/api/images", response_model=list[GeneratedImageResponse])
+async def list_generated_images() -> list[GeneratedImageResponse]:
+    images = await asyncio.to_thread(image_generation_service_layer.list_images)
+    return [_generated_image_response(image) for image in images]
+
+
+@app.get("/api/images/{image_id}/file")
+async def get_generated_image_file(image_id: int) -> FileResponse:
+    image = await asyncio.to_thread(image_generation_service_layer.get_image, image_id)
+    if image is None or not image.image_path.is_file():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(image.image_path, media_type="image/png")
+
+
+@app.delete("/api/images/{image_id}")
+async def delete_generated_image(image_id: int) -> dict[str, bool]:
+    deleted = await asyncio.to_thread(image_generation_service_layer.delete_image, image_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Image not found")
+    return {"deleted": True}
+
+
+def _github_status_response() -> GithubStatusResponse:
+    return GithubStatusResponse(
+        pat_configured=get_secret(code_analysis_service_layer.GITHUB_PAT_SECRET_NAME) is not None
+    )
+
+
+@app.get("/api/integrations/github_pat", response_model=GithubStatusResponse)
+async def get_github_pat_status() -> GithubStatusResponse:
+    return _github_status_response()
+
+
+@app.post("/api/integrations/github_pat", response_model=GithubStatusResponse)
+async def save_github_pat(request: GithubPatRequest) -> GithubStatusResponse:
+    try:
+        store_secret(code_analysis_service_layer.GITHUB_PAT_SECRET_NAME, request.pat)
+    except SecretStoreUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return _github_status_response()
+
+
+@app.delete("/api/integrations/github_pat", response_model=GithubStatusResponse)
+async def delete_github_pat() -> GithubStatusResponse:
+    try:
+        delete_secret(code_analysis_service_layer.GITHUB_PAT_SECRET_NAME)
+    except SecretStoreUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return _github_status_response()
+
+
+def _telegram_account_response(account) -> TelegramAccountResponse:  # noqa: ANN001
+    assert account.id is not None
+    return TelegramAccountResponse(
+        id=account.id,
+        label=account.label,
+        phone_number=account.phone_number,
+        connected=telegram_service_layer.is_account_connected(account.id),
+    )
+
+
+@app.get("/api/telegram/credentials", response_model=TelegramCredentialsStatusResponse)
+async def get_telegram_credentials_status() -> TelegramCredentialsStatusResponse:
+    return TelegramCredentialsStatusResponse(configured=telegram_login.get_app_credentials() is not None)
+
+
+@app.post("/api/telegram/credentials", response_model=TelegramCredentialsStatusResponse)
+async def save_telegram_credentials(request: TelegramCredentialsRequest) -> TelegramCredentialsStatusResponse:
+    try:
+        telegram_login.store_app_credentials(request.api_id, request.api_hash)
+    except SecretStoreUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return TelegramCredentialsStatusResponse(configured=True)
+
+
+@app.get("/api/telegram/accounts", response_model=list[TelegramAccountResponse])
+async def list_telegram_accounts() -> list[TelegramAccountResponse]:
+    accounts = await asyncio.to_thread(telegram_service_layer.list_accounts)
+    return [_telegram_account_response(a) for a in accounts]
+
+
+@app.delete("/api/telegram/accounts/{account_id}")
+async def delete_telegram_account(account_id: int) -> dict[str, bool]:
+    removed = await telegram_service_layer.remove_account(account_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return {"deleted": True}
+
+
+@app.post("/api/telegram/accounts/login/start", response_model=TelegramLoginStartResponse)
+async def start_telegram_login(request: TelegramLoginStartRequest) -> TelegramLoginStartResponse:
+    try:
+        token = await telegram_service_layer.start_account_login(request.label, request.phone_number)
+    except (telegram_service_layer.TelegramAccountLimitError, telegram_login.TelegramLoginError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TelegramLoginStartResponse(token=token)
+
+
+@app.post("/api/telegram/accounts/login/code", response_model=TelegramLoginCodeResponse)
+async def submit_telegram_login_code(request: TelegramLoginCodeRequest) -> TelegramLoginCodeResponse:
+    try:
+        needs_password, account = await telegram_service_layer.submit_login_code(request.token, request.code)
+    except telegram_login.TelegramLoginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TelegramLoginCodeResponse(
+        needs_password=needs_password,
+        account=_telegram_account_response(account) if account is not None else None,
+    )
+
+
+@app.post("/api/telegram/accounts/login/password", response_model=TelegramAccountResponse)
+async def submit_telegram_login_password(request: TelegramLoginPasswordRequest) -> TelegramAccountResponse:
+    try:
+        account = await telegram_service_layer.submit_login_password(request.token, request.password)
+    except telegram_login.TelegramLoginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _telegram_account_response(account)
+
+
+@app.get("/api/telegram/contacts", response_model=list[TelegramContactResponse])
+async def list_telegram_contacts() -> list[TelegramContactResponse]:
+    contacts = await asyncio.to_thread(telegram_service_layer.list_watched_contacts)
+    return [TelegramContactResponse(id=c.id, identifier=c.identifier, note=c.note) for c in contacts if c.id]
+
+
+@app.post("/api/telegram/contacts", response_model=TelegramContactResponse)
+async def add_telegram_contact(request: TelegramContactRequest) -> TelegramContactResponse:
+    try:
+        contact_id = await asyncio.to_thread(
+            telegram_service_layer.add_watched_contact, request.identifier, request.note
+        )
+    except telegram_service_layer.WatchedContactLimitError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TelegramContactResponse(id=contact_id, identifier=request.identifier, note=request.note)
+
+
+@app.delete("/api/telegram/contacts/{contact_id}")
+async def delete_telegram_contact(contact_id: int) -> dict[str, bool]:
+    removed = await asyncio.to_thread(
+        messaging_service_layer.remove_watched_contact, MessagingUnitOfWork(), contact_id
+    )
+    if not removed:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    return {"deleted": True}
+
+
+@app.get("/api/messaging/pending", response_model=list[PendingMessageResponse])
+async def list_pending_messages() -> list[PendingMessageResponse]:
+    """Frontend-facing (unlike /api/messaging/incoming and
+    /api/messaging/outbound/*, which are the external-bridge contract from
+    modules/messaging/BRIDGE.md) — polled by the Settings UI's pending-
+    messages toast."""
+    pending = await asyncio.to_thread(messaging_service_layer.list_pending, MessagingUnitOfWork())
+    return [
+        PendingMessageResponse(
+            id=m.id, source=m.source, sender_label=m.sender_label, text=m.text,
+            received_at=m.received_at.isoformat() if m.received_at else "",
+        )
+        for m in pending
+        if m.id is not None
+    ]
+
+
 def _meeting_recording_response(recording: MeetingRecording) -> MeetingRecordingResponse:
     assert recording.id is not None
     assert recording.created_at is not None
@@ -1131,6 +1340,255 @@ async def ack_messaging_outbound(message_id: int, request: MessagingOutboundAckR
     if not ok:
         raise HTTPException(status_code=404, detail="Outbound message not found")
     return {"ok": True}
+
+
+def _fitness_bio_profile_response(snapshot: FitnessBioProfileSnapshot) -> FitnessBioProfileResponse:
+    assert snapshot.updated_at is not None
+    category = fitness_calculations.get_bmi_category(snapshot.bmi, snapshot.sex) if snapshot.bmi is not None else None
+    return FitnessBioProfileResponse(
+        sex=snapshot.sex,
+        age=snapshot.age,
+        height_cm=snapshot.height_cm,
+        weight_kg=snapshot.weight_kg,
+        bmi=snapshot.bmi,
+        bmi_category=category,
+        updated_at=snapshot.updated_at.isoformat(),
+    )
+
+
+def _fitness_measurement_response(measurement: FitnessBodyMeasurement) -> FitnessMeasurementResponse:
+    assert measurement.id is not None
+    assert measurement.recorded_at is not None
+    return FitnessMeasurementResponse(
+        id=measurement.id,
+        body_part=measurement.body_part,
+        value_cm=measurement.value_cm,
+        recorded_at=measurement.recorded_at.isoformat(),
+    )
+
+
+def _fitness_goal_response(goal: FitnessGoal) -> FitnessGoalResponse:
+    assert goal.id is not None
+    assert goal.created_at is not None
+    return FitnessGoalResponse(
+        id=goal.id,
+        goal_type=goal.goal_type.value,
+        description=goal.description,
+        target_value=goal.target_value,
+        unit=goal.unit,
+        deadline=goal.deadline.isoformat() if goal.deadline else None,
+        created_at=goal.created_at.isoformat(),
+        achieved_at=goal.achieved_at.isoformat() if goal.achieved_at else None,
+    )
+
+
+def _fitness_meal_response(entry: FitnessMealLogEntry) -> FitnessMealResponse:
+    assert entry.id is not None
+    assert entry.logged_at is not None
+    return FitnessMealResponse(
+        id=entry.id,
+        description=entry.description,
+        estimated_calories=entry.estimated_calories,
+        protein_g=entry.protein_g,
+        fat_g=entry.fat_g,
+        carbs_g=entry.carbs_g,
+        confidence=entry.confidence,
+        source=entry.source,
+        has_photo=entry.photo_path is not None,
+        logged_at=entry.logged_at.isoformat(),
+    )
+
+
+@app.get("/api/fitness/profile", response_model=FitnessBioProfileResponse | None)
+async def get_fitness_profile() -> FitnessBioProfileResponse | None:
+    profile = await asyncio.to_thread(fitness_service_layer.get_current_bio_profile)
+    return _fitness_bio_profile_response(profile) if profile is not None else None
+
+
+@app.post("/api/fitness/profile", response_model=FitnessBioProfileResponse)
+async def update_fitness_profile(request: FitnessBioProfileUpdateRequest) -> FitnessBioProfileResponse:
+    snapshot = await asyncio.to_thread(
+        fitness_service_layer.update_bio_profile,
+        sex=request.sex,
+        age=request.age,
+        height_cm=request.height_cm,
+        weight_kg=request.weight_kg,
+    )
+    return _fitness_bio_profile_response(snapshot)
+
+
+@app.get("/api/fitness/weight_history", response_model=list[FitnessWeightHistoryEntryResponse])
+async def get_fitness_weight_history() -> list[FitnessWeightHistoryEntryResponse]:
+    history = await asyncio.to_thread(fitness_service_layer.list_weight_history)
+    return [
+        FitnessWeightHistoryEntryResponse(weight_kg=entry.weight_kg, recorded_at=entry.updated_at.isoformat())  # type: ignore[union-attr]
+        for entry in history
+    ]
+
+
+@app.get("/api/fitness/measurements", response_model=list[FitnessMeasurementResponse])
+async def list_fitness_measurements(body_part: str | None = None) -> list[FitnessMeasurementResponse]:
+    measurements = await asyncio.to_thread(fitness_service_layer.list_measurements, body_part)
+    return [_fitness_measurement_response(m) for m in measurements]
+
+
+@app.post("/api/fitness/measurements", response_model=FitnessMeasurementResponse)
+async def add_fitness_measurement(request: FitnessMeasurementCreateRequest) -> FitnessMeasurementResponse:
+    measurement = await asyncio.to_thread(fitness_service_layer.add_measurement, request.body_part, request.value_cm)
+    return _fitness_measurement_response(measurement)
+
+
+@app.get("/api/fitness/goals", response_model=list[FitnessGoalResponse])
+async def list_fitness_goals() -> list[FitnessGoalResponse]:
+    goals = await asyncio.to_thread(fitness_service_layer.list_goals)
+    return [_fitness_goal_response(goal) for goal in goals]
+
+
+@app.post("/api/fitness/goals", response_model=FitnessGoalResponse)
+async def add_fitness_goal(request: FitnessGoalCreateRequest) -> FitnessGoalResponse:
+    try:
+        goal_type = FitnessGoalType(request.goal_type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unknown goal_type: {request.goal_type}")
+    deadline = date.fromisoformat(request.deadline) if request.deadline else None
+    goal = await asyncio.to_thread(
+        fitness_service_layer.add_goal, goal_type, request.description, request.target_value, request.unit, deadline
+    )
+    return _fitness_goal_response(goal)
+
+
+@app.delete("/api/fitness/goals/{goal_id}")
+async def delete_fitness_goal(goal_id: int) -> dict[str, bool]:
+    deleted = await asyncio.to_thread(fitness_service_layer.delete_goal, goal_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    return {"deleted": True}
+
+
+@app.get("/api/fitness/meals", response_model=list[FitnessMealResponse])
+async def list_fitness_meals(limit: int | None = None) -> list[FitnessMealResponse]:
+    meals = await asyncio.to_thread(fitness_service_layer.list_meals, limit)
+    return [_fitness_meal_response(meal) for meal in meals]
+
+
+@app.post("/api/fitness/meals/text", response_model=FitnessMealResponse)
+async def log_fitness_meal_text(request: FitnessMealTextRequest) -> FitnessMealResponse:
+    try:
+        analysis = await fitness_meal_analyzer.estimate_from_text(request.description, request.grams)
+    except fitness_meal_analyzer.MealAnalysisError as exc:
+        entry = await asyncio.to_thread(fitness_service_layer.log_meal, request.description, None, "low", "manual")
+        logger.warning("Fitness meal text analysis failed, logged without an estimate: %s", exc)
+        return _fitness_meal_response(entry)
+
+    macros = analysis["macros"]
+    entry = await asyncio.to_thread(
+        fitness_service_layer.log_meal,
+        analysis["description"],
+        analysis["estimated_calories"],
+        analysis["confidence"],
+        "text",
+        macros.get("protein_g"),
+        macros.get("fat_g"),
+        macros.get("carbs_g"),
+    )
+    return _fitness_meal_response(entry)
+
+
+@app.post("/api/fitness/meals/photo", response_model=FitnessMealResponse)
+async def log_fitness_meal_photo(photo: UploadFile = File(...), note: str | None = Form(None)) -> FitnessMealResponse:
+    data = await photo.read()
+    suffix = Path(photo.filename or "").suffix or ".jpg"
+    saved_path = await asyncio.to_thread(fitness_progress_photos.save_photo_bytes, data, suffix)
+
+    try:
+        analysis = await fitness_meal_analyzer.estimate_from_photo(saved_path)
+    except fitness_meal_analyzer.MealAnalysisError as exc:
+        entry = await asyncio.to_thread(
+            fitness_service_layer.log_meal, note or "Фото еды", None, "low", "photo", None, None, None, str(saved_path)
+        )
+        logger.warning("Fitness meal photo analysis failed, logged without an estimate: %s", exc)
+        return _fitness_meal_response(entry)
+
+    macros = analysis["macros"]
+    entry = await asyncio.to_thread(
+        fitness_service_layer.log_meal,
+        analysis["description"],
+        analysis["estimated_calories"],
+        analysis["confidence"],
+        "photo",
+        macros.get("protein_g"),
+        macros.get("fat_g"),
+        macros.get("carbs_g"),
+        str(saved_path),
+    )
+    return _fitness_meal_response(entry)
+
+
+@app.get("/api/fitness/meals/{meal_id}/photo")
+async def get_fitness_meal_photo(meal_id: int) -> FileResponse:
+    meals = await asyncio.to_thread(fitness_service_layer.list_meals)
+    entry = next((m for m in meals if m.id == meal_id), None)
+    if entry is None or not entry.photo_path or not Path(entry.photo_path).is_file():
+        raise HTTPException(status_code=404, detail="Meal photo not found")
+    return FileResponse(entry.photo_path)
+
+
+@app.delete("/api/fitness/meals/{meal_id}")
+async def delete_fitness_meal(meal_id: int) -> dict[str, bool]:
+    deleted = await asyncio.to_thread(fitness_service_layer.delete_meal, meal_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Meal not found")
+    return {"deleted": True}
+
+
+@app.get("/api/fitness/progress_photos", response_model=list[FitnessProgressPhotoResponse])
+async def list_fitness_progress_photos() -> list[FitnessProgressPhotoResponse]:
+    photos = await asyncio.to_thread(fitness_service_layer.list_progress_photos)
+    return [
+        FitnessProgressPhotoResponse(id=p.id, note=p.note, taken_at=p.taken_at.isoformat())  # type: ignore[union-attr]
+        for p in photos
+    ]
+
+
+@app.post("/api/fitness/progress_photos", response_model=FitnessProgressPhotoResponse)
+async def add_fitness_progress_photo(
+    photo: UploadFile = File(...), note: str | None = Form(None)
+) -> FitnessProgressPhotoResponse:
+    data = await photo.read()
+    suffix = Path(photo.filename or "").suffix or ".jpg"
+    saved_path = await asyncio.to_thread(fitness_progress_photos.save_photo_bytes, data, suffix)
+    record = await asyncio.to_thread(fitness_service_layer.add_progress_photo, str(saved_path), note)
+    return FitnessProgressPhotoResponse(id=record.id, note=record.note, taken_at=record.taken_at.isoformat())  # type: ignore[union-attr]
+
+
+@app.get("/api/fitness/progress_photos/{photo_id}/file")
+async def get_fitness_progress_photo_file(photo_id: int) -> FileResponse:
+    photos = await asyncio.to_thread(fitness_service_layer.list_progress_photos)
+    record = next((p for p in photos if p.id == photo_id), None)
+    if record is None or not Path(record.file_path).is_file():
+        raise HTTPException(status_code=404, detail="Progress photo not found")
+    return FileResponse(record.file_path)
+
+
+@app.delete("/api/fitness/progress_photos/{photo_id}")
+async def delete_fitness_progress_photo(photo_id: int) -> dict[str, bool]:
+    photos = await asyncio.to_thread(fitness_service_layer.list_progress_photos)
+    record = next((p for p in photos if p.id == photo_id), None)
+    deleted = await asyncio.to_thread(fitness_service_layer.delete_progress_photo, photo_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Progress photo not found")
+    if record is not None:
+        await asyncio.to_thread(fitness_progress_photos.delete_photo_file, record.file_path)
+    return {"deleted": True}
+
+
+@app.post("/api/fitness/chat", response_model=FitnessChatResponse)
+async def fitness_chat_message(request: FitnessChatRequest) -> FitnessChatResponse:
+    try:
+        reply = await fitness_chat.answer_question(request.text)
+    except fitness_chat.FitnessChatError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return FitnessChatResponse(reply=reply)
 
 
 _FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"

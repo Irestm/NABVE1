@@ -140,7 +140,7 @@ html[data-assistant-theme="pixel"] .voice-option__gender {
   line-height: 1.6;
 }
 
-html[data-assistant-theme="pixel"] .app-tabs__button,
+html[data-assistant-theme="pixel"] .sidebar__item,
 html[data-assistant-theme="pixel"] .voice-lang-toggle button {
   font-size: 0.7em;
 }
@@ -172,7 +172,10 @@ html[data-assistant-theme="pixel"] .plugin-suggestion-card,
 html[data-assistant-theme="pixel"] .confirm-dialog,
 html[data-assistant-theme="pixel"] .plugin-suggestion-warning,
 html[data-assistant-theme="pixel"] .plugin-suggestion-code,
-html[data-assistant-theme="pixel"] .app-tabs,
+html[data-assistant-theme="pixel"] .sidebar,
+html[data-assistant-theme="pixel"] .collapsible-card,
+html[data-assistant-theme="pixel"] .integration-tile,
+html[data-assistant-theme="pixel"] .integration-detail--open,
 html[data-assistant-theme="pixel"] button,
 html[data-assistant-theme="pixel"] .voice-option,
 html[data-assistant-theme="pixel"] input,
@@ -180,7 +183,7 @@ html[data-assistant-theme="pixel"] select {
   box-shadow: 3px 3px 0 0 var(--border);
 }
 
-html[data-assistant-theme="pixel"] .app-tabs__button--active,
+html[data-assistant-theme="pixel"] .sidebar__item--active,
 html[data-assistant-theme="pixel"] button:hover:not(:disabled) {
   box-shadow: 3px 3px 0 0 var(--accent-blue);
 }

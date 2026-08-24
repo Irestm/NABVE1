@@ -1,0 +1,138 @@
+/* ~4x the area of the original 92px tiles (see the 2026-08-24 follow-up
+   redesign) — a real CSS grid instead of flex-wrap so tiles line up in
+   even rows/columns. Explicit column counts per breakpoint (not
+   auto-fill/minmax) so the grid reliably reads as "4 columns" on a normal
+   window — auto-fill let the column count drift with exact pixel width,
+   which didn't reliably land on 4. */
+.integration-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(1, 1fr);
+  gap: 16px;
+}
+
+@media (min-width: 560px) {
+  .integration-tile-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 860px) {
+  .integration-tile-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.integration-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 172px;
+  padding: 24px 14px;
+  border-radius: 20px;
+  background: var(--bg-elevated-glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: transform var(--transition-fast), border-color var(--transition-fast),
+    box-shadow var(--transition-fast), background var(--transition-fast);
+}
+
+.integration-tile:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--brand-color) 60%, var(--border));
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--brand-color) 25%, transparent);
+}
+
+.integration-tile:active {
+  transform: translateY(0) scale(0.97);
+}
+
+.integration-tile--active {
+  background: color-mix(in srgb, var(--brand-color) 16%, var(--bg-elevated-glass));
+  border-color: var(--brand-color);
+  color: var(--text);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--brand-color) 40%, transparent);
+}
+
+.integration-tile__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  padding: 16px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--brand-color) 18%, transparent);
+  color: var(--brand-color);
+}
+
+/* The icon components (lucide-react / react-simple-icons) render with
+   whatever fixed `size` prop the call site passed — scaling via CSS
+   instead means the same <SiWordpress .../> element works both as this
+   big 72px tile face AND (reused as-is for openTile.icon, see
+   IntegrationsPanel.tsx) the small title icon in .integration-detail__title
+   below, without needing two differently-sized copies of every icon. */
+.integration-tile__icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.integration-tile__name {
+  line-height: 1.2;
+}
+
+.integration-detail {
+  /* Every plain <button> and ApiKeyField's "configured" text inside picks
+     this up automatically (see App.css's global `button` rule and
+     ApiKeyField.css's __success rule, both keyed off --section-accent) —
+     no per-component brand-color plumbing needed beyond this one line. */
+  --section-accent: var(--brand-color);
+  border-radius: 14px;
+  background: var(--bg-elevated-glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid transparent;
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--transition-med), border-color var(--transition-med),
+    box-shadow var(--transition-med);
+}
+
+.integration-detail--open {
+  grid-template-rows: 1fr;
+  margin-top: 4px;
+  border-color: color-mix(in srgb, var(--brand-color) 45%, var(--border));
+  box-shadow: 0 0 20px color-mix(in srgb, var(--brand-color) 16%, transparent);
+}
+
+.integration-detail__inner {
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 14px;
+}
+
+.integration-detail--open .integration-detail__inner {
+  padding: 14px;
+}
+
+.integration-detail__title {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: var(--font-size-md);
+  color: var(--brand-color);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

@@ -1,0 +1,18 @@
+.text-editing-panel__textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--bg-elevated-glass);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.text-editing-panel__result {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}

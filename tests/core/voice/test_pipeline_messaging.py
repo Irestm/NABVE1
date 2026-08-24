@@ -356,6 +356,69 @@ def test_resolve_messaging_snooze_gives_up_when_duration_never_parses(tmp_path, 
     assert result is None
 
 
+# --- _resolve_edit_pending_message -------------------------------------------
+
+
+def test_resolve_edit_pending_message_asks_for_instruction(tmp_path, monkeypatch) -> None:
+    uow_factory = _uow_factory(tmp_path)
+    monkeypatch.setattr(pipeline_module, "MessagingUnitOfWork", uow_factory)
+    messaging_service_layer.add_watched_contact(uow_factory(), "telegram", "ira")
+    pending = messaging_service_layer.record_incoming_message(
+        uow_factory(), "telegram", "ira", "Ира", "привет, как дела"
+    )
+
+    loop = _make_loop()
+    monkeypatch.setattr(loop, "_speak_safely", lambda tts, text, language: False)
+    monkeypatch.setattr(
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+    )
+
+    command = Command(name="edit_pending_message", params={"raw_target": "ira"})
+    command_stt = _FakeSTT(["сделай короче"])
+
+    result, interrupted = loop._resolve_edit_pending_message(command, command_stt, tts=None, response_language="ru")
+
+    assert interrupted is False
+    assert result == Command(
+        name="edit_pending_message", params={"message_id": pending.id, "instruction": "сделай короче"}
+    )
+
+
+def test_resolve_edit_pending_message_gives_up_on_an_empty_instruction(tmp_path, monkeypatch) -> None:
+    uow_factory = _uow_factory(tmp_path)
+    monkeypatch.setattr(pipeline_module, "MessagingUnitOfWork", uow_factory)
+    messaging_service_layer.add_watched_contact(uow_factory(), "telegram", "ira")
+    messaging_service_layer.record_incoming_message(uow_factory(), "telegram", "ira", "Ира", "привет")
+
+    loop = _make_loop()
+    monkeypatch.setattr(loop, "_speak_safely", lambda tts, text, language: False)
+    monkeypatch.setattr(
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+    )
+
+    command = Command(name="edit_pending_message", params={"raw_target": "ira"})
+    command_stt = _FakeSTT([""])
+
+    result, interrupted = loop._resolve_edit_pending_message(command, command_stt, tts=None, response_language="ru")
+
+    assert result is None
+
+
+def test_resolve_edit_pending_message_returns_none_when_nothing_pending(tmp_path, monkeypatch) -> None:
+    uow_factory = _uow_factory(tmp_path)
+    monkeypatch.setattr(pipeline_module, "MessagingUnitOfWork", uow_factory)
+
+    loop = _make_loop()
+    monkeypatch.setattr(loop, "_speak_safely", lambda tts, text, language: False)
+
+    command = Command(name="edit_pending_message", params={"raw_target": ""})
+
+    result, interrupted = loop._resolve_edit_pending_message(command, command_stt=None, tts=None, response_language="ru")
+
+    assert result is None
+    assert interrupted is False
+
+
 # --- _handle_command: "ответь"/"отложи" with nothing pending falls through to AI ---
 
 

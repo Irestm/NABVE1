@@ -85,6 +85,11 @@ class CommandResponse(BaseModel):
 class StatusResponse(BaseModel):
     state: AssistantState
     detail: str = ""
+    # Name of the currently active voice module context (e.g. "fitness"),
+    # or None when no such context is active — see
+    # core/voice/module_context.py. CentralOrb.tsx uses this to show a small
+    # indicator of which focused mode Jarvis is currently listening in.
+    active_module_context: str | None = None
 
 
 class CommandDescriptor(BaseModel):
@@ -316,58 +321,6 @@ class CustomCommandListResponse(BaseModel):
     commands: list[CustomCommandResponse]
 
 
-class QuizletAuthStatus(BaseModel):
-    logged_in: bool
-
-
-class TermPairRequest(BaseModel):
-    term: str
-    definition: str
-
-
-class SaveStudySetRequest(BaseModel):
-    set_id: str | None = None
-    title: str
-    terms: list[TermPairRequest]
-
-
-class TermResponse(BaseModel):
-    id: str
-    term: str
-    definition: str
-    times_seen: int
-    times_correct: int
-    times_wrong: int
-    learned: bool
-
-
-class StudySetResponse(BaseModel):
-    id: str
-    title: str
-    source: str
-    quizlet_set_id: str | None
-    created_at: str
-    progress_percent: int
-    attempts_count: int
-    terms: list[TermResponse]
-
-
-class StudySetListResponse(BaseModel):
-    sets: list[StudySetResponse]
-
-
-class LibrarySetResponse(BaseModel):
-    quizlet_set_id: str
-    title: str
-    term_count: int
-    already_imported: bool
-    local_set_id: str | None
-
-
-class QuizletLibraryResponse(BaseModel):
-    sets: list[LibrarySetResponse]
-
-
 class BoardGameStartRequest(BaseModel):
     kind: str  # "chess" | "checkers"
     difficulty: str | None = None  # "very_easy".."impossible" (modules.board_games.domain.Difficulty) or None
@@ -404,38 +357,210 @@ class BoardGameStateResponse(BaseModel):
     mistake_message: str | None = None
 
 
-class GameStartRequest(BaseModel):
-    set_id: str
-    mode: str
+class YouTubeApiKeyRequest(BaseModel):
+    api_key: str = Field(..., min_length=1)
 
 
-class GameStateResponse(BaseModel):
-    session_id: str
-    state: dict[str, Any]
+class YouTubeStatusResponse(BaseModel):
+    key_configured: bool
+    units_used: int
+    daily_limit: int
+    remaining_searches: int
+    near_limit: bool
+    exhausted: bool
 
 
-class GameAnswerRequest(BaseModel):
-    payload: dict[str, Any] = Field(default_factory=dict)
+class ApiKeyRequest(BaseModel):
+    api_key: str = Field(..., min_length=1)
 
 
-class VoiceGameStartResponse(BaseModel):
-    session_id: str
-    finished: bool
-    term_text: str | None
-    term_audio_base64: str | None
-    remaining: int
-    total: int
+class GeminiKeyStatusResponse(BaseModel):
+    key_configured: bool
+    requests_used_today: int
+    daily_limit: int
 
 
-class VoiceGameAnswerResponse(BaseModel):
-    session_id: str
-    transcribed_text: str
-    correct: bool
-    answered_term: str
-    expected_definition: str
-    result_audio_base64: str | None
-    finished: bool
-    next_term_text: str | None
-    next_term_audio_base64: str | None
-    remaining: int
-    total: int
+class ClaudeKeyStatusResponse(BaseModel):
+    key_configured: bool
+
+
+class SpotifyClientIdRequest(BaseModel):
+    client_id: str = Field(..., min_length=1)
+
+
+class SpotifyStatusResponse(BaseModel):
+    client_id_configured: bool
+    connected: bool
+    redirect_uri: str
+
+
+class SpotifyLoginResponse(BaseModel):
+    authorize_url: str
+
+
+class GeneratedImageResponse(BaseModel):
+    id: int
+    prompt: str
+    source: str
+    created_at: str
+
+
+class TranscribeResponse(BaseModel):
+    text: str
+
+
+class GithubPatRequest(BaseModel):
+    pat: str = Field(..., min_length=1)
+
+
+class GithubStatusResponse(BaseModel):
+    pat_configured: bool
+
+
+class TelegramCredentialsRequest(BaseModel):
+    api_id: int
+    api_hash: str = Field(..., min_length=1)
+
+
+class TelegramCredentialsStatusResponse(BaseModel):
+    configured: bool
+
+
+class TelegramAccountResponse(BaseModel):
+    id: int
+    label: str
+    phone_number: str
+    connected: bool
+
+
+class TelegramLoginStartRequest(BaseModel):
+    label: str = Field(..., min_length=1)
+    phone_number: str = Field(..., min_length=1)
+
+
+class TelegramLoginStartResponse(BaseModel):
+    token: str
+
+
+class TelegramLoginCodeRequest(BaseModel):
+    token: str = Field(..., min_length=1)
+    code: str = Field(..., min_length=1)
+
+
+class TelegramLoginCodeResponse(BaseModel):
+    needs_password: bool
+    account: TelegramAccountResponse | None = None
+
+
+class TelegramLoginPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+
+
+class TelegramContactRequest(BaseModel):
+    identifier: str = Field(..., min_length=1)
+    note: str = ""
+
+
+class TelegramContactResponse(BaseModel):
+    id: int
+    identifier: str
+    note: str
+
+
+class PendingMessageResponse(BaseModel):
+    id: int
+    source: str
+    sender_label: str
+    text: str
+    received_at: str
+
+
+class FitnessBioProfileResponse(BaseModel):
+    sex: str | None
+    age: int | None
+    height_cm: float | None
+    weight_kg: float | None
+    bmi: float | None
+    bmi_category: str | None
+    updated_at: str
+
+
+class FitnessBioProfileUpdateRequest(BaseModel):
+    sex: str | None = None
+    age: int | None = None
+    height_cm: float | None = None
+    weight_kg: float | None = None
+
+
+class FitnessWeightHistoryEntryResponse(BaseModel):
+    weight_kg: float
+    recorded_at: str
+
+
+class FitnessMeasurementResponse(BaseModel):
+    id: int
+    body_part: str
+    value_cm: float
+    recorded_at: str
+
+
+class FitnessMeasurementCreateRequest(BaseModel):
+    body_part: str = Field(..., min_length=1)
+    value_cm: float
+
+
+class FitnessGoalResponse(BaseModel):
+    id: int
+    goal_type: str
+    description: str
+    target_value: float | None
+    unit: str | None
+    deadline: str | None
+    created_at: str
+    achieved_at: str | None
+
+
+class FitnessGoalCreateRequest(BaseModel):
+    goal_type: str
+    description: str = Field(..., min_length=1)
+    target_value: float | None = None
+    unit: str | None = None
+    deadline: str | None = None
+
+
+class FitnessMealResponse(BaseModel):
+    id: int
+    description: str
+    estimated_calories: float | None
+    protein_g: float | None
+    fat_g: float | None
+    carbs_g: float | None
+    confidence: str
+    source: str
+    has_photo: bool
+    logged_at: str
+
+
+class FitnessMealTextRequest(BaseModel):
+    description: str = Field(..., min_length=1)
+    grams: float | None = None
+
+
+# progress photos and meal photos deliberately expose no raw filesystem
+# path in their REST responses (same privacy-conscious shape
+# GeneratedImageResponse already uses for generated images) — the actual
+# bytes are served by a dedicated /file endpoint instead, keyed by id.
+class FitnessProgressPhotoResponse(BaseModel):
+    id: int
+    note: str | None
+    taken_at: str
+
+
+class FitnessChatRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+
+
+class FitnessChatResponse(BaseModel):
+    reply: str
+

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from core.models import GENERIC_EXECUTED_MESSAGE, CommandResponse, CommandStatus
+from core.voice import responses as responses_module
 from core.voice.responses import localize_response, not_understood, tray_hide_ack, tray_show_ack
 
 
@@ -36,10 +37,19 @@ def test_localize_response_falls_back_to_english_for_unknown_language() -> None:
     assert localize_response(_response(CommandStatus.EXECUTED), "fr") == "Done."
 
 
-def test_not_understood_per_language() -> None:
-    assert not_understood("ru") == "Не поняла команду."
+def test_not_understood_per_language_default_gender_is_male(monkeypatch) -> None:
+    monkeypatch.setattr(responses_module.gender_module, "get_user_gender", lambda: "male")
+
+    assert not_understood("ru") == "Не понял команду."
     assert not_understood("en") == "I didn't understand that command."
     assert not_understood("fr") == "I didn't understand that command."
+
+
+def test_not_understood_uses_female_form_when_gender_is_female(monkeypatch) -> None:
+    monkeypatch.setattr(responses_module.gender_module, "get_user_gender", lambda: "female")
+
+    assert not_understood("ru") == "Не поняла команду."
+    assert not_understood("uk") == "Не зрозуміла команду."
 
 
 def test_tray_hide_and_show_ack_per_language() -> None:

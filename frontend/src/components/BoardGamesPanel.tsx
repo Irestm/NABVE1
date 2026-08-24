@@ -467,16 +467,14 @@ export function BoardGamesPanel(): JSX.Element {
 
   if (!loaded) {
     return (
-      <div className="section board-games-panel">
-        <h3>Игры</h3>
+      <div className="board-games-panel">
         <p className="status-detail">Загрузка…</p>
       </div>
     );
   }
 
   return (
-    <div className="section board-games-panel">
-      <h3>Игры</h3>
+    <div className="board-games-panel">
       {error && <p className="status-error">{error}</p>}
 
       {!state ? (

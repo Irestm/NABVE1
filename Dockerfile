@@ -14,6 +14,8 @@ ARG GID=1000
 #   xdg-utils     -> xdg-open fallback for open_application
 #   dbus          -> client libs to reach the host's D-Bus (shutdown/reboot, keyring, notify-send)
 #   curl          -> container healthcheck
+#   xvfb          -> hidden display for ai_bridge's headed-but-invisible browser automation
+#                    (modules/ai_bridge/virtual_display.py) — see requirements.txt's own note
 # tkinter itself ships pre-built in the official python image, no extra apt
 # package needed for it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -28,6 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dbus \
     ca-certificates \
     curl \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # A real user (not a bare numeric UID passed via `docker run --user`) so

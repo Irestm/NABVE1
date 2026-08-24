@@ -49,7 +49,7 @@ def test_resolve_player_move_matches_by_index(monkeypatch: pytest.MonkeyPatch) -
     session = _checkers_game_session()
     candidates = service_layer.legal_move_labels(session)
     adapter = _FakeAdapter("local", "2")
-    monkeypatch.setattr(service_layer, "local_first_chain", lambda: [adapter])
+    monkeypatch.setattr(service_layer, "candidate_chain", lambda text: [adapter])
 
     resolved = asyncio.run(service_layer.resolve_player_move(session, "какой-то ход"))
 
@@ -59,7 +59,7 @@ def test_resolve_player_move_matches_by_index(monkeypatch: pytest.MonkeyPatch) -
 def test_resolve_player_move_returns_none_when_model_says_no(monkeypatch: pytest.MonkeyPatch) -> None:
     session = _checkers_game_session()
     adapter = _FakeAdapter("local", "нет")
-    monkeypatch.setattr(service_layer, "local_first_chain", lambda: [adapter])
+    monkeypatch.setattr(service_layer, "candidate_chain", lambda text: [adapter])
 
     assert asyncio.run(service_layer.resolve_player_move(session, "непонятно что")) is None
 
@@ -68,7 +68,7 @@ def test_resolve_player_move_falls_through_a_failing_adapter(monkeypatch: pytest
     session = _checkers_game_session()
     candidates = service_layer.legal_move_labels(session)
     working = _FakeAdapter("cloud", "0")
-    monkeypatch.setattr(service_layer, "local_first_chain", lambda: [_FailingAdapter(), working])
+    monkeypatch.setattr(service_layer, "candidate_chain", lambda text: [_FailingAdapter(), working])
 
     resolved = asyncio.run(service_layer.resolve_player_move(session, "первый ход"))
 
@@ -77,7 +77,7 @@ def test_resolve_player_move_falls_through_a_failing_adapter(monkeypatch: pytest
 
 def test_resolve_player_move_returns_none_when_every_adapter_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     session = _checkers_game_session()
-    monkeypatch.setattr(service_layer, "local_first_chain", lambda: [_FailingAdapter()])
+    monkeypatch.setattr(service_layer, "candidate_chain", lambda text: [_FailingAdapter()])
 
     assert asyncio.run(service_layer.resolve_player_move(session, "что угодно")) is None
 

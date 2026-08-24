@@ -73,7 +73,7 @@ def test_change_color_without_any_known_layer_returns_none(monkeypatch):
     # test_unrecognized_text_falls_through_to_none_when_ai_unavailable)
     # so a regression that DID fall through couldn't silently hit a real
     # AI provider from this unit test.
-    monkeypatch.setattr(command_parser, "local_first_chain", lambda: [])
+    monkeypatch.setattr(command_parser, "candidate_chain", lambda text: [])
     parsed = _parse("сделай его красным")
     assert parsed is None
 
@@ -106,6 +106,6 @@ def test_unrecognized_text_falls_through_to_none_when_ai_unavailable(monkeypatch
         name = "fake"
         send_prompt = staticmethod(_raise)
 
-    monkeypatch.setattr(command_parser, "local_first_chain", lambda: [_FailingAdapter()])
+    monkeypatch.setattr(command_parser, "candidate_chain", lambda text: [_FailingAdapter()])
     parsed = _parse("расскажи мне анекдот")
     assert parsed is None

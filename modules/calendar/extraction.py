@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
-from core.ai_adapter_chain import local_first_chain
+from core.ai_adapter_chain import candidate_chain
 from core.logger import get_logger
 from modules.calendar.domain import RecurrenceRule
 
@@ -111,7 +111,7 @@ async def extract_event(text: str, now: datetime | None = None) -> ExtractedEven
     now = now or datetime.now()
     prompt = _build_prompt(text, now)
 
-    for adapter in local_first_chain():
+    for adapter in candidate_chain(text):
         try:
             raw = await adapter.send_prompt(prompt, fast_mode=True)
         except Exception as exc:

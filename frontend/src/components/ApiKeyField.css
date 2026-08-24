@@ -1,0 +1,74 @@
+/* Self-contained as of the 2026-08-24 redesign — used to reach into
+   components/SettingsPanel.css's settings-panel__field/__label/__success
+   classes even when rendered somewhere that never imports that file (now
+   exclusively inside components/IntegrationsPanel.tsx's brand-colored
+   tiles, see IntegrationTile.css's --brand-color -> --section-accent
+   hand-off). */
+.api-key-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.api-key-field__label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.api-key-field__success {
+  margin: 0;
+  font-size: 14px;
+  color: var(--section-accent, var(--accent-green));
+}
+
+/* Instruction text was still reading small at 80% zoom-out even after the
+   first font pass (which mostly caught secondary labels/badges, not the
+   actual instruction body copy people are meant to read step by step) —
+   bumped this and .api-key-field__steps noticeably rather than by 1px. */
+.api-key-field__toggle {
+  min-height: var(--control-height-sm);
+  padding: 8px 14px;
+  font-size: 15px;
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  align-self: flex-start;
+}
+
+.api-key-field__toggle:hover:not(:disabled) {
+  border-color: var(--accent-blue);
+  color: var(--text);
+}
+
+.api-key-field__steps {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.api-key-field__steps li {
+  padding-left: 2px;
+}
+
+.api-key-field__eye {
+  min-height: var(--control-height-sm);
+  min-width: var(--control-height-sm);
+  padding: 0 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.api-key-field__eye:hover:not(:disabled) {
+  border-color: var(--accent-blue);
+  color: var(--text);
+}

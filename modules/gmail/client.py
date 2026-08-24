@@ -199,3 +199,68 @@ def list_new_messages(service: Any, start_history_id: str) -> tuple[list[dict[st
 
     new_history_id = str(response.get("historyId", start_history_id))
     return messages, new_history_id
+
+
+def search_messages(service: Any, query: str, max_results: int = 5) -> list[dict[str, str]]:
+    """Voice-driven search/listing (see modules/gmail/command_parser.py) —
+    a plain messages().list(q=...) query, unlike list_new_messages' history
+    API cursor walk above. `query` is raw Gmail search syntax ("from:x",
+    "subject:y", "is:unread", or free text) built by the caller. Returns
+    the same from_email/from_name/subject/snippet shape as
+    list_new_messages, newest first (Gmail's own default order)."""
+    response = (
+        service.users().messages().list(userId="me", q=query, maxResults=max_results).execute()
+    )
+    messages: list[dict[str, str]] = []
+    for stub in response.get("messages", []):
+        detail = (
+            service.users()
+            .messages()
+            .get(userId="me", id=stub["id"], format="metadata", metadataHeaders=["From", "Subject"])
+            .execute()
+        )
+        headers = detail.get("payload", {}).get("headers", [])
+        email, name = _parse_sender(_extract_header(headers, "From"))
+        messages.append(
+            {
+                "id": stub["id"],
+                "from_email": email,
+                "from_name": name,
+                "subject": _extract_header(headers, "Subject"),
+                "snippet": detail.get("snippet", ""),
+            }
+        )
+    return messages
+
+
+def _extract_plain_text(payload: dict[str, Any]) -> str:
+    """Recursively walks a Gmail message payload's MIME parts for the first
+    text/plain body, base64url-decoding it. Gmail wraps a plain-text-only
+    message directly in payload.body; a multipart message (plain + HTML,
+    attachments, ...) nests it inside payload.parts, possibly more than one
+    level deep for multipart/alternative-within-multipart/mixed — so this
+    recurses rather than only checking the top level or one level of
+    parts."""
+    import base64
+
+    if payload.get("mimeType") == "text/plain":
+        data = payload.get("body", {}).get("data")
+        if data:
+            # Gmail's base64url omits padding; urlsafe_b64decode requires
+            # it, hence the "==" (decode() below only consumes as much
+            # padding as it actually needs).
+            return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace")
+    for part in payload.get("parts") or []:
+        text = _extract_plain_text(part)
+        if text:
+            return text
+    return ""
+
+
+def get_message_body(service: Any, message_id: str) -> str:
+    """Full plain-text body for voice read-aloud (see
+    modules/gmail/dispatcher.py's read_email action) — falls back to the
+    snippet Gmail already gives every message if no text/plain part is
+    found (e.g. an HTML-only message)."""
+    detail = service.users().messages().get(userId="me", id=message_id, format="full").execute()
+    return _extract_plain_text(detail.get("payload", {})) or detail.get("snippet", "")

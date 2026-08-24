@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from core.ai_adapter_chain import local_first_chain
+from core.ai_adapter_chain import candidate_chain
 from core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -273,7 +273,7 @@ def _parse_ai_response(raw: str) -> ParsedFigmaCommand | None:
 
 async def _parse_with_ai(text: str) -> ParsedFigmaCommand | None:
     prompt = _build_ai_prompt(text)
-    for adapter in local_first_chain():
+    for adapter in candidate_chain(text):
         try:
             raw = await adapter.send_prompt(prompt, fast_mode=True)
         except Exception as exc:

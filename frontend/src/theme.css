@@ -2,6 +2,19 @@
   --bg: #060a10;
   --bg-elevated: #0e161f;
   --bg-panel: #101b26;
+  /* Translucent variants of the two surface colors above, used by every
+     card/panel/tile background instead of the solid originals (see the
+     2026-08-24 follow-up redesign — a background animation is planned, so
+     panels need to let it show through rather than hide it). Defined once
+     here as color-mix() over the plain custom properties, not as fixed
+     rgba() values, so each of design/themes.css's per-theme overrides
+     (which only redefine --bg-panel/--bg-elevated themselves) is picked up
+     automatically — no need to touch all 6 theme blocks separately. --bg
+     itself (the outermost canvas) stays solid on purpose: it's the thing
+     the future animation replaces, not a surface that should show it
+     through a second layer of blur. */
+  --bg-panel-glass: color-mix(in srgb, var(--bg-panel) 74%, transparent);
+  --bg-elevated-glass: color-mix(in srgb, var(--bg-elevated) 78%, transparent);
   --border: #1c2b3a;
 
   --text: #e8f4fb;
@@ -43,9 +56,21 @@
      this just names that value so the rest of the app can match it instead
      of drifting below it again (see App-wide UX audit, 2026-08-18). */
   --control-height-sm: 28px;
-  --font-size-xs: 12px;
-  --font-size-sm: 13px;
-  --font-size-md: 14px;
+  /* Bumped a notch (12/13/14 -> 13/14/15) as part of the 2026-08-24 redesign
+     — the old sizes read as cramped once paired with a real typeface
+     instead of the OS-default stack. */
+  --font-size-xs: 13px;
+  --font-size-sm: 14px;
+  --font-size-md: 15px;
+  --font-size-lg: 18px;
+
+  /* Fraunces (self-hosted, see main.tsx) for headings/titles — an editorial
+     serif with real character, the "noble" register the 2026-08-24 redesign
+     asked for. Inter for everything else — one consistent typeface across
+     Windows/Linux/Mac instead of each OS substituting its own default for
+     whichever name in the old fallback stack it happened to have. */
+  --font-heading: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-body: "Inter", -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 * {
@@ -57,7 +82,8 @@ body {
   margin: 0;
   height: 100%;
   color: var(--text);
-  font-family: -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
+  font-family: var(--font-body);
+  font-size: var(--font-size-md);
   -webkit-font-smoothing: antialiased;
   user-select: none;
   /* Base color, a very faint fixed grid (a HUD "graticule"), and a soft
@@ -74,6 +100,12 @@ body {
 
 #root {
   height: 100%;
+}
+
+h2 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 ::-webkit-scrollbar {

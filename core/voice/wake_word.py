@@ -16,6 +16,8 @@ from core.voice.stt import SpeechToText
 # resolve_wake_phrases, the only place this is read.
 DEFAULT_WAKE_PHRASES: tuple[str, ...] = ("привет", "привет джарвис", "эй джарвис", "привет набве")
 
+MIN_CUSTOM_WAKE_PHRASE_LENGTH = 4
+
 
 def resolve_wake_phrases(settings: VoiceSettings, custom_phrase: str | None) -> tuple[str, ...]:
     """The full set of phrases that should activate the assistant:
@@ -31,12 +33,20 @@ def resolve_wake_phrases(settings: VoiceSettings, custom_phrase: str | None) -> 
     "ассистент", or a custom phrase may coincide with a default entry."""
     seen: set[str] = set()
     phrases: list[str] = []
-    for phrase in (*DEFAULT_WAKE_PHRASES, settings.wake_word, custom_phrase or ""):
+
+    def add(phrase: str, *, is_custom: bool = False) -> None:
         normalized = phrase.strip().lower()
         if not normalized or normalized in seen:
-            continue
+            return
+        if is_custom and len(normalized) < MIN_CUSTOM_WAKE_PHRASE_LENGTH:
+            return
         seen.add(normalized)
         phrases.append(phrase.strip())
+
+    for phrase in (*DEFAULT_WAKE_PHRASES, settings.wake_word):
+        add(phrase)
+    if custom_phrase:
+        add(custom_phrase, is_custom=True)
     return tuple(phrases)
 
 

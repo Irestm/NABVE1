@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import random
 
+from core.voice import gender as gender_module
 from modules.user_profile import service_layer as profile_service_layer
-from modules.user_profile.domain import CONFIRMATION_PHRASE_ENABLED_KEY, DEFAULT_GENDER, GENDER_KEY
+from modules.user_profile.domain import CONFIRMATION_PHRASE_ENABLED_KEY
 from modules.user_profile.uow import ProfileUnitOfWork
 
 # Jarvis-style "acknowledge, then act" phrasing — see core/voice/pipeline.py's
@@ -29,8 +30,7 @@ def get_confirmation_phrase() -> str:
     settings takes effect on the very next command. Avoids repeating the
     same phrase twice in a row when more than one variant is available."""
     global _last_phrase
-    gender = profile_service_layer.get_fact(ProfileUnitOfWork(), GENDER_KEY) or DEFAULT_GENDER
-    phrases = _FEMALE_PHRASES if gender == "female" else _MALE_PHRASES
+    phrases = _FEMALE_PHRASES if gender_module.get_user_gender() == "female" else _MALE_PHRASES
     candidates = [phrase for phrase in phrases if phrase != _last_phrase] or list(phrases)
     phrase = random.choice(candidates)
     _last_phrase = phrase

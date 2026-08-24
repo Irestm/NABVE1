@@ -1,0 +1,53 @@
+.fitness-measurements {
+  --section-accent: var(--accent-green);
+}
+
+.fitness-measurements__grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-top: 6px;
+}
+
+@media (max-width: 420px) {
+  .fitness-measurements__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.fitness-measurements__card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--bg-elevated-glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--item-accent, var(--accent-green));
+}
+
+.fitness-measurements__card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fitness-measurements__card-label {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.fitness-measurements__card-delta {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--item-accent, var(--accent-green));
+}
+
+.fitness-measurements__card-value {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 18px;
+  color: var(--text);
+}

@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from core.ai_adapter_chain import local_first_chain
+from core.ai_adapter_chain import candidate_chain
 from core.logger import get_logger
 from modules.app_catalog import catalog
 from modules.app_catalog.domain import InstalledApp
@@ -70,7 +70,7 @@ async def resolve(query: str) -> ResolvedApp | None:
     see core/voice/intent.py's _OPEN_APP_PATTERNS) to one of the apps/games
     actually installed on this machine (modules.app_catalog.catalog).
 
-    Tries local_first_chain()'s adapters in order (local model, then the
+    Tries candidate_chain()'s adapters in order (local model, then the
     ai_bridge cloud chain) — unlike routing an ordinary free-text question
     (core/voice/ai_router.py), there's no "is this complex" branch here,
     since resolving a niche game/app name is exactly the kind of thing the
@@ -96,7 +96,7 @@ async def resolve(query: str) -> ResolvedApp | None:
     prompt = _build_prompt(query, candidates)
 
     best: ResolvedApp | None = None
-    for adapter in local_first_chain():
+    for adapter in candidate_chain(query):
         try:
             raw = await adapter.send_prompt(prompt, fast_mode=True)
         except Exception as exc:

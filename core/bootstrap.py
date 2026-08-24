@@ -17,29 +17,38 @@ from modules.calendar import reminder_checker, register_commands as register_cal
 from modules.calendar.events import ReminderDue
 from modules.calendar.notifier import ReminderChecker
 from modules.cmd_executor import register_commands as register_cmd_executor_commands
+from modules.code_analysis import register_commands as register_code_analysis_commands
 from modules.crm_transcribe import register_commands as register_crm_transcribe_commands
 from modules.custom_commands import register_commands as register_custom_commands_commands
 from modules.figma_control import register_commands as register_figma_control_commands
 from modules.files import register_commands as register_files_commands
-from modules.gmail import gmail_poller
+from modules.gmail import gmail_poller, register_commands as register_gmail_commands
 from modules.gmail.poller import GmailPoller
 from modules.hardware_adaptive import command_classifier, hardware_monitor, register_commands as register_hardware_adaptive_commands
 from modules.hardware_adaptive.events import HardwareAlertRaised
 from modules.hardware_adaptive.system_monitor import HardwareMonitor
+from modules.image_generation import register_commands as register_image_generation_commands
 from modules.media import register_commands as register_media_commands
+from modules.media_control import register_commands as register_media_control_commands
 from modules.meeting_recorder import recording_processor, recording_transcriber
 from modules.meeting_recorder.processor import RecordingProcessor
 from modules.meeting_recorder.transcriber_worker import RecordingTranscriber
 from modules.messaging import register_commands as register_messaging_commands
 from modules.messaging import snooze_checker
 from modules.messaging.snooze_checker import SnoozeChecker
+from modules.office_access import register_commands as register_office_access_commands
+from modules.office_excel import register_commands as register_office_excel_commands
+from modules.office_impress import register_commands as register_office_impress_commands
+from modules.office_notes import register_commands as register_office_notes_commands
+from modules.office_writer import register_commands as register_office_writer_commands
 from modules.password_manager import register_commands as register_password_manager_commands
 from modules.plugin_agent import register_commands as register_plugin_agent_commands
 from modules.plugin_agent import shutdown as shutdown_plugin_agent
 from modules.plugin_agent.events import PluginCandidateReadyForReview
-from modules.quizlet_clone import register_commands as register_quizlet_clone_commands
 from modules.search import register_commands as register_search_commands
+from modules.spotify_control import register_commands as register_spotify_control_commands
 from modules.task_orchestrator import register_commands as register_task_orchestrator_commands
+from modules.text_editing import register_commands as register_text_editing_commands
 from modules.timer import register_commands as register_timer_commands
 from modules.timer.events import TimerFired
 from modules.timer.notification_adapter import send_desktop_notification as send_timer_desktop_notification
@@ -47,6 +56,7 @@ from modules.ui_automation import register_commands as register_ui_automation_co
 from modules.ui_control import register_commands as register_ui_control_commands
 from modules.user_profile import register_commands as register_user_profile_commands
 from modules.wordpress_bridge import register_commands as register_wordpress_bridge_commands
+from modules.youtube_control import register_commands as register_youtube_control_commands
 
 
 @dataclass
@@ -83,11 +93,12 @@ class Composed:
     # of its own, just a background poller" shape as recording_processor
     # above — see that comment.
     messaging_snooze_checker: SnoozeChecker
-    # modules.gmail has no dispatcher commands either (read-only — see the
-    # module's own docstring): modules.messaging's existing
+    # gmail_poller itself still has no dispatcher commands (it's the
+    # background watch/notify half — modules.messaging's existing
     # messaging_watch_contact/messaging_list_watched/messaging_snooze
-    # already work for any source unmodified. Same "just a background
-    # poller" shape as messaging_snooze_checker above.
+    # already work for any source unmodified). Voice list/search/read
+    # commands are registered separately below via register_gmail_commands
+    # (modules/gmail/dispatcher.py) — still read-only, no send/delete.
     gmail_poller: GmailPoller
 
 
@@ -104,25 +115,36 @@ def compose(bus: MessageBus = message_bus) -> Composed:
 
     register_files_commands(dispatcher)
     register_custom_commands_commands(dispatcher)
-    register_quizlet_clone_commands(dispatcher)
     register_figma_control_commands(dispatcher)
     register_blender_control_commands(dispatcher)
+    register_office_writer_commands(dispatcher)
+    register_office_excel_commands(dispatcher)
+    register_office_impress_commands(dispatcher)
+    register_office_access_commands(dispatcher)
+    register_office_notes_commands(dispatcher)
+    register_gmail_commands(dispatcher)
     register_board_games_commands(dispatcher)
     register_crm_transcribe_commands(dispatcher)
     register_ai_bridge_commands(dispatcher)
     register_search_commands(dispatcher)
     register_calendar_commands(dispatcher)
     register_cmd_executor_commands(dispatcher)
+    register_code_analysis_commands(dispatcher)
     register_user_profile_commands(dispatcher)
     register_password_manager_commands(dispatcher)
     register_plugin_agent_commands(dispatcher)
     register_ui_control_commands(dispatcher)
     register_hardware_adaptive_commands(dispatcher)
+    register_image_generation_commands(dispatcher)
     register_media_commands(dispatcher)
     register_ui_automation_commands(dispatcher)
     register_messaging_commands(dispatcher)
     register_wordpress_bridge_commands(dispatcher)
     register_timer_commands(dispatcher)
+    register_text_editing_commands(dispatcher)
+    register_youtube_control_commands(dispatcher)
+    register_spotify_control_commands(dispatcher)
+    register_media_control_commands(dispatcher)
     # Registered last is not load-bearing: dispatcher.list_commands() (what
     # modules.task_orchestrator.service_layer.build_plan offers the planner
     # as candidate steps) is only ever called later, at an actual voice

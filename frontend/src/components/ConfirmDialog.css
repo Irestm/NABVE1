@@ -23,7 +23,9 @@
   width: min(360px, 100%);
   padding: 20px;
   border-radius: 14px;
-  background: var(--bg-panel);
+  background: var(--bg-panel-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--accent-red);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
@@ -56,7 +58,7 @@
   padding: 8px 16px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: var(--bg-elevated);
+  background: var(--bg-elevated-glass);
   color: var(--text);
   cursor: pointer;
   transition: border-color var(--transition-fast), color var(--transition-fast);

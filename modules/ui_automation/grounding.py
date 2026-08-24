@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-from core.ai_adapter_chain import local_first_chain
+from core.ai_adapter_chain import candidate_chain
 from core.logger import get_logger
 from modules.ui_automation.domain import ACTIONS, UIElement, UIStep
 
@@ -100,7 +100,7 @@ async def ground(window_title: str, elements: list[UIElement], raw_instruction: 
     modules.ui_automation.atspi_adapter.AtspiElementInspector). Mirrors
     modules.app_catalog.resolver.resolve()'s shape: a numbered-candidate
     prompt, JSON-only response, regex-extracted + json.loads +
-    graceful-None-on-failure parsing, tried across local_first_chain()'s
+    graceful-None-on-failure parsing, tried across candidate_chain()'s
     adapters in order. Returns None if there's nothing to offer (no
     elements at all, or every adapter failed/produced an unusable
     response) — the caller then falls back to an ordinary "не поняла
@@ -109,7 +109,7 @@ async def ground(window_title: str, elements: list[UIElement], raw_instruction: 
         return None
 
     prompt = _build_prompt(window_title, elements, raw_instruction)
-    for adapter in local_first_chain():
+    for adapter in candidate_chain(raw_instruction):
         try:
             raw = await adapter.send_prompt(prompt, fast_mode=True)
         except Exception as exc:

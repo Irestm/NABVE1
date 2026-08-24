@@ -61,7 +61,7 @@ def record_until_silence(
     speech_detected = False
 
     with sd.InputStream(
-        samplerate=settings.sample_rate, channels=1, dtype="float32"
+        samplerate=settings.sample_rate, channels=1, dtype="float32", latency="low"
     ) as stream:
         while (
             elapsed_seconds < settings.command_max_seconds
@@ -137,6 +137,7 @@ class RollingAudioBuffer:
             samplerate=self._settings.sample_rate,
             channels=1,
             dtype="float32",
+            latency="low",
             callback=self._callback,
         )
         # Only assign to self._stream once .start() has actually succeeded —

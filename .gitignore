@@ -25,6 +25,8 @@ data/.cache/
 # Auto-generated shared secret for /api/* requests — see core/config.py's
 # _load_or_create_api_token.
 data/api_token.txt
+# AI-generated images (modules/image_generation) — user content, not source.
+data/generated_images/
 
 # Node / frontend
 frontend/node_modules/
@@ -46,3 +48,7 @@ figma_plugin/code.js
 
 # Local Claude Code settings — machine-specific, not for the repo.
 .claude/
+
+# Claude Code's private working notes for itself between sessions — never
+# for GitHub, re-read this at the start of a new session if context is lost.
+AGENT_NOTES.md

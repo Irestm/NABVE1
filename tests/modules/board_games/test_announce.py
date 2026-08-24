@@ -47,7 +47,13 @@ def test_mistake_text_asserts_on_non_mistake() -> None:
         announce.mistake_text(judgement)
 
 
-def test_summary_intro_text_zero_mistakes() -> None:
+def test_summary_intro_text_zero_mistakes_default_gender_is_male() -> None:
+    assert "ошибок не нашёл" in announce.summary_intro_text(0)
+
+
+def test_summary_intro_text_zero_mistakes_uses_female_form_when_gender_is_female(monkeypatch) -> None:
+    monkeypatch.setattr(announce.gender_module, "get_user_gender", lambda: "female")
+
     assert "ошибок не нашла" in announce.summary_intro_text(0)
 
 

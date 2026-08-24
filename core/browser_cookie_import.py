@@ -259,16 +259,20 @@ def _read_chrome_cookies(db_path: Path, domain_suffixes: list[str]) -> tuple[lis
 
 # --- Writing into the destination Firefox automation profile ---------------
 
+_FIREFOX_COOKIES_BOOTSTRAP_SCHEMA = f"""
+    CREATE TABLE IF NOT EXISTS moz_cookies (
+        id INTEGER PRIMARY KEY,
+        {", ".join(f"{column} TEXT" for column in _FIREFOX_COOKIE_COLUMNS)}
+    )
+"""
+
 
 def _write_cookies_into_firefox_profile(profile_dir: Path, domain_suffixes: list[str], rows: list[CookieRow]) -> int:
+    profile_dir.mkdir(parents=True, exist_ok=True)
     db_path = profile_dir / "cookies.sqlite"
-    if not db_path.is_file():
-        raise NoBrowserSessionFoundError(
-            f"Профиль автоматизации ещё не инициализирован ({db_path} не найден) — "
-            "сначала откройте вход хотя бы один раз, затем повторите импорт."
-        )
     con = sqlite3.connect(str(db_path))
     try:
+        con.execute(_FIREFOX_COOKIES_BOOTSTRAP_SCHEMA)
         cur = con.cursor()
         clause = " OR ".join("host LIKE ?" for _ in domain_suffixes)
         params = [f"%{d}" for d in domain_suffixes]

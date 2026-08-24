@@ -73,6 +73,14 @@ async def _list_elements(active: ActiveWindow) -> list[UIElement]:
     return await asyncio.to_thread(_ocr_inspector.list_elements, active)
 
 
+async def list_active_elements(active: ActiveWindow) -> list[UIElement]:
+    """Public wrapper around _list_elements — the same CDP/AT-SPI/OCR
+    routing ground_instruction uses below, exposed for
+    modules.os_agent.runner's own observe step so it doesn't duplicate the
+    inspector-selection logic."""
+    return await _list_elements(active)
+
+
 async def ground_instruction(raw_text: str) -> list[UIStep] | None:
     """Resolves a free-text UI instruction against whatever application
     currently has OS focus. Returns None on any failure along the way — no

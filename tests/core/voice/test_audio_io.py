@@ -43,7 +43,7 @@ class _FakeSoundDevice:
     chunks: list[np.ndarray]
     last_stream: _FakeStream = field(default=None)  # type: ignore[assignment]
 
-    def InputStream(self, samplerate: int, channels: int, dtype: str) -> _FakeStream:
+    def InputStream(self, samplerate: int, channels: int, dtype: str, latency: str | None = None) -> _FakeStream:
         self.last_stream = _FakeStream(self.chunks)
         return self.last_stream
 
@@ -134,7 +134,16 @@ def test_onset_timeout_does_not_cut_off_speech_that_already_started(
 
 
 class _FakeCallbackStream:
-    def __init__(self, *, samplerate: int, channels: int, dtype: str, callback: object, fail_on_start: bool) -> None:
+    def __init__(
+        self,
+        *,
+        samplerate: int,
+        channels: int,
+        dtype: str,
+        callback: object,
+        fail_on_start: bool,
+        latency: str | None = None,
+    ) -> None:
         self.callback = callback
         self.started = False
         self.closed = False

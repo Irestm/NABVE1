@@ -1,25 +1,8 @@
-.settings-gear {
-  position: fixed;
-  top: 14px;
-  right: 14px;
-  z-index: 40;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  transition: color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
-}
-
-.settings-gear:hover:not(:disabled) {
-  color: var(--accent-blue);
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 14px color-mix(in srgb, var(--accent-blue) 45%, transparent);
+/* Base layout/hover/active chrome comes from .sidebar__item (see
+   Sidebar.css) — this button now lives inside the sidebar's footer instead
+   of floating in the corner (see the 2026-08-24 redesign). Only the
+   icon-rotate flourish on hover is specific to this one button. */
+.settings-gear:hover .sidebar__item-icon {
   transform: rotate(24deg);
 }
 
@@ -50,7 +33,9 @@
   gap: 14px;
   padding: 18px;
   border-radius: 14px;
-  background: var(--bg-panel);
+  background: var(--bg-panel-glass);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   border: 1px solid var(--border);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
   animation: settings-panel-in var(--transition-med) ease-out;
@@ -86,7 +71,7 @@
   height: 28px;
   padding: 0;
   border-radius: 50%;
-  background: var(--bg-elevated);
+  background: var(--bg-elevated-glass);
   color: var(--text-dim);
   font-size: 16px;
   line-height: 1;
@@ -106,7 +91,7 @@
 
 .settings-panel__tab {
   flex: 1;
-  background: var(--bg-elevated);
+  background: var(--bg-elevated-glass);
   color: var(--text-dim);
   border: 1px solid var(--border);
 }
@@ -131,7 +116,7 @@
   gap: 4px;
   padding: 10px 8px 12px;
   border-radius: 10px;
-  background: var(--bg-elevated);
+  background: var(--bg-elevated-glass);
   border: 1px solid var(--border);
   cursor: pointer;
   text-align: center;
@@ -190,13 +175,13 @@
 }
 
 .settings-panel__label {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim);
 }
 
 .settings-panel__success {
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--accent-green);
 }
 
@@ -206,7 +191,7 @@
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: var(--bg-elevated);
+  background: var(--bg-elevated-glass);
   color: var(--text);
   font-size: 13px;
   font-family: inherit;

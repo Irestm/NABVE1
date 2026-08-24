@@ -76,6 +76,17 @@ def test_match_exact_and_substring() -> None:
     assert registry.match("совсем другое") is None
 
 
+def test_match_prefers_the_longest_matching_trigger_over_insertion_order() -> None:
+    dispatcher = CommandDispatcher()
+    registry = dispatcher_module.CustomCommandRegistry(dispatcher)
+    short_command = _command("short1", "музыка", ActionType.OPEN_LINK, {"url": "https://short"})
+    long_command = _command("long1", "включи музыку", ActionType.OPEN_LINK, {"url": "https://long"})
+    registry.register_one(short_command)
+    registry.register_one(long_command)
+
+    assert registry.match("пожалуйста включи музыку сейчас") is long_command
+
+
 def test_match_finds_text_instruction_commands_too() -> None:
     dispatcher = CommandDispatcher()
     registry = dispatcher_module.CustomCommandRegistry(dispatcher)

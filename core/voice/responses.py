@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from core.logger import get_logger
 from core.models import GENERIC_EXECUTED_MESSAGE, CommandResponse, CommandStatus
+from core.voice import gender as gender_module
+
+logger = get_logger(__name__)
 
 _TEMPLATES: dict[str, dict[CommandStatus, str]] = {
     "ru": {
@@ -23,10 +27,10 @@ _TEMPLATES: dict[str, dict[CommandStatus, str]] = {
     },
 }
 
-_NOT_UNDERSTOOD: dict[str, str] = {
-    "ru": "Не поняла команду.",
-    "uk": "Не зрозуміла команду.",
-    "en": "I didn't understand that command.",
+_NOT_UNDERSTOOD: dict[str, dict[str, str]] = {
+    "ru": {"male": "Не понял команду.", "female": "Не поняла команду."},
+    "uk": {"male": "Не зрозумів команду.", "female": "Не зрозуміла команду."},
+    "en": {"male": "I didn't understand that command.", "female": "I didn't understand that command."},
 }
 
 # Spoken before the window actually disappears/reappears (see
@@ -58,7 +62,9 @@ def localize_response(response: CommandResponse, language: str) -> str:
 
 
 def not_understood(language: str) -> str:
-    return _NOT_UNDERSTOOD.get(language, _NOT_UNDERSTOOD["en"])
+    logger.info("Speaking the not-understood fallback (language=%s)", language)
+    variants = _NOT_UNDERSTOOD.get(language, _NOT_UNDERSTOOD["en"])
+    return gender_module.pick(variants["male"], variants["female"])
 
 
 def tray_hide_ack(language: str) -> str:

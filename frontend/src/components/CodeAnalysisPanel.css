@@ -1,0 +1,4 @@
+.code-analysis-panel__source--active {
+  border-color: var(--accent-blue);
+  color: var(--text);
+}

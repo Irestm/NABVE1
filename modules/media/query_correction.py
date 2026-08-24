@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.ai_adapter_chain import local_first_chain
+from core.ai_adapter_chain import candidate_chain
 from core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -32,7 +32,7 @@ async def correct_query(query: str) -> str:
     equivalent, except there's no catalog to match against here, just a
     free-text search query handed to an AI adapter to clean up.
 
-    Tries local_first_chain()'s adapters in order (local model, then the
+    Tries candidate_chain()'s adapters in order (local model, then the
     ai_bridge cloud chain — same order used everywhere else an AI call
     doesn't have its own reason to prefer cloud first). Falls back to the
     original, uncorrected query — never None, never raises — on total
@@ -43,7 +43,7 @@ async def correct_query(query: str) -> str:
         return query
 
     prompt = _build_prompt(query)
-    for adapter in local_first_chain():
+    for adapter in candidate_chain(query):
         try:
             raw = await adapter.send_prompt(prompt, fast_mode=True)
         except Exception as exc:

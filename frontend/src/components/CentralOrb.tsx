@@ -29,7 +29,9 @@ export function CentralOrb({ state }: CentralOrbProps): JSX.Element {
       <div className="central-orb__ring central-orb__ring--outer" />
       <div className="central-orb__ring central-orb__ring--inner" />
       <div className="central-orb__sweep" />
-      <div className="central-orb__core" />
+      <div className="central-orb__core">
+        <div className="central-orb__core-spin" />
+      </div>
     </div>
   );
 }

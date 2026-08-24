@@ -177,3 +177,19 @@ def test_resolve_wake_phrases_ignores_blank_custom_phrase() -> None:
     phrases = wake_word_module.resolve_wake_phrases(settings, "   ")
 
     assert phrases == wake_word_module.resolve_wake_phrases(settings, None)
+
+
+def test_resolve_wake_phrases_ignores_too_short_custom_phrase() -> None:
+    settings = VoiceSettings()
+
+    phrases = wake_word_module.resolve_wake_phrases(settings, "ей")
+
+    assert phrases == wake_word_module.resolve_wake_phrases(settings, None)
+
+
+def test_resolve_wake_phrases_keeps_custom_phrase_at_the_minimum_length() -> None:
+    settings = VoiceSettings()
+
+    phrases = wake_word_module.resolve_wake_phrases(settings, "окей")
+
+    assert "окей" in phrases

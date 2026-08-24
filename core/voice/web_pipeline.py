@@ -111,9 +111,9 @@ def synthesize_speech(text: str, language: str, speaker: str | None = None) -> s
 async def transcribe_uploaded_audio(audio_bytes: bytes, filename: str, language: str | None = None) -> str:
     """Decode+transcribe half of process_voice_query, pulled out standalone
     for callers that don't need the full interpret/dispatch pipeline —
-    currently modules.quizlet_clone's voice-mode game routes (core/main.py),
-    which compare the transcription against a flashcard's definition
-    instead of resolving it as a command."""
+    e.g. core/main.py's /api/voice/transcribe, used by one-shot mic-to-field
+    voice input on the frontend (frontend/src/hooks/useOneShotVoiceInput.ts)
+    that should only fill a text field, not be resolved as a command."""
     suffix = Path(filename).suffix
     audio = await asyncio.to_thread(_decode_uploaded_audio, audio_bytes, suffix)
     transcription = await asyncio.to_thread(_stt.transcribe, audio, language)
@@ -327,6 +327,16 @@ async def _resolve_and_dispatch(
         command = None
         reply_text = "Играть в шахматы или шашки можно только через голосового ассистента на компьютере."
 
+    if command is not None and command.name == "start_os_agent":
+        # Scoped to the live mic voice loop only (see core/voice/pipeline.py's
+        # _resolve_os_agent_start/_resolve_active_os_agent_utterance) — same
+        # reasoning as start_board_game just above: agent mode is an
+        # unbounded number of voice round-trips (wait for the task, run the
+        # autonomous loop, ask for a spoken confirm), which this stateless
+        # request/response endpoint has nowhere to hold between requests.
+        command = None
+        reply_text = "Режим агента доступен только через голосового ассистента на компьютере."
+
     if command is not None and command.name in ("messaging_reply", "messaging_snooze"):
         # Deliberately scoped to the live mic voice loop only (see
         # core/voice/pipeline.py's _resolve_messaging_reply/_resolve_
@@ -379,6 +389,10 @@ async def process_voice_query(
     audio = await asyncio.to_thread(_decode_uploaded_audio, audio_bytes, suffix)
     transcription = await asyncio.to_thread(_stt.transcribe, audio, language)
     text = transcription.text.strip()
+    logger.info(
+        "STT transcribed (web/phone client): %r (detected_language=%s, probability=%.2f)",
+        text, transcription.detected_language, transcription.language_probability,
+    )
 
     decision = resolve_language(
         transcription.detected_language, transcription.language_probability, voice_settings, override=language
@@ -426,6 +440,10 @@ async def process_voice_confirmation(
     audio = await asyncio.to_thread(_decode_uploaded_audio, audio_bytes, suffix)
     transcription = await asyncio.to_thread(_stt.transcribe, audio, language)
     text = transcription.text.strip()
+    logger.info(
+        "STT transcribed (voice confirmation turn): %r (detected_language=%s, probability=%.2f)",
+        text, transcription.detected_language, transcription.language_probability,
+    )
 
     decision = resolve_language(
         transcription.detected_language, transcription.language_probability, voice_settings, override=language

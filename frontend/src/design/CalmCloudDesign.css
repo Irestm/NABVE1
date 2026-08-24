@@ -216,13 +216,23 @@
   position: absolute;
   width: 140px;
   height: 70px;
-  animation-name: cc-backdrop-drift;
-  animation-timing-function: ease-in-out;
+  animation-timing-function: linear;
   animation-iteration-count: infinite;
 }
 
+/* Enters from the left edge, crosses fully to the right and off-screen,
+   then loops (the jump back to the start is invisible — both ends of the
+   keyframe are off-screen). */
+.calm-cloud-backdrop__cloud--left {
+  animation-name: cc-backdrop-cross-ltr;
+}
+
+/* Mirrored: enters from the right edge, crosses left and off-screen. A
+   separate keyframe rather than animation-direction: reverse on the same
+   one — reverse only reverses time, not which edge the element starts
+   flush against, and left/right clouds are anchored to opposite edges. */
 .calm-cloud-backdrop__cloud--right {
-  animation-direction: reverse;
+  animation-name: cc-backdrop-cross-rtl;
 }
 
 .calm-cloud-backdrop__puff {
@@ -253,13 +263,21 @@
   height: 36px;
 }
 
-@keyframes cc-backdrop-drift {
-  0%,
-  100% {
-    translate: 0 0;
+@keyframes cc-backdrop-cross-ltr {
+  from {
+    transform: scale(var(--cloud-scale, 1)) translateX(-140px);
   }
-  50% {
-    translate: 28px -6px;
+  to {
+    transform: scale(var(--cloud-scale, 1)) translateX(140vw);
+  }
+}
+
+@keyframes cc-backdrop-cross-rtl {
+  from {
+    transform: scale(var(--cloud-scale, 1)) translateX(140px);
+  }
+  to {
+    transform: scale(var(--cloud-scale, 1)) translateX(-140vw);
   }
 }
 

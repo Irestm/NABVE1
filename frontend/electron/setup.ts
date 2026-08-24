@@ -37,6 +37,11 @@ const LINUX_APT_PACKAGES = [
   "tesseract-ocr",
   "tesseract-ocr-rus",
   "stockfish",
+  // Hidden display for modules/ai_bridge/virtual_display.py's headed-but-
+  // invisible browser automation — without it, ai_bridge silently falls
+  // back to a real, visible browser window for ordinary questions instead
+  // of staying in the background (see that module's own docstring).
+  "xvfb",
 ];
 
 // wmctrl/xdotool/libnotify-bin have no Windows equivalent needed — Windows

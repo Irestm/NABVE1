@@ -1,25 +1,51 @@
+import {
+  CalendarDays,
+  Camera,
+  Code2,
+  Edit3,
+  Gamepad2,
+  Image as ImageIcon,
+  MessageCircle,
+  QrCode,
+  Ruler,
+  Target,
+  User,
+  Utensils,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { BoardGameImageModal } from "./components/BoardGameImageModal";
 import { BoardGamesPanel } from "./components/BoardGamesPanel";
+import { CodeAnalysisPanel } from "./components/CodeAnalysisPanel";
+import { CollapsibleCard } from "./components/CollapsibleCard";
 import { CommandPanel } from "./components/CommandPanel";
 import { CustomCommandsPanel } from "./components/CustomCommandsPanel";
+import { FitnessChatWidget } from "./components/FitnessChatWidget";
+import { FitnessGoalsSection } from "./components/FitnessGoalsSection";
+import { FitnessMealDiary } from "./components/FitnessMealDiary";
+import { FitnessMeasurementsSection } from "./components/FitnessMeasurementsSection";
+import { FitnessPanel } from "./components/FitnessPanel";
+import { FitnessProgressPhotoGallery } from "./components/FitnessProgressPhotoGallery";
+import { ImageGenerationPanel } from "./components/ImageGenerationPanel";
 import { IntegrationsPanel } from "./components/IntegrationsPanel";
 import { LanQrPanel } from "./components/LanQrPanel";
-import { PersonalityPanel } from "./components/PersonalityPanel";
+import { MessagingPanel } from "./components/MessagingPanel";
 import { PlannerView } from "./components/PlannerView";
 import { PluginSuggestions } from "./components/PluginSuggestions";
-import { QuizletPanel } from "./components/QuizletPanel";
-import { SettingsPanel } from "./components/SettingsPanel";
-import { StatusPanel } from "./components/StatusPanel";
+import type { Page } from "./components/Sidebar";
+import { Sidebar } from "./components/Sidebar";
 import { TextChat } from "./components/TextChat";
+import { TextEditingPanel } from "./components/TextEditingPanel";
 import { VoiceRecorder } from "./components/VoiceRecorder";
-import { VoiceSettingsPanel } from "./components/VoiceSettingsPanel";
 import { VoiceWaveform } from "./components/VoiceWaveform";
 import { getStatus } from "./api/client";
 import { AssistantAvatar } from "./design/AssistantAvatar";
+import { BlobBackdrop } from "./design/BlobBackdrop";
+import { GojoOverlay } from "./design/GojoOverlay";
 import { DEFAULT_DESIGN_ID } from "./design/registry";
 import { ThemeBackdrop } from "./design/ThemeBackdrop";
 import type { DesignId } from "./design/types";
+import { useGojoEasterEgg } from "./design/useGojoEasterEgg";
+import { isElectron } from "./platform/electronAdapter";
 import type { AssistantState } from "./types";
 import "./theme.css";
 import "./design/themes.css";
@@ -47,16 +73,30 @@ const STATE_LABELS: Record<AssistantState, string> = {
   paused: "На паузе",
 };
 
-type Tab = "assistant" | "planner" | "commands" | "my_commands" | "learning" | "integrations";
+// Labels for core/voice/module_context.py's active_module_context, shown as
+// a small indicator next to the main state label — see App.tsx's status
+// polling effect below. Only "fitness" exists today; the map is here (not
+// a single hardcoded string) so a future module context (see
+// core/voice/module_context.py's own docstring on being a deposit for
+// later modules) only needs a new entry, not new indicator plumbing.
+const MODULE_CONTEXT_LABELS: Record<string, string> = {
+  fitness: "Режим: Фитнес",
+};
 
 export function App(): JSX.Element {
-  const [activeTab, setActiveTab] = useState<Tab>("assistant");
+  const [activePage, setActivePage] = useState<Page>("assistant");
   const [assistantState, setAssistantState] = useState<AssistantState>("idle");
   const [detail, setDetail] = useState<string>("");
+  const [activeModuleContext, setActiveModuleContext] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string>("");
   const [voiceRecording, setVoiceRecording] = useState(false);
   const [voiceSpeaking, setVoiceSpeaking] = useState(false);
   const [designId, setDesignId] = useState<DesignId>(readStoredDesign);
+  const {
+    convergeTo: gojoConvergeTo,
+    merged: gojoMerged,
+    notifyConverged: gojoNotifyConverged,
+  } = useGojoEasterEgg(designId);
 
   // Re-skins the whole app, not just the avatar — see design/themes.css.
   // html[data-assistant-theme] overrides the same CSS custom properties
@@ -97,6 +137,7 @@ export function App(): JSX.Element {
         if (!cancelled) {
           setAssistantState(status.state);
           setDetail(status.detail);
+          setActiveModuleContext(status.active_module_context);
           setConnectionError("");
         }
       } catch (error) {
@@ -118,99 +159,114 @@ export function App(): JSX.Element {
   return (
     <>
       <ThemeBackdrop state={displayState} designId={designId} />
+      <BlobBackdrop designId={designId} convergeTo={gojoConvergeTo} onConverged={gojoNotifyConverged} />
       <BoardGameImageModal />
       <div className="app-shell">
-        <SettingsPanel designId={designId} onDesignChange={handleDesignChange} />
+        <Sidebar activePage={activePage} onSelect={setActivePage} designId={designId} onDesignChange={handleDesignChange} />
 
-        <div className="app-shell__stage">
-          <AssistantAvatar state={displayState} designId={designId} />
-          <div className="app-shell__waveforms">
-            <VoiceWaveform mode="listening" active={displayState === "listening"} />
-            <VoiceWaveform mode="speaking" active={displayState === "speaking"} />
+        <div className="app-main">
+          <div className={`app-shell__stage${gojoMerged ? " app-shell__stage--gojo" : ""}`}>
+            {/* visibility (not display:none) keeps flex flow space
+                reserved so the state label/waveforms below don't jump —
+                bumped to match GojoOverlay's own footprint while merged
+                (its own position:absolute doesn't reserve any space by
+                itself, so without this the label would still sit where
+                the small 132px avatar used to end, overlapping the much
+                bigger overlay). */}
+            <div style={gojoMerged ? { visibility: "hidden", minHeight: 300 } : undefined}>
+              <AssistantAvatar state={displayState} designId={designId} />
+            </div>
+            {designId === "eye" && gojoMerged && <GojoOverlay />}
+            <div className="app-shell__waveforms">
+              <VoiceWaveform mode="listening" active={displayState === "listening"} />
+              <VoiceWaveform mode="speaking" active={displayState === "speaking"} />
+            </div>
+            <div className="app-shell__state-label">{STATE_LABELS[displayState]}</div>
+            {activeModuleContext && MODULE_CONTEXT_LABELS[activeModuleContext] && (
+              <div className="app-shell__module-context">{MODULE_CONTEXT_LABELS[activeModuleContext]}</div>
+            )}
+            {detail && <p className="status-detail">{detail}</p>}
+            {connectionError && <p className="status-error">{connectionError}</p>}
           </div>
-          <div className="app-shell__state-label">{STATE_LABELS[displayState]}</div>
-          {detail && <p className="status-detail">{detail}</p>}
-          {connectionError && <p className="status-error">{connectionError}</p>}
+
+          {activePage === "assistant" ? (
+            <div key="assistant" className="app-page">
+              <MessagingPanel />
+
+              <VoiceRecorder onRecordingChange={setVoiceRecording} onSpeakingChange={setVoiceSpeaking} />
+
+              <CollapsibleCard title="Текстовый ввод" icon={<MessageCircle size={16} />} accent="blue" defaultOpen>
+                <TextChat />
+              </CollapsibleCard>
+
+              <CollapsibleCard title="Редактирование текста" icon={<Edit3 size={16} />} accent="purple">
+                <TextEditingPanel />
+              </CollapsibleCard>
+
+              <CollapsibleCard title="Анализ кода" icon={<Code2 size={16} />} accent="blue">
+                <CodeAnalysisPanel />
+              </CollapsibleCard>
+
+              <CollapsibleCard title="Планировщик" icon={<CalendarDays size={16} />} accent="amber">
+                <PlannerView />
+              </CollapsibleCard>
+
+              <CollapsibleCard title="Генерация изображений" icon={<ImageIcon size={16} />} accent="green">
+                <ImageGenerationPanel />
+              </CollapsibleCard>
+
+              <CollapsibleCard title="Настольные игры" icon={<Gamepad2 size={16} />} accent="red">
+                <BoardGamesPanel />
+              </CollapsibleCard>
+
+              {isElectron() && (
+                <CollapsibleCard title="Подключить телефон" icon={<QrCode size={16} />} accent="cyan">
+                  <LanQrPanel />
+                </CollapsibleCard>
+              )}
+
+              <PluginSuggestions />
+            </div>
+          ) : activePage === "commands" ? (
+            <div key="commands" className="app-page">
+              <CommandPanel onNavigateToGames={() => setActivePage("assistant")} />
+            </div>
+          ) : activePage === "my_commands" ? (
+            <div key="my_commands" className="app-page">
+              <CustomCommandsPanel />
+            </div>
+          ) : activePage === "fitness" ? (
+            <div key="fitness" className="app-page">
+              <CollapsibleCard title="Профиль" icon={<User size={16} />} accent="green" defaultOpen>
+                <FitnessPanel />
+              </CollapsibleCard>
+
+              <CollapsibleCard title="Замеры" icon={<Ruler size={16} />} accent="blue">
+                <FitnessMeasurementsSection />
+              </CollapsibleCard>
+
+              <CollapsibleCard title="Цели" icon={<Target size={16} />} accent="purple">
+                <FitnessGoalsSection />
+              </CollapsibleCard>
+
+              <CollapsibleCard title="Дневник питания" icon={<Utensils size={16} />} accent="amber">
+                <FitnessMealDiary />
+              </CollapsibleCard>
+
+              <CollapsibleCard title="Прогресс-фото" icon={<Camera size={16} />} accent="red">
+                <FitnessProgressPhotoGallery />
+              </CollapsibleCard>
+
+              <CollapsibleCard title="Чат с помощником" icon={<MessageCircle size={16} />} accent="cyan">
+                <FitnessChatWidget />
+              </CollapsibleCard>
+            </div>
+          ) : (
+            <div key="integrations" className="app-page">
+              <IntegrationsPanel />
+            </div>
+          )}
         </div>
-
-        <div className="app-tabs">
-          <button
-            className={`app-tabs__button${activeTab === "assistant" ? " app-tabs__button--active" : ""}`}
-            onClick={() => setActiveTab("assistant")}
-          >
-            {"Асси­стент"}
-          </button>
-          <button
-            className={`app-tabs__button${activeTab === "planner" ? " app-tabs__button--active" : ""}`}
-            onClick={() => setActiveTab("planner")}
-          >
-            {"Планиров­щик"}
-          </button>
-          <button
-            className={`app-tabs__button${activeTab === "commands" ? " app-tabs__button--active" : ""}`}
-            onClick={() => setActiveTab("commands")}
-          >
-            Команды
-          </button>
-          <button
-            className={`app-tabs__button${activeTab === "my_commands" ? " app-tabs__button--active" : ""}`}
-            onClick={() => setActiveTab("my_commands")}
-          >
-            Мои команды
-          </button>
-          <button
-            className={`app-tabs__button${activeTab === "learning" ? " app-tabs__button--active" : ""}`}
-            onClick={() => setActiveTab("learning")}
-          >
-            Обучение
-          </button>
-          <button
-            className={`app-tabs__button${activeTab === "integrations" ? " app-tabs__button--active" : ""}`}
-            onClick={() => setActiveTab("integrations")}
-          >
-            {"Интегра­ции"}
-          </button>
-        </div>
-
-        {activeTab === "assistant" ? (
-          <div key="assistant" className="app-tab-content">
-            <StatusPanel />
-
-            <VoiceRecorder onRecordingChange={setVoiceRecording} onSpeakingChange={setVoiceSpeaking} />
-
-            <TextChat />
-
-            <BoardGamesPanel />
-
-            <PersonalityPanel />
-
-            <VoiceSettingsPanel />
-
-            <LanQrPanel />
-
-            <PluginSuggestions />
-          </div>
-        ) : activeTab === "planner" ? (
-          <div key="planner" className="app-tab-content">
-            <PlannerView />
-          </div>
-        ) : activeTab === "commands" ? (
-          <div key="commands" className="app-tab-content">
-            <CommandPanel onNavigateToGames={() => setActiveTab("assistant")} />
-          </div>
-        ) : activeTab === "my_commands" ? (
-          <div key="my_commands" className="app-tab-content">
-            <CustomCommandsPanel />
-          </div>
-        ) : activeTab === "learning" ? (
-          <div key="learning" className="app-tab-content">
-            <QuizletPanel />
-          </div>
-        ) : (
-          <div key="integrations" className="app-tab-content">
-            <IntegrationsPanel />
-          </div>
-        )}
       </div>
     </>
   );

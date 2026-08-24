@@ -6,7 +6,9 @@
   overflow-y: auto;
   padding: 8px;
   border-radius: 8px;
-  background: var(--bg-elevated);
+  background: var(--bg-elevated-glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--border);
 }
 
@@ -28,7 +30,7 @@
 
 .text-chat__message--assistant {
   align-self: flex-start;
-  background: var(--bg-panel);
+  background: var(--bg-panel-glass);
   color: var(--text);
   border: 1px solid var(--border);
 }

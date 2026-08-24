@@ -11,6 +11,7 @@ export type AssistantState =
 export interface StatusResponse {
   state: AssistantState;
   detail: string;
+  active_module_context: string | null;
 }
 
 export type ProviderName = "gemini" | "chatgpt" | "deepseek" | "grok";
@@ -131,6 +132,72 @@ export interface LanUrlResponse {
   url: string;
 }
 
+export interface YouTubeStatus {
+  key_configured: boolean;
+  units_used: number;
+  daily_limit: number;
+  remaining_searches: number;
+  near_limit: boolean;
+  exhausted: boolean;
+}
+
+export interface GeminiKeyStatus {
+  key_configured: boolean;
+  requests_used_today: number;
+  daily_limit: number;
+}
+
+export interface ClaudeKeyStatus {
+  key_configured: boolean;
+}
+
+export interface SpotifyStatus {
+  client_id_configured: boolean;
+  connected: boolean;
+  redirect_uri: string;
+}
+
+export interface GeneratedImage {
+  id: number;
+  prompt: string;
+  source: string;
+  created_at: string;
+}
+
+export interface GithubStatus {
+  pat_configured: boolean;
+}
+
+export interface TelegramCredentialsStatus {
+  configured: boolean;
+}
+
+export interface TelegramAccount {
+  id: number;
+  label: string;
+  phone_number: string;
+  connected: boolean;
+}
+
+export interface TelegramLoginCodeResult {
+  needs_password: boolean;
+  account: TelegramAccount | null;
+}
+
+export interface TelegramContact {
+  id: number;
+  identifier: string;
+  note: string;
+}
+
+export interface PendingMessage {
+  id: number;
+  source: string;
+  sender_label: string;
+  text: string;
+  received_at: string;
+}
+
 export interface VoiceOption {
   speaker: string;
   label: string;
@@ -189,96 +256,6 @@ export interface MeetingRecording {
   summary_error: string | null;
 }
 
-// Matches core/models.py's SetSource-derived `source` string and
-// modules/quizlet_clone/models.py's SetSource/GameMode enums exactly.
-export type StudySetSource = "quizlet_import" | "manual";
-export type GameMode = "flashcards" | "learn" | "match" | "test" | "voice";
-
-export interface QuizletAuthStatus {
-  logged_in: boolean;
-}
-
-export interface StudySetTerm {
-  id: string;
-  term: string;
-  definition: string;
-  times_seen: number;
-  times_correct: number;
-  times_wrong: number;
-  learned: boolean;
-}
-
-export interface StudySet {
-  id: string;
-  title: string;
-  source: StudySetSource;
-  quizlet_set_id: string | null;
-  created_at: string;
-  progress_percent: number;
-  attempts_count: number;
-  terms: StudySetTerm[];
-}
-
-export interface QuizletLibrarySet {
-  quizlet_set_id: string;
-  title: string;
-  term_count: number;
-  already_imported: boolean;
-  local_set_id: string | null;
-}
-
-// The shape of `state` varies by mode (see modules/quizlet_clone/game_modes.py's
-// per-session state() methods) — kept loosely typed here rather than one
-// strict interface per mode, and narrowed with optional fields the
-// game-mode components read defensively.
-export interface QuizletGameState {
-  mode: GameMode;
-  finished: boolean;
-  index?: number;
-  total?: number;
-  remaining?: number;
-  score?: number;
-  flipped?: boolean;
-  term?: string;
-  term_id?: string;
-  definition?: string;
-  type?: "input" | "choice";
-  options?: string[];
-  tiles?: { tile_id: string; text: string; kind: "term" | "definition"; matched: boolean }[];
-  matched_count?: number;
-  elapsed_seconds?: number | null;
-  last_attempt?: { first_tile_id: string; second_tile_id: string; correct: boolean } | null;
-  last_answer?: { term_id: string; correct: boolean; correct_definition: string } | null;
-}
-
-export interface QuizletGameStateResponse {
-  session_id: string;
-  state: QuizletGameState;
-}
-
-export interface QuizletVoiceGameStartResponse {
-  session_id: string;
-  finished: boolean;
-  term_text: string | null;
-  term_audio_base64: string | null;
-  remaining: number;
-  total: number;
-}
-
-export interface QuizletVoiceGameAnswerResponse {
-  session_id: string;
-  transcribed_text: string;
-  correct: boolean;
-  answered_term: string;
-  expected_definition: string;
-  result_audio_base64: string | null;
-  finished: boolean;
-  next_term_text: string | null;
-  next_term_audio_base64: string | null;
-  remaining: number;
-  total: number;
-}
-
 export type BoardGameKind = "chess" | "checkers";
 
 export type BoardGameDifficulty = "very_easy" | "easy" | "medium" | "hard" | "very_hard" | "impossible";
@@ -303,6 +280,63 @@ export interface BoardGameState {
   last_engine_move_from: string | null;
   last_engine_move_to: string | null;
   mistake_message: string | null;
+}
+
+export type FitnessSex = "male" | "female";
+export type FitnessGoalType = "weight" | "strength" | "volume";
+export type FitnessConfidence = "high" | "medium" | "low";
+export type FitnessMealSource = "photo" | "text" | "manual";
+
+export interface FitnessBioProfile {
+  sex: FitnessSex | null;
+  age: number | null;
+  height_cm: number | null;
+  weight_kg: number | null;
+  bmi: number | null;
+  bmi_category: string | null;
+  updated_at: string;
+}
+
+export interface FitnessWeightHistoryEntry {
+  weight_kg: number;
+  recorded_at: string;
+}
+
+export interface FitnessMeasurement {
+  id: number;
+  body_part: string;
+  value_cm: number;
+  recorded_at: string;
+}
+
+export interface FitnessGoal {
+  id: number;
+  goal_type: FitnessGoalType;
+  description: string;
+  target_value: number | null;
+  unit: string | null;
+  deadline: string | null;
+  created_at: string;
+  achieved_at: string | null;
+}
+
+export interface FitnessMeal {
+  id: number;
+  description: string;
+  estimated_calories: number | null;
+  protein_g: number | null;
+  fat_g: number | null;
+  carbs_g: number | null;
+  confidence: FitnessConfidence;
+  source: FitnessMealSource;
+  has_photo: boolean;
+  logged_at: string;
+}
+
+export interface FitnessProgressPhoto {
+  id: number;
+  note: string | null;
+  taken_at: string;
 }
 
 declare global {

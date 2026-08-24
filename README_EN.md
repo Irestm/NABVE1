@@ -32,9 +32,6 @@ Speech recognition often garbles names ("dead sells" instead of Dead Cells). The
 ### Planner
 "Remind me to call mom on Friday" — the assistant works out what and when (including relative phrasing like "tomorrow" or "in an hour"), adds it to the calendar, and announces it out loud ahead of time. A dedicated "Planner" tab in the UI shows a month calendar, an upcoming-events list, and manual add/delete.
 
-### Learning (Quizlet-style flashcards)
-A dedicated "Обучение"/"Learning" tab: build your own term/definition sets, or import real ones from your Quizlet account (via a "Связь с браузером"/"Connect with browser" button — log in to quizlet.com in your regular browser as usual, come back and click it: NABVE copies that session over by cookie, no password and no separate login window). Five modes: flashcards, adaptive learn (terms you keep missing come up more often), timed match, test (typed answers and multiple choice), and a voice mode where the assistant reads the term aloud, listens for your answer, and speaks back whether you got it right.
-
 ### Stop word
 Set up during onboarding. Say it, and the assistant stops responding to anything and just waits in the background. Say the same word again, and it's active once more.
 

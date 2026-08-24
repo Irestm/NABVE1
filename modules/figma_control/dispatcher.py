@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from core.logger import get_logger
+from core.voice import gender as gender_module
 from modules.figma_control import command_parser, screen_fallback
 from modules.figma_control.command_parser import session_state
 from modules.figma_control.ws_server import FigmaPluginUnavailableError, figma_ws_server
@@ -100,7 +101,7 @@ async def process_figma_command(text: str) -> str:
     aloud, never raises."""
     parsed = await command_parser.parse_command(text)
     if parsed is None:
-        return "Не поняла, что нужно сделать в Figma."
+        return gender_module.pick("Не понял, что нужно сделать в Figma.", "Не поняла, что нужно сделать в Figma.")
 
     plugin_message = await _try_plugin(parsed.action, parsed.params)
     if plugin_message is not None:

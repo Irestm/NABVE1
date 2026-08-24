@@ -4,7 +4,7 @@ import asyncio
 import random
 from collections.abc import Awaitable, Callable
 
-from core.ai_adapter_chain import free_api_first_chain
+from core.ai_adapter_chain import candidate_chain
 from core.logger import get_logger
 from core.message_bus import MessageBus, message_bus
 from core.models import CommandDescriptor
@@ -12,7 +12,6 @@ from core.ports import PromptProviderPort
 from core.voice.intent import Command
 from core.voice.sound_effects import BREATH_MARKER
 from modules.ai_bridge.intent_classifier import classify
-from modules.hardware_adaptive import local_ai
 from modules.plugin_agent.events import UnhandledQuestionAsked
 from modules.user_profile import service_layer as profile_service_layer
 from modules.user_profile.domain import BREATH_EFFECT_KEY
@@ -107,23 +106,11 @@ async def _record_gap_candidate(text: str, bus: MessageBus) -> None:
 
 
 def _candidate_adapters(text: str) -> list[PromptProviderPort]:
-    """Adapters to try, in order, for free text that matched no rule-based
-    command pattern: free_api_first_chain()'s default order (free-tier Groq
-    API if configured and not near its rate limit, then the local model,
-    then the ai_bridge fallback chain) when the query looks simple, reversed
-    for queries that look like they need live information or deeper
-    reasoning (see modules.hardware_adaptive.local_ai.is_complex_query) —
-    neither the Groq-hosted model nor the local model has access to fresh
-    data and either would likely hallucinate on these, but both are kept as
-    last-resort fallback options rather than dropped entirely: the ai_bridge
-    chain is browser automation against real chat websites (selectors,
-    logins, daily limits all in play across 4 providers), so if it fails
-    outright a model without live data is usually a better outcome than
-    "не понял"."""
-    chain = free_api_first_chain()
-    if len(chain) > 1 and local_ai.is_complex_query(text):
-        return list(reversed(chain))
-    return chain
+    """Thin wrapper kept for this module's own call sites/tests — the actual
+    complexity-aware ordering (own Gemini/Claude keys included) now lives in
+    core.ai_adapter_chain.candidate_chain, so every other caller of that
+    module gets the same behavior, not just this voice free-text path."""
+    return candidate_chain(text)
 
 
 async def _stream_and_collect(

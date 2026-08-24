@@ -1,13 +1,24 @@
+/* Sidebar + main column, replacing the old single-column app-shell (see the
+   2026-08-24 redesign) — Sidebar.tsx is `position: sticky`, so it stays put
+   while .app-main scrolls independently on a short viewport. */
 .app-shell {
   position: relative;
   z-index: 1;
   width: 100%;
-  padding: 18px 16px 16px;
+  padding: 16px;
   display: flex;
-  flex-direction: column;
+  align-items: flex-start;
   gap: 14px;
   min-height: 100vh;
   animation: boot-in var(--transition-slow) ease-out;
+}
+
+.app-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
 @keyframes boot-in {
@@ -32,7 +43,7 @@
   }
 }
 
-.app-tab-content {
+.app-page {
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -47,11 +58,20 @@
 }
 
 .app-shell__stage {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
   padding: 10px 0 4px;
+}
+
+/* The Gojo easter-egg overlay (GojoOverlay.tsx) is position:absolute, so
+   it doesn't push this row's own height — an enlarged uploaded image
+   would otherwise sit on top of the state label/detail text right below
+   the stage instead of pushing it down. */
+.app-shell__stage--gojo {
+  min-height: 360px;
 }
 
 .app-shell__waveforms {
@@ -76,52 +96,30 @@
   transition: color var(--transition-med), text-shadow var(--transition-med);
 }
 
+.app-shell__module-context {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent-green);
+  border: 1px solid color-mix(in srgb, var(--accent-green) 55%, transparent);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
 .status-detail {
   margin: 0;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: 15px;
+  line-height: 1.5;
   text-align: center;
 }
 
 .status-error {
   margin: 0;
   color: var(--accent-red);
-  font-size: 12px;
+  font-size: 15px;
+  line-height: 1.5;
   text-align: center;
-}
-
-/* Six tabs stopped fitting on one equal-width row without shrinking to an
-   unreadable 9px (see App.tsx's tab list) — a horizontally scrollable strip
-   with natural-width, nowrap labels (Material Design's "scrollable tabs"
-   pattern) keeps every label readable instead of forcing them all to fit. */
-.app-tabs {
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 10px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  overflow-x: auto;
-  scroll-snap-type: x proximity;
-}
-
-.app-tabs__button {
-  flex: 0 0 auto;
-  scroll-snap-align: start;
-  background: transparent;
-  color: var(--text-dim);
-  border: none;
-  padding: 9px 14px;
-  font-size: 13px;
-  line-height: 1.25;
-  white-space: nowrap;
-  transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.app-tabs__button--active {
-  background: var(--accent-blue);
-  color: #04070c;
-  box-shadow: 0 0 16px color-mix(in srgb, var(--accent-blue) 55%, transparent);
 }
 
 /* Base card look for every top-level section — some components (CommandPanel,
@@ -138,38 +136,29 @@
   gap: 6px;
   padding: 12px 14px;
   border-radius: 12px;
-  background: var(--bg-panel);
+  background: var(--bg-panel-glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--border);
   border-left: 3px solid var(--section-accent, var(--border));
 }
 
-/* One accent color per section on the Ассистент tab — purely a "tell these
-   apart at a glance" cue (see the corner brackets above, which are too
-   subtle alone), not a status/semantic color; picked from the same palette
-   every theme already defines so it re-themes automatically. */
+/* One accent color per always-visible standalone section — purely a "tell
+   these apart at a glance" cue, not a status/semantic color; picked from the
+   same palette every theme already defines so it re-themes automatically.
+   text-chat/board-games-panel/personality-panel/voice-settings-panel used to
+   be listed here too, but as of the 2026-08-24 redesign they get their
+   accent from CollapsibleCard's `accent` prop (the first two) or don't need
+   one at all anymore (the latter two, now flat Settings-tab content, not
+   their own accented card). */
 .voice-recorder {
   --section-accent: var(--accent-blue);
-}
-.text-chat {
-  --section-accent: var(--accent-purple);
-}
-.board-games-panel {
-  --section-accent: var(--accent-red);
-}
-.personality-panel {
-  --section-accent: var(--accent-green);
-}
-.voice-settings-panel {
-  --section-accent: var(--accent-amber);
 }
 .command-panel {
   --section-accent: var(--accent-blue);
 }
 .custom-commands-panel {
   --section-accent: var(--accent-purple);
-}
-.quizlet-panel {
-  --section-accent: var(--accent-green);
 }
 .integrations-panel {
   --section-accent: var(--accent-amber);
@@ -188,7 +177,7 @@
 
 .section h3 {
   margin: 0;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-faint);
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -196,23 +185,54 @@
 
 .row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
-input {
+.row > input {
+  /* The sidebar now permanently eats horizontal space no matter the
+     viewport (see the 2026-08-24 redesign) — an input sharing a .row with
+     one or two buttons no longer reliably has 300+px to shrink into on a
+     phone-width screen. A sane minimum plus the wrap above means the
+     button(s) drop to their own line instead of overflowing/clipping. */
+  min-width: 120px;
+}
+
+/* Every text-entry field in the app — not just <input> — gets the same
+   base look: a clearly-visible near-white border (the old --border token
+   is only ~2 steps up from the background and was hard to spot as "this is
+   where you type" at a glance/distance) and near-white placeholder text
+   (browsers otherwise render placeholders in a low-contrast gray derived
+   from `color`, which read as barely-there on a dark theme). <select>
+   included so the several places that used a bare, unstyled <select>
+   (CustomCommandsPanel, PlannerView, ...) stop looking like an unstyled
+   native dropdown next to everything else. */
+input,
+select,
+textarea {
   flex: 1;
   padding: 7px 10px;
   border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
+  border: 1.5px solid color-mix(in srgb, var(--text) 55%, transparent);
+  background: var(--bg-elevated-glass);
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
+  font-family: inherit;
   outline: none;
-  transition: border-color var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-input:focus {
+input::placeholder,
+textarea::placeholder {
+  color: color-mix(in srgb, var(--text) 75%, transparent);
+  opacity: 1;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
   border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-blue) 30%, transparent);
 }
 
 button {
@@ -258,7 +278,7 @@ button.danger:hover:not(:disabled) {
 .confirm-dialog {
   padding: 12px;
   border-radius: 10px;
-  background: var(--bg-panel);
+  background: var(--bg-panel-glass);
   border: 1px solid var(--accent-red);
   display: flex;
   flex-direction: column;
@@ -297,7 +317,7 @@ button.danger:hover:not(:disabled) {
   padding: 6px 12px;
   font-size: var(--font-size-xs);
   font-weight: 500;
-  background: var(--bg-elevated);
+  background: var(--bg-elevated-glass);
   color: var(--text-dim);
   border: 1px solid var(--border);
 }
@@ -356,7 +376,7 @@ button.danger:hover:not(:disabled) {
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: var(--bg-elevated);
+  background: var(--bg-elevated-glass);
 }
 
 .voice-option--selected {
@@ -376,12 +396,12 @@ button.danger:hover:not(:disabled) {
 }
 
 .voice-option__gender {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-faint);
 }
 
 .voice-option__select {
-  background: var(--bg-elevated);
+  background: var(--bg-elevated-glass);
   color: var(--text-dim);
   border: 1px solid var(--border);
 }
@@ -413,7 +433,7 @@ button.danger:hover:not(:disabled) {
 
 .plugin-suggestions h3 {
   margin: 0;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-faint);
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -422,7 +442,7 @@ button.danger:hover:not(:disabled) {
 .plugin-suggestion-card {
   padding: 10px;
   border-radius: 10px;
-  background: var(--bg-panel);
+  background: var(--bg-panel-glass);
   border: 1px solid var(--border);
   display: flex;
   flex-direction: column;

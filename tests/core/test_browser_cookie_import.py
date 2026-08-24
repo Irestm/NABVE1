@@ -125,9 +125,24 @@ def test_write_cookies_into_firefox_profile_replaces_existing(tmp_path: Path) ->
     assert result == [("cf_clearance", "fresh-value")]
 
 
-def test_write_cookies_into_firefox_profile_raises_without_a_bootstrapped_profile(tmp_path: Path) -> None:
-    with pytest.raises(bci.NoBrowserSessionFoundError):
-        bci._write_cookies_into_firefox_profile(tmp_path, ["quizlet.com"], [])
+def test_write_cookies_into_firefox_profile_bootstraps_a_brand_new_profile(tmp_path: Path) -> None:
+    profile_dir = tmp_path / "never_launched_before"
+    assert not profile_dir.exists()
+    now = int(time.time())
+    rows = [
+        bci.CookieRow(
+            host=".quizlet.com", name="cf_clearance", value="fresh-value", path="/",
+            expiry_unix=now + 7200, is_secure=True, is_http_only=True, same_site=1,
+        )
+    ]
+
+    written = bci._write_cookies_into_firefox_profile(profile_dir, ["quizlet.com"], rows)
+
+    assert written == 1
+    con = sqlite3.connect(str(profile_dir / "cookies.sqlite"))
+    result = con.execute("SELECT name, value FROM moz_cookies").fetchall()
+    con.close()
+    assert result == [("cf_clearance", "fresh-value")]
 
 
 def test_chrome_decrypt_round_trip() -> None:
@@ -179,6 +194,23 @@ def test_import_session_cookies_prefers_firefox_over_chrome(
 
     assert result.source == "Firefox"
     assert result.cookies_written == 1
+
+
+def test_import_session_cookies_falls_back_to_chrome_when_firefox_has_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    automation_profile = tmp_path / "automation"
+    chrome_row = bci.CookieRow(
+        host=".quizlet.com", name="session", value="chrome-val", path="/",
+        expiry_unix=int(time.time()) + 3600, is_secure=True, is_http_only=True, same_site=1,
+    )
+    monkeypatch.setattr(bci, "_firefox_default_profile_dirs", lambda: [])
+    monkeypatch.setattr(bci, "_chrome_cookie_dbs", lambda: [tmp_path / "Default/Cookies"])
+    monkeypatch.setattr(bci, "_read_chrome_cookies", lambda db_path, domains: ([chrome_row], 0))
+
+    result = bci.import_session_cookies(automation_profile, ["quizlet.com"])
+
+    assert result.source in ("Google Chrome", "Chromium")
 
 
 def test_import_session_cookies_raises_when_nothing_found(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

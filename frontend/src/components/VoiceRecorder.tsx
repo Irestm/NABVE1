@@ -21,15 +21,15 @@ const MAX_RECORDING_MS = 30000;
 // installed at all, so it either sounded wrong or said nothing.
 const FILLER_PHRASES = ["Секунду, обрабатываю…", "Сейчас посмотрю…", "Одну минуту…", "Думаю…"];
 
-// "ru"/"en" are the two quick-access toggle options; "uk" lives behind the
-// "…" menu (matches core/voice/config.py's supported_languages), along with
-// "auto" (null — Whisper's own language detection) for going back to it.
-const LANGUAGE_LABELS: Record<string, string> = { ru: "RU", en: "EN", uk: "UK" };
-const PRIMARY_LANGUAGES = ["ru", "en"];
-const EXTRA_LANGUAGES = ["uk"];
-const VOICE_LANGUAGE_STORAGE_KEY = "voiceLanguage";
+// The picker UI for this moved to components/VoiceSettingsPanel.tsx (see
+// the 2026-08-24 redesign — "язык" grouped into Settings alongside "голос")
+// — this still owns the storage key contract and reads it fresh on every
+// turn (not once into state at mount) so a change made in Settings while a
+// conversation is already active takes effect on the very next turn instead
+// of needing a remount.
+export const VOICE_LANGUAGE_STORAGE_KEY = "voiceLanguage";
 
-function readStoredLanguage(): string | null {
+export function readStoredVoiceLanguage(): string | null {
   try {
     return window.localStorage.getItem(VOICE_LANGUAGE_STORAGE_KEY) ?? "ru";
   } catch (error) {
@@ -70,24 +70,6 @@ export function VoiceRecorder({ onRecordingChange, onSpeakingChange }: VoiceReco
   const [result, setResult] = useState<VoiceQueryResponse | null>(null);
   const [error, setError] = useState<string>("");
   const [note, setNote] = useState<string>("");
-  const [voiceLanguage, setVoiceLanguage] = useState<string | null>(readStoredLanguage);
-  const [showMoreLanguages, setShowMoreLanguages] = useState(false);
-
-  function selectLanguage(lang: string | null): void {
-    setVoiceLanguage(lang);
-    setShowMoreLanguages(false);
-    try {
-      if (lang) {
-        window.localStorage.setItem(VOICE_LANGUAGE_STORAGE_KEY, lang);
-      } else {
-        window.localStorage.removeItem(VOICE_LANGUAGE_STORAGE_KEY);
-      }
-    } catch (error) {
-      // localStorage can be unavailable (e.g. private browsing) — selection
-      // still works for the session, it just won't be remembered.
-      console.error("Failed to persist the selected voice language to localStorage:", error);
-    }
-  }
 
   // Mirrors `active` for use inside async callbacks (recorder.onstop,
   // audio.onended) where a stale closure over the state value would keep the
@@ -365,6 +347,7 @@ export function VoiceRecorder({ onRecordingChange, onSpeakingChange }: VoiceReco
     playFiller();
     const pendingToken = pendingConfirmTokenRef.current;
     try {
+      const voiceLanguage = readStoredVoiceLanguage();
       const response = pendingToken
         ? await sendVoiceConfirmation(blob, pendingToken, "confirm.webm", voiceLanguage)
         : await sendVoiceQuery(blob, "query.webm", voiceLanguage);
@@ -415,41 +398,6 @@ export function VoiceRecorder({ onRecordingChange, onSpeakingChange }: VoiceReco
   return (
     <div className="section voice-recorder">
       <h3>Голосовой ввод</h3>
-
-      <div className="row voice-lang-toggle">
-        {PRIMARY_LANGUAGES.map((lang) => (
-          <button
-            key={lang}
-            className={voiceLanguage === lang ? "active" : ""}
-            onClick={() => selectLanguage(lang)}
-          >
-            {LANGUAGE_LABELS[lang]}
-          </button>
-        ))}
-        <button
-          className={showMoreLanguages ? "active" : ""}
-          aria-label="Другие языки"
-          onClick={() => setShowMoreLanguages((value) => !value)}
-        >
-          ⋯
-        </button>
-      </div>
-      {showMoreLanguages && (
-        <div className="row voice-lang-toggle">
-          <button className={voiceLanguage === null ? "active" : ""} onClick={() => selectLanguage(null)}>
-            Авто
-          </button>
-          {EXTRA_LANGUAGES.map((lang) => (
-            <button
-              key={lang}
-              className={voiceLanguage === lang ? "active" : ""}
-              onClick={() => selectLanguage(lang)}
-            >
-              {LANGUAGE_LABELS[lang]}
-            </button>
-          ))}
-        </div>
-      )}
 
       {recording && (
         <div className="voice-level" aria-hidden="true">

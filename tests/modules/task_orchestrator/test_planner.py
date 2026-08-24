@@ -23,7 +23,7 @@ class _FakeAdapter:
 
 def test_parses_valid_plan(monkeypatch) -> None:
     reply = '{"steps": [{"command": "open_app", "params": {"target": "calculator"}}]}'
-    monkeypatch.setattr(planner, "local_first_chain", lambda: [_FakeAdapter(reply)])
+    monkeypatch.setattr(planner, "candidate_chain", lambda text: [_FakeAdapter(reply)])
 
     result = asyncio.run(planner.plan("открой калькулятор", _COMMANDS))
 
@@ -34,19 +34,19 @@ def test_parses_valid_plan(monkeypatch) -> None:
 
 def test_rejects_hallucinated_command(monkeypatch) -> None:
     reply = '{"steps": [{"command": "delete_everything", "params": {}}]}'
-    monkeypatch.setattr(planner, "local_first_chain", lambda: [_FakeAdapter(reply)])
+    monkeypatch.setattr(planner, "candidate_chain", lambda text: [_FakeAdapter(reply)])
 
     assert asyncio.run(planner.plan("сделай что-нибудь", _COMMANDS)) is None
 
 
 def test_rejects_invalid_json(monkeypatch) -> None:
-    monkeypatch.setattr(planner, "local_first_chain", lambda: [_FakeAdapter("это не json")])
+    monkeypatch.setattr(planner, "candidate_chain", lambda text: [_FakeAdapter("это не json")])
 
     assert asyncio.run(planner.plan("что-то", _COMMANDS)) is None
 
 
 def test_rejects_empty_steps(monkeypatch) -> None:
-    monkeypatch.setattr(planner, "local_first_chain", lambda: [_FakeAdapter('{"steps": []}')])
+    monkeypatch.setattr(planner, "candidate_chain", lambda text: [_FakeAdapter('{"steps": []}')])
 
     assert asyncio.run(planner.plan("невыполнимая задача", _COMMANDS)) is None
 
@@ -55,7 +55,7 @@ def test_rejects_too_many_steps(monkeypatch) -> None:
     one_step = '{"command": "open_app", "params": {}}'
     steps_json = ", ".join(one_step for _ in range(planner.MAX_STEPS + 1))
     reply = f'{{"steps": [{steps_json}]}}'
-    monkeypatch.setattr(planner, "local_first_chain", lambda: [_FakeAdapter(reply)])
+    monkeypatch.setattr(planner, "candidate_chain", lambda text: [_FakeAdapter(reply)])
 
     assert asyncio.run(planner.plan("много шагов подряд", _COMMANDS)) is None
 
@@ -69,7 +69,7 @@ def test_falls_back_to_next_adapter_on_failure(monkeypatch) -> None:
 
     good_reply = '{"steps": [{"command": "open_app", "params": {}}]}'
     monkeypatch.setattr(
-        planner, "local_first_chain", lambda: [_RaisingAdapter(), _FakeAdapter(good_reply)]
+        planner, "candidate_chain", lambda text: [_RaisingAdapter(), _FakeAdapter(good_reply)]
     )
 
     result = asyncio.run(planner.plan("открой что-то", _COMMANDS))

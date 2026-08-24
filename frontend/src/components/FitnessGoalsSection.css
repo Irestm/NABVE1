@@ -1,0 +1,101 @@
+.fitness-goals {
+  --section-accent: var(--accent-green);
+}
+
+.fitness-goals__grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.fitness-goals__card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--bg-elevated-glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+}
+
+.fitness-goals__card--achieved {
+  border-color: color-mix(in srgb, var(--accent-green) 45%, var(--border));
+}
+
+.fitness-goals__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent-green) 20%, transparent);
+  color: var(--accent-green);
+}
+
+.fitness-goals__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.fitness-goals__description {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.fitness-goals__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.fitness-goals__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-panel-glass);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.fitness-goals__chip--achieved {
+  background: color-mix(in srgb, var(--accent-green) 20%, transparent);
+  border-color: color-mix(in srgb, var(--accent-green) 45%, transparent);
+  color: var(--accent-green);
+}
+
+.fitness-goals__delete {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.fitness-goals__delete:hover:not(:disabled) {
+  color: var(--accent-red);
+  border-color: color-mix(in srgb, var(--accent-red) 50%, var(--border));
+}
+
+/* Chrome's flex sizing algorithm otherwise squashes a lone icon-only flex
+   child down to a couple of pixels wide in an icon-square button like this
+   one — an explicit fixed size + flex-shrink:0 sidesteps it. */
+.fitness-goals__delete svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}

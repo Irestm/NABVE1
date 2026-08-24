@@ -40,6 +40,15 @@ def test_unparseable_text_reports_could_not_understand(monkeypatch):
         return None
 
     monkeypatch.setattr(dispatcher.command_parser, "parse_command", fake_parse)
+    assert _run("расскажи анекдот") == "Не понял, что нужно сделать в Figma."
+
+
+def test_unparseable_text_uses_female_form_when_gender_is_female(monkeypatch):
+    async def fake_parse(_text):
+        return None
+
+    monkeypatch.setattr(dispatcher.command_parser, "parse_command", fake_parse)
+    monkeypatch.setattr(dispatcher.gender_module, "get_user_gender", lambda: "female")
     assert _run("расскажи анекдот") == "Не поняла, что нужно сделать в Figma."
 
 

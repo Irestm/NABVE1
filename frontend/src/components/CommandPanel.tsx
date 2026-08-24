@@ -49,6 +49,18 @@ const ICONS: Record<string, LucideIcon> = {
   CircleStop,
 };
 
+// A fixed 6-color palette cycled by index visibly repeated once the
+// backend-driven button list (core/command_ui_metadata.py, arbitrary
+// count) grew past 6 — the user flagged this directly. Golden-angle hue
+// stepping (137.508°, the same trick used for evenly-spread categorical
+// colors in data-viz) instead gives every index a genuinely distinct hue
+// with no repeat no matter how many buttons the backend adds, while
+// staying stable across re-renders since it's a pure function of index.
+function accentForIndex(index: number): string {
+  const hue = (index * 137.508) % 360;
+  return `hsl(${hue.toFixed(1)}, 72%, 58%)`;
+}
+
 type FormValues = Record<string, string>;
 
 function defaultFormValues(schema: CommandParamField[]): FormValues {
@@ -229,13 +241,14 @@ export function CommandPanel({ onNavigateToGames }: CommandPanelProps): JSX.Elem
       {loadError && <p className="status-error">{loadError}</p>}
 
       <div className="command-panel__grid">
-        {buttons.map((command) => {
+        {buttons.map((command, index) => {
           const Icon = ICONS[command.icon];
           return (
             <button
               key={command.name}
               type="button"
               className="command-panel__button"
+              style={{ "--item-accent": accentForIndex(index) } as CSSProperties}
               disabled={busyCommand === command.name}
               onClick={() => handleClick(command)}
               title={command.description}

@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-from core.ai_adapter_chain import local_first_chain
+from core.ai_adapter_chain import candidate_chain
 from core.logger import get_logger
 from core.models import CommandDescriptor
 from modules.task_orchestrator.domain import PlanStep, TaskPlan
@@ -90,7 +90,7 @@ async def plan(goal_text: str, commands: list[CommandDescriptor]) -> TaskPlan | 
     real, already-registered dispatcher commands. Mirrors
     modules.ui_automation.grounding.ground's shape: a candidate-command
     prompt, JSON-only response, regex-extracted + json.loads +
-    graceful-None-on-failure parsing, tried across local_first_chain()'s
+    graceful-None-on-failure parsing, tried across candidate_chain()'s
     adapters in order. Every proposed command name is validated against
     `commands` (see _parse_step) — a hallucinated command name rejects
     that step, and the whole plan with it, never gets executed. Returns
@@ -100,7 +100,7 @@ async def plan(goal_text: str, commands: list[CommandDescriptor]) -> TaskPlan | 
 
     valid_commands = {c.name for c in commands}
     prompt = _build_prompt(goal_text, commands)
-    for adapter in local_first_chain():
+    for adapter in candidate_chain(goal_text):
         try:
             raw = await adapter.send_prompt(prompt, fast_mode=True)
         except Exception as exc:

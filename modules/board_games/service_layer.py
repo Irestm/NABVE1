@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Union
 
-from core.ai_adapter_chain import local_first_chain
+from core.ai_adapter_chain import candidate_chain
 from core.logger import get_logger
 from modules.board_games import chess_adapter, checkers_adapter
 from modules.board_games.domain import Difficulty, EngineMove, GameKind, GameSummary, MoveJudgement
@@ -79,7 +79,7 @@ async def resolve_player_move(session: GameSession, spoken_text: str) -> str | N
         "Определи, какой из них имел в виду пользователь, по номеру. Ответь ТОЛЬКО числом — "
         'номером хода из списка, ничем больше. Если ни один вариант явно не подходит — ответь "нет".'
     )
-    for adapter in local_first_chain():
+    for adapter in candidate_chain(spoken_text):
         try:
             raw = await adapter.send_prompt(prompt, fast_mode=True)
         except Exception as exc:

@@ -152,10 +152,11 @@ class CustomCommandRegistry:
         with self._lock:
             command_id = self._trigger_index.get(normalized)
             if command_id is None:
+                best_pattern = ""
                 for pattern, candidate_id in self._trigger_index.items():
-                    if pattern and pattern in normalized:
+                    if pattern and pattern in normalized and len(pattern) > len(best_pattern):
+                        best_pattern = pattern
                         command_id = candidate_id
-                        break
             return self._commands.get(command_id) if command_id else None
 
 

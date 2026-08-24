@@ -1,6 +1,11 @@
+import { Settings as SettingsIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { getProfileFact, runCommand, saveAboutMe, setProfileFact } from "../api/client";
 import { DESIGNS } from "../design/registry";
+import { PersonalityPanel } from "./PersonalityPanel";
+import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 import type { DesignId } from "../design/types";
 import "./SettingsPanel.css";
 
@@ -13,7 +18,7 @@ const DEFAULT_GENDER: Gender = "male";
 const CLAUDE_LOGIN_POLL_MS = 3000;
 const CLAUDE_LOGIN_POLL_MAX_ATTEMPTS = 40; // ~2 minutes
 
-type SettingsTab = "design" | "profile" | "code";
+type SettingsTab = "design" | "profile" | "voice" | "personality" | "code";
 
 interface ClaudeAuthStatus {
   loggedIn: boolean;
@@ -24,17 +29,6 @@ interface ClaudeAuthStatus {
 interface SettingsPanelProps {
   designId: DesignId;
   onDesignChange: (id: DesignId) => void;
-}
-
-function GearIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M19.14 12.94a7.07 7.07 0 0 0 .05-.94 7.07 7.07 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.03.31-.05.62-.05.94s.02.63.05.94L2.83 14.5a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.42.33.66.22l2.39-.96c.49.38 1.03.7 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.24.1.52.02.66-.22l1.92-3.32a.5.5 0 0 0-.12-.64ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
-      />
-    </svg>
-  );
 }
 
 export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps): JSX.Element {
@@ -213,15 +207,24 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
 
   return (
     <>
-      <button type="button" className="settings-gear" aria-label="Настройки" onClick={() => setOpen(true)}>
-        <GearIcon />
+      <button
+        type="button"
+        className="sidebar__item settings-gear"
+        style={{ "--item-accent": "var(--glow-listening)" } as CSSProperties}
+        onClick={() => setOpen(true)}
+      >
+        <span className="sidebar__item-icon" aria-hidden="true">
+          <SettingsIcon size={20} />
+        </span>
+        <span className="sidebar__item-label">Настройки ассистента</span>
       </button>
 
-      {open && (
-        <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="Настройки">
-          {/* Decorative click-outside-to-close target, not a semantic control. */}
-          {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events */}
-          <div className="settings-overlay__backdrop" onClick={() => setOpen(false)} />
+      {open &&
+        createPortal(
+          <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="Настройки">
+            {/* Decorative click-outside-to-close target, not a semantic control. */}
+            {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events */}
+            <div className="settings-overlay__backdrop" onClick={() => setOpen(false)} />
           <div className="settings-panel">
             <div className="settings-panel__header">
               <h2>Настройки</h2>
@@ -249,6 +252,20 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
                 onClick={() => setTab("profile")}
               >
                 Профиль
+              </button>
+              <button
+                type="button"
+                className={`settings-panel__tab${tab === "voice" ? " settings-panel__tab--active" : ""}`}
+                onClick={() => setTab("voice")}
+              >
+                Голос
+              </button>
+              <button
+                type="button"
+                className={`settings-panel__tab${tab === "personality" ? " settings-panel__tab--active" : ""}`}
+                onClick={() => setTab("personality")}
+              >
+                Личность
               </button>
               <button
                 type="button"
@@ -365,7 +382,11 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
                   </div>
                 </div>
               </div>
-            ) : (
+            ) : tab === "voice" ? (
+              <VoiceSettingsPanel />
+            ) : tab === "personality" ? (
+              <PersonalityPanel />
+            ) : tab === "code" ? (
               <div className="settings-panel__profile">
                 <div className="settings-panel__field">
                   <span className="settings-panel__label">Подключение Claude для генерации кода</span>
@@ -390,10 +411,11 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
                   )}
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

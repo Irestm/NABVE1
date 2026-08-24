@@ -6,12 +6,19 @@ import threading
 
 from core.dispatcher import CommandDispatcher
 from core.logger import get_logger
-from core.models import AssistantState, CommandStatus
+from core.models import AssistantState, CommandResponse, CommandStatus
 from core.state import state_manager
 from core.voice import ai_router, audio_io, confirmation_phrase, wake_word
 from core.voice.barge_in import BargeInMonitor
 from core.voice.config import VoiceSettings, voice_settings
-from core.voice.intent import Command, interpret, is_affirmative, is_resign_command
+from core.voice.intent import (
+    Command,
+    interpret,
+    is_affirmative,
+    is_fitness_exit_command,
+    is_resign_command,
+    is_stop_command,
+)
 from core.voice.interruption import TurnCancelled, run_cancellable
 from core.voice.language import resolve_language, resolve_response_language
 from core.voice.phrase_matching import fuzzy_contains_phrase
@@ -28,6 +35,12 @@ from modules.board_games.domain import GameKind
 from modules.calendar import extraction as calendar_extraction
 from modules.custom_commands import dispatcher as custom_commands
 from modules.custom_commands.domain import ActionType, CustomCommand
+from modules.fitness_tracker import announce as fitness_announce
+from modules.fitness_tracker import context_state as fitness_context_state
+from modules.fitness_tracker import fitness_chat
+from modules.fitness_tracker import intent_parser as fitness_intent_parser
+from modules.fitness_tracker import voice_commands as fitness_voice_commands
+from modules.fitness_tracker.intent_parser import ParsedIntent
 from modules.hardware_adaptive import command_classifier
 from modules.media import query_correction as media_query_correction
 from modules.media import recommender as media_recommender
@@ -37,12 +50,18 @@ from modules.messaging import text_cleanup as messaging_text_cleanup
 from modules.messaging.domain import PendingMessage
 from modules.messaging.duration import parse_duration_minutes
 from modules.messaging.uow import MessagingUnitOfWork
+from modules.os_agent import announce as os_agent_announce
+from modules.os_agent import planner as os_agent_planner
+from modules.os_agent import runner as os_agent_runner
+from modules.os_agent import session as os_agent_session
+from modules.os_agent.domain import AgentSession
 from modules.task_orchestrator import announce as task_orchestrator_announce
 from modules.task_orchestrator import service_layer as task_orchestrator_service_layer
 from modules.tray_hide import detector as tray_hide_detector
 from modules.tray_hide.config import HIDE_PHRASE_KEY, SHOW_PHRASE_KEY
 from modules.ui_automation import announce as ui_announce
 from modules.ui_automation import service_layer as ui_service_layer
+from modules.ui_automation.domain import UIStep
 from modules.ui_control import service_layer as ui_control_service_layer
 from modules.user_profile import service_layer as profile_service_layer
 from modules.user_profile.domain import STOP_WORD_KEY, WAKE_PHRASE_KEY
@@ -732,18 +751,32 @@ class VoiceAssistantLoop:
         if self._speak_safely(tts, announcement, response_language):
             return None, True
 
+        response = self._dispatch_ui_steps(steps, announcement, response_language)
+
+        state_manager.set_state(AssistantState.SPEAKING)
+        interrupted = self._speak_safely(tts, localize_response(response, response_language), response_language)
+        return None, interrupted
+
+    def _dispatch_ui_steps(
+        self, steps: list[UIStep], announcement: str, response_language: str
+    ) -> CommandResponse:
+        """Shared tail of _resolve_ui_action and
+        modules.os_agent's end-of-task apply step
+        (_resolve_os_agent_task below): dispatches an already-resolved list
+        of UIStep through the existing dangerous=True "ui_action" command
+        and auto-confirms right after — the real gate for both callers is
+        whatever happened before this is called (an uninterrupted spoken
+        announcement for _resolve_ui_action, a real spoken yes for the
+        os-agent's queued-actions confirmation), never a second prompt here."""
         params = {"steps": ui_service_layer.to_command_params(steps), "announcement": announcement}
         response = run_cancellable(
-            self._dispatcher.dispatch(command.name, params), self._barge_in, response_language
+            self._dispatcher.dispatch("ui_action", params), self._barge_in, response_language
         )
         if response.status == CommandStatus.CONFIRMATION_REQUIRED and response.token:
             response = run_cancellable(
                 self._dispatcher.confirm(response.token, True), self._barge_in, response_language
             )
-
-        state_manager.set_state(AssistantState.SPEAKING)
-        interrupted = self._speak_safely(tts, localize_response(response, response_language), response_language)
-        return None, interrupted
+        return response
 
     def _resolve_task_plan(
         self, command: Command, tts: TextToSpeech, response_language: str
@@ -937,6 +970,240 @@ class VoiceAssistantLoop:
         lines.extend(board_games_announce.mistake_text(m) for m in summary.mistakes)
         state_manager.set_state(AssistantState.SPEAKING)
         return self._speak_safely(tts, " ".join(lines), response_language)
+
+    def _resolve_active_os_agent_utterance(self, text: str, response_language: str) -> Command | None:
+        """Checked in _handle_command right alongside
+        _resolve_active_board_game_utterance, before interpret() — while
+        modules.os_agent.session is active (agent mode on, waiting for a
+        task), every utterance is claimed here instead of going through
+        normal command interpretation: either a stop phrase (reusing the
+        same STOP_PHRASES/is_stop_command barge-in already recognizes
+        elsewhere — no separate exit-phrase set needed) or free-text task
+        description. Returns None only when the mode isn't active at all, so
+        an unrelated utterance keeps working normally when it happens to
+        arrive while the mode is off."""
+        if not os_agent_session.is_active():
+            return None
+        if is_stop_command(text, response_language):
+            return Command(name="stop_os_agent", params={})
+        return Command(name="os_agent_run_task", params={"raw_text": text})
+
+    def _resolve_active_fitness_context_utterance(self, text: str, response_language: str) -> Command | None:
+        """Checked in _handle_command right alongside
+        _resolve_active_board_game_utterance/_resolve_active_os_agent_utterance,
+        before interpret() — but unlike those two, this ALWAYS claims the
+        utterance once modules.fitness_tracker.context_state.is_active(),
+        never returning None: the task spec explicitly wants an utterance
+        that doesn't match any fitness intent category to be treated as a
+        question for fitness_chat.py, not silently handed back to the
+        normal interpret()/AI-classifier pipeline (see
+        modules.fitness_tracker.intent_parser.parse's own docstring).
+        Mirrors os_agent's split between a text-only early resolver and a
+        separate TTS-capable resolve method: the actual parse/exit/apply
+        decision happens in _resolve_fitness_utterance below, which has
+        tts/command_stt access for a clarifying follow-up question — this
+        method only tags the utterance and hands the raw text along, the
+        same way os_agent_run_task's params carry raw_text rather than
+        anything already parsed. Returns None only when the context isn't
+        active at all, so interpret() gets a chance to recognize the
+        activation phrase itself (core/voice/intent.py's
+        _FITNESS_START_PHRASES)."""
+        if not fitness_context_state.is_active():
+            return None
+        return Command(name="fitness_utterance", params={"text": text})
+
+    def _resolve_fitness_activate(self, tts: TextToSpeech, response_language: str) -> bool:
+        fitness_context_state.activate()
+        fitness_chat.reset_api_key_hint()
+        state_manager.set_state(AssistantState.SPEAKING)
+        return self._speak_safely(tts, fitness_announce.context_activated_text(response_language), response_language)
+
+    def _resolve_fitness_clarify(
+        self, parsed: ParsedIntent, tts: TextToSpeech, command_stt: SpeechToText, response_language: str
+    ) -> tuple[ParsedIntent, bool]:
+        """One follow-up voice round for a ParsedIntent missing a required
+        field (e.g. "замерь бицепс" with no number) — same "speak a
+        question, listen once, use the answer" shape as
+        _resolve_board_game's which-game prompt. Returns the original
+        `parsed` unchanged (still incomplete) if the question itself gets
+        barge-in-cut off, so the caller's own missing_fields check decides
+        what to do next rather than this method guessing."""
+        question = fitness_voice_commands.clarify_question_text(parsed, response_language)
+        state_manager.set_state(AssistantState.SPEAKING)
+        if self._speak_safely(tts, question, response_language):
+            return parsed, True
+
+        state_manager.set_state(AssistantState.LISTENING, "Жду ответа")
+        answer_audio = audio_io.record_until_silence(self._settings, self._stop_event)
+        answer_text = command_stt.transcribe(answer_audio).text
+        return fitness_voice_commands.merge_followup(parsed, answer_text), False
+
+    def _resolve_fitness_chat_question(self, text: str, tts: TextToSpeech, response_language: str) -> bool:
+        state_manager.set_state(AssistantState.PROCESSING)
+        try:
+            reply = run_cancellable(
+                fitness_chat.answer_question(text, response_language), self._barge_in, response_language
+            )
+        except TurnCancelled:
+            raise
+        except fitness_chat.FitnessChatError:
+            state_manager.set_state(AssistantState.SPEAKING)
+            return self._speak_safely(tts, not_understood(response_language), response_language)
+        state_manager.set_state(AssistantState.SPEAKING)
+        return self._speak_safely(tts, reply, response_language)
+
+    def _resolve_fitness_utterance(
+        self, command: Command, tts: TextToSpeech, command_stt: SpeechToText, response_language: str
+    ) -> bool:
+        """The actual fitness-context decision, made here (rather than in
+        _resolve_active_fitness_context_utterance above) because it needs
+        tts/command_stt for both the clarifying follow-up round and for
+        speaking whatever the outcome is — same split rationale as
+        os_agent_run_task/_resolve_os_agent_task."""
+        text = command.params.get("text", "")
+
+        if is_fitness_exit_command(text, response_language):
+            fitness_context_state.deactivate()
+            state_manager.set_state(AssistantState.SPEAKING)
+            return self._speak_safely(
+                tts, fitness_announce.context_deactivated_text(response_language), response_language
+            )
+
+        fitness_context_state.touch()
+        parsed = fitness_intent_parser.parse(text)
+
+        if parsed.category is None:
+            return self._resolve_fitness_chat_question(text, tts, response_language)
+
+        if parsed.missing_fields:
+            parsed, interrupted = self._resolve_fitness_clarify(parsed, tts, command_stt, response_language)
+            if interrupted:
+                return True
+            if parsed.missing_fields:
+                state_manager.set_state(AssistantState.SPEAKING)
+                return self._speak_safely(tts, not_understood(response_language), response_language)
+
+        state_manager.set_state(AssistantState.PROCESSING)
+        try:
+            reply = run_cancellable(
+                fitness_voice_commands.apply_intent(parsed, response_language), self._barge_in, response_language
+            )
+        except TurnCancelled:
+            raise
+        except Exception:
+            logger.exception("Applying a fitness intent failed")
+            state_manager.set_state(AssistantState.SPEAKING)
+            return self._speak_safely(tts, not_understood(response_language), response_language)
+
+        state_manager.set_state(AssistantState.SPEAKING)
+        return self._speak_safely(tts, reply, response_language)
+
+    def _resolve_os_agent_start(self, tts: TextToSpeech, response_language: str) -> bool:
+        """Called for a "start_os_agent" command (see
+        core/voice/intent.py's _OS_AGENT_START_PHRASES). Hard-refuses before
+        the mode even turns on if neither a Gemini nor a Claude key is
+        configured (modules.os_agent.planner.has_configured_key) — per the
+        agreed plan, no browser-automation fallback for this feature, so
+        there's nothing to fall back to. Returns whether the spoken reply
+        got barge-in-cut off."""
+        state_manager.set_state(AssistantState.SPEAKING)
+        if not os_agent_planner.has_configured_key():
+            return self._speak_safely(
+                tts, os_agent_announce.no_key_refusal_text(response_language), response_language
+            )
+        os_agent_session.start()
+        return self._speak_safely(tts, os_agent_announce.mode_started_text(response_language), response_language)
+
+    def _resolve_os_agent_task(
+        self, command: Command, tts: TextToSpeech, command_stt: SpeechToText, response_language: str
+    ) -> bool:
+        """Runs the whole autonomous loop for one task
+        (modules.os_agent.runner.run_task) inside this single voice turn,
+        then — if it produced anything queued — speaks the numbered plan and
+        blocks for one real spoken yes/no (same shape as
+        _confirm_custom_command, not the generic dangerous-token
+        auto-confirm flow — the spoken answer here IS the real gate). Always
+        turns agent mode back off before returning (one task per activation,
+        see modules/os_agent/session.py's docstring), and returns whether
+        the last thing spoken got barge-in-cut off."""
+        raw_text = command.params.get("raw_text", "").strip()
+        try:
+            session = run_cancellable(os_agent_runner.run_task(raw_text), self._barge_in, response_language)
+        except TurnCancelled:
+            os_agent_session.finish()
+            raise
+        except Exception:
+            logger.exception("os_agent task run failed")
+            os_agent_session.finish()
+            state_manager.set_state(AssistantState.SPEAKING)
+            return self._speak_safely(tts, not_understood(response_language), response_language)
+
+        if not session.pending:
+            if session.outcome == "done":
+                text = session.summary or "Готово."
+            elif session.outcome == "throttled":
+                text = os_agent_announce.throttled_text(response_language)
+            else:
+                text = os_agent_announce.stuck_text(session.summary or "", response_language)
+            state_manager.set_state(AssistantState.SPEAKING)
+            interrupted = self._speak_safely(tts, text, response_language)
+            os_agent_session.finish()
+            return interrupted
+
+        announcement = os_agent_announce.queue_summary(
+            session.pending, response_language, step_limit_reached=session.outcome == "limit"
+        )
+        question = f"{announcement} {os_agent_announce.confirm_question_text(response_language)}"
+        state_manager.set_state(AssistantState.SPEAKING)
+        if self._speak_safely(tts, question, response_language):
+            os_agent_session.finish()
+            return True
+
+        state_manager.set_state(AssistantState.LISTENING, "Жду подтверждения")
+        confirm_audio = audio_io.record_until_silence(self._settings, self._stop_event)
+        confirm_result = command_stt.transcribe(confirm_audio)
+        approved = is_affirmative(confirm_result.text, response_language)
+
+        if approved:
+            response = self._dispatch_ui_steps(session.pending, announcement, response_language)
+            state_manager.set_state(AssistantState.SPEAKING)
+            interrupted = self._speak_safely(
+                tts, localize_response(response, response_language), response_language
+            )
+        else:
+            state_manager.set_state(AssistantState.SPEAKING)
+            interrupted = self._speak_safely(
+                tts, os_agent_announce.cancelled_text(response_language), response_language
+            )
+
+        if not interrupted:
+            interrupted = self._offer_os_agent_explanation(session, tts, command_stt, response_language)
+
+        os_agent_session.finish()
+        return interrupted
+
+    def _offer_os_agent_explanation(
+        self, session: AgentSession, tts: TextToSpeech, command_stt: SpeechToText, response_language: str
+    ) -> bool:
+        """One optional voice round after an os-agent task with a non-empty
+        queue (applied or cancelled either way) — "want me to explain why?"
+        — per the agreed plan's "опциональный вопрос-ответ" journal feature.
+        Deliberately a single fixed offer+answer, not open-ended follow-up
+        Q&A, to keep this v1 slice bounded."""
+        state_manager.set_state(AssistantState.SPEAKING)
+        if self._speak_safely(tts, os_agent_announce.explain_offer_text(response_language), response_language):
+            return True
+
+        state_manager.set_state(AssistantState.LISTENING, "Жду ответа")
+        answer_audio = audio_io.record_until_silence(self._settings, self._stop_event)
+        answer_result = command_stt.transcribe(answer_audio)
+        if not is_affirmative(answer_result.text, response_language):
+            return False
+
+        explanation = run_cancellable(os_agent_planner.explain(session), self._barge_in, response_language)
+        state_manager.set_state(AssistantState.SPEAKING)
+        text = explanation or "Не получилось сформулировать объяснение."
+        return self._speak_safely(tts, text, response_language)
 
     def _resolve_pending_message_target(
         self, raw_target: str, tts: TextToSpeech, command_stt: SpeechToText, response_language: str
@@ -1136,6 +1403,64 @@ class VoiceAssistantLoop:
 
         return Command(name=command.name, params={"message_id": target.id, "minutes": minutes}), False
 
+    def _resolve_edit_pending_message(
+        self, command: Command, command_stt: SpeechToText, tts: TextToSpeech, response_language: str
+    ) -> tuple[Command | None, bool]:
+        """Called for an "edit_pending_message" command before it's
+        dispatched (see core/voice/intent.py's _TEXT_EDIT_MESSAGE_PATTERNS).
+        Finds the target message the same way
+        _resolve_messaging_reply/_resolve_messaging_snooze do, then always
+        asks "какую инструкцию дать?" — unlike _resolve_messaging_snooze's
+        local duration parser, there's no rule-based way to guess an
+        arbitrary edit instruction from the raw captured text, so this
+        never tries to skip the question. The actual edit happens in
+        modules.text_editing's dispatcher handler once this hands back an
+        enriched Command — this method only resolves *which* message and
+        *what* to do with it, same division of labor as
+        _resolve_messaging_snooze."""
+        raw_target = command.params.get("raw_target", "")
+        target, interrupted = self._resolve_pending_message_target(
+            raw_target, tts, command_stt, response_language
+        )
+        if target is None:
+            return None, interrupted
+
+        state_manager.set_state(AssistantState.SPEAKING)
+        if self._speak_safely(tts, "Какую инструкцию дать?", response_language):
+            return None, True
+
+        state_manager.set_state(AssistantState.LISTENING, "Слушаю инструкцию")
+        instruction_audio = audio_io.record_until_silence(self._settings, self._stop_event)
+        instruction = command_stt.transcribe(instruction_audio).text.strip()
+        if not instruction:
+            state_manager.set_state(AssistantState.SPEAKING)
+            interrupted = self._speak_safely(tts, not_understood(response_language), response_language)
+            return None, interrupted
+
+        return Command(name=command.name, params={"message_id": target.id, "instruction": instruction}), False
+
+    def _resolve_analyze_active_editor(
+        self, command: Command, command_stt: SpeechToText, tts: TextToSpeech, response_language: str
+    ) -> tuple[Command | None, bool]:
+        """Called for an "analyze_active_editor" command before it's
+        dispatched (see core/voice/intent.py's _CODE_ANALYSIS_PATTERNS).
+        Always asks "что именно сделать с кодом?" — same reasoning as
+        _resolve_edit_pending_message: there's no rule-based way to guess an
+        arbitrary analysis instruction from a bare "проанализируй код"."""
+        state_manager.set_state(AssistantState.SPEAKING)
+        if self._speak_safely(tts, "Что именно сделать с кодом?", response_language):
+            return None, True
+
+        state_manager.set_state(AssistantState.LISTENING, "Слушаю задачу")
+        instruction_audio = audio_io.record_until_silence(self._settings, self._stop_event)
+        instruction = command_stt.transcribe(instruction_audio).text.strip()
+        if not instruction:
+            state_manager.set_state(AssistantState.SPEAKING)
+            interrupted = self._speak_safely(tts, not_understood(response_language), response_language)
+            return None, interrupted
+
+        return Command(name=command.name, params={"instruction": instruction}), False
+
     def _resolve_messaging_watch_contact(
         self, command: Command, tts: TextToSpeech, response_language: str
     ) -> tuple[Command | None, bool]:
@@ -1215,6 +1540,10 @@ class VoiceAssistantLoop:
 
         state_manager.set_state(AssistantState.PROCESSING, "Распознаю")
         result = command_stt.transcribe(audio)
+        logger.info(
+            "STT transcribed: %r (detected_language=%s, probability=%.2f)",
+            result.text, result.detected_language, result.language_probability,
+        )
         decision = resolve_language(result.detected_language, result.language_probability, self._settings)
         # decision.resolved drives interpretation of the user's own words (interpret,
         # is_affirmative); response_language drives what the assistant speaks back and
@@ -1282,6 +1611,10 @@ class VoiceAssistantLoop:
             # interpretation, the same priority custom commands get above —
             # see _resolve_active_board_game_utterance's own docstring.
             command = self._resolve_active_board_game_utterance(text_to_interpret, response_language)
+            if command is None:
+                command = self._resolve_active_os_agent_utterance(text_to_interpret, response_language)
+            if command is None:
+                command = self._resolve_active_fitness_context_utterance(text_to_interpret, response_language)
             if command is None:
                 command = interpret(text_to_interpret, decision.resolved)
             if command is not None and command.name in ("messaging_reply", "messaging_snooze"):
@@ -1362,6 +1695,30 @@ class VoiceAssistantLoop:
                 if command is None:
                     state_manager.set_state(AssistantState.IDLE)
                     return interrupted
+            elif command.name == "start_os_agent":
+                interrupted = self._resolve_os_agent_start(tts, response_language)
+                state_manager.set_state(AssistantState.IDLE)
+                return interrupted
+            elif command.name == "stop_os_agent":
+                os_agent_session.finish()
+                state_manager.set_state(AssistantState.SPEAKING)
+                interrupted = self._speak_safely(
+                    tts, os_agent_announce.mode_stopped_text(response_language), response_language
+                )
+                state_manager.set_state(AssistantState.IDLE)
+                return interrupted
+            elif command.name == "os_agent_run_task":
+                interrupted = self._resolve_os_agent_task(command, tts, command_stt, response_language)
+                state_manager.set_state(AssistantState.IDLE)
+                return interrupted
+            elif command.name == "fitness_activate_context":
+                interrupted = self._resolve_fitness_activate(tts, response_language)
+                state_manager.set_state(AssistantState.IDLE)
+                return interrupted
+            elif command.name == "fitness_utterance":
+                interrupted = self._resolve_fitness_utterance(command, tts, command_stt, response_language)
+                state_manager.set_state(AssistantState.IDLE)
+                return interrupted
             elif command.name == "board_game_apply_move":
                 interrupted = self._resolve_board_game_move(command, tts, response_language)
                 state_manager.set_state(AssistantState.IDLE)
@@ -1377,6 +1734,20 @@ class VoiceAssistantLoop:
                     return interrupted
             elif command.name == "messaging_snooze":
                 command, interrupted = self._resolve_messaging_snooze(
+                    command, command_stt, tts, response_language
+                )
+                if command is None:
+                    state_manager.set_state(AssistantState.IDLE)
+                    return interrupted
+            elif command.name == "edit_pending_message":
+                command, interrupted = self._resolve_edit_pending_message(
+                    command, command_stt, tts, response_language
+                )
+                if command is None:
+                    state_manager.set_state(AssistantState.IDLE)
+                    return interrupted
+            elif command.name == "analyze_active_editor":
+                command, interrupted = self._resolve_analyze_active_editor(
                     command, command_stt, tts, response_language
                 )
                 if command is None:
