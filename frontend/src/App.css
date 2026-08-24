@@ -243,8 +243,17 @@ button {
      to every plain button inside it automatically — a bare type selector
      loses to any component's own more-specific class rule, so this only
      ever affects buttons that don't already declare their own background
-     (e.g. "Превью"/"Начать шахматы", not .quizlet-panel__mode). */
-  background: linear-gradient(135deg, var(--section-accent, var(--accent-blue)), var(--accent-blue));
+     (e.g. "Превью"/"Начать шахматы", not .quizlet-panel__mode). The second
+     gradient stop used to be hardcoded --accent-blue regardless of the
+     section's own accent — every non-blue button still faded into blue on
+     its trailing edge ("все вперемешку с синим"); it's a tint of the same
+     --section-accent now, so a purple/amber/red section's buttons actually
+     read as purple/amber/red end to end. */
+  background: linear-gradient(
+    135deg,
+    var(--section-accent, var(--accent-blue)),
+    color-mix(in srgb, var(--section-accent, var(--accent-blue)) 65%, white)
+  );
   color: #04070c;
   font-weight: 600;
   font-size: 13px;
@@ -252,8 +261,14 @@ button {
   transition: filter var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
+/* Every plain button now lifts slightly on hover (was brightness/glow
+   only, no motion) — explicit "у каждой кнопки добавь анимацию" request.
+   Specific components with their own already-animated buttons (e.g.
+   CommandPanel's) aren't affected differently since this transform just
+   adds to what they already had. */
 button:hover:not(:disabled) {
   filter: brightness(1.1);
+  transform: translateY(-1px);
   box-shadow: 0 0 14px color-mix(in srgb, var(--section-accent, var(--accent-blue)) 60%, transparent);
 }
 
@@ -407,7 +422,11 @@ button.danger:hover:not(:disabled) {
 }
 
 .voice-option__select.active {
-  background: linear-gradient(135deg, var(--section-accent, var(--accent-blue)), var(--accent-blue));
+  background: linear-gradient(
+    135deg,
+    var(--section-accent, var(--accent-blue)),
+    color-mix(in srgb, var(--section-accent, var(--accent-blue)) 65%, white)
+  );
   color: #04070c;
   border-color: transparent;
 }

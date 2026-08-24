@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import "./CollapsibleCard.css";
 
@@ -18,6 +18,11 @@ interface CollapsibleCardProps {
   icon: ReactNode;
   accent: CollapsibleCardAccent;
   defaultOpen?: boolean;
+  // Bump this (e.g. a counter) to force the card open from outside —
+  // used by the "Начать шахматы/шашки" system-command shortcut so it can
+  // actually reveal the board, not just scroll to a still-collapsed card.
+  // Left undefined, the card stays fully self-managed as before.
+  openSignal?: number;
   children: ReactNode;
 }
 
@@ -29,9 +34,31 @@ interface CollapsibleCardProps {
 // grid-template-rows expand/collapse animation (no JS height measurement,
 // no new animation library — same all-CSS approach every other animation
 // in this app already uses).
-export function CollapsibleCard({ title, icon, accent, defaultOpen = false, children }: CollapsibleCardProps): JSX.Element {
+export function CollapsibleCard({
+  title,
+  icon,
+  accent,
+  defaultOpen = false,
+  openSignal,
+  children,
+}: CollapsibleCardProps): JSX.Element {
   const [open, setOpen] = useState(defaultOpen);
   const style = { "--section-accent": ACCENT_VARS[accent] } as CSSProperties;
+  // Compared against on every effect run so mount itself never counts as
+  // "the signal changed" — openSignal starts at a defined value (e.g. 0),
+  // so a plain `openSignal !== undefined` check forces the card open on
+  // every page load. A ref-tracked previous value survives React
+  // StrictMode's dev-only double effect invocation on mount too (both
+  // invocations compare against the same initial value, so neither opens
+  // the card), unlike a simple "first run" boolean flag would.
+  const prevSignal = useRef(openSignal);
+
+  useEffect(() => {
+    if (openSignal !== undefined && openSignal !== prevSignal.current) {
+      setOpen(true);
+    }
+    prevSignal.current = openSignal;
+  }, [openSignal]);
 
   return (
     <div className="collapsible-card" style={style}>

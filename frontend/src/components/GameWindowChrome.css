@@ -1,0 +1,97 @@
+/* Nostalgic-desktop-app framing (rounded "window" with a colored title
+   bar + decorative dots, LCD-style score blocks, a win/lose overlay) —
+   shared by every mini-game window (Пасьянс, Сапёр) that wants this look,
+   rather than a literal recreation of any specific OS's window chrome.
+   Originally written for Pinball (now removed); kept as its own shared
+   file since Solitaire/Minesweeper still use it. */
+.game-window__titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: linear-gradient(180deg, #4f8dff 0%, #2757c9 55%, #1c3f9c 100%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.35) inset, 0 -1px 0 rgba(0, 0, 0, 0.25) inset;
+}
+
+.game-window__title {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 14px;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+.game-window__dots {
+  display: flex;
+  gap: 6px;
+}
+
+.game-window__dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.4);
+}
+
+.game-window__dot--min {
+  background: radial-gradient(circle at 35% 30%, #fff59e, #e0b400);
+}
+
+.game-window__dot--max {
+  background: radial-gradient(circle at 35% 30%, #a3ffb0, #1fa832);
+}
+
+.game-window__dot--close {
+  background: radial-gradient(circle at 35% 30%, #ffb0b0, #cc2222);
+}
+
+.game-window__score-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: #050a06;
+  border: 1px solid #143318;
+}
+
+.game-window__score-label {
+  font-size: 10px;
+  color: #4fae5a;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.game-window__score-value {
+  font-family: "Courier New", monospace;
+  font-weight: 700;
+  font-size: 20px;
+  color: #4dff6a;
+  text-shadow: 0 0 8px rgba(77, 255, 106, 0.6);
+}
+
+.game-window__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: rgba(5, 8, 15, 0.82);
+  backdrop-filter: blur(3px);
+}
+
+.game-window__overlay-title {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 24px;
+  color: #ffffff;
+}
+
+.game-window__overlay-score {
+  margin: 0;
+  font-size: 14px;
+  color: #4dff6a;
+}

@@ -1,8 +1,22 @@
+import { Bomb, Crown } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
-import type { MouseEvent } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { finishBoardGame, getCurrentBoardGame, playBoardGameMove, startBoardGame } from "../api/client";
 import type { BoardGameDifficulty, BoardGameKind, BoardGameState } from "../types";
+import { CheckersIcon } from "./CheckersIcon";
+import { MinesweeperGame } from "./MinesweeperGame";
+import { SolitaireGame } from "./SolitaireGame";
+import { SolitaireIcon } from "./SolitaireIcon";
 import "./BoardGamesPanel.css";
+
+// Same icon choice as core/command_ui_metadata.py's "Crown"/"CheckersGlyph"
+// for the matching System Commands shortcuts — a crown for the queen
+// (no dedicated chess-queen icon exists in lucide-react) and the hand-drawn
+// two-tone piece pair for checkers, instead of a generic Gamepad glyph.
+const KIND_ICON: Record<BoardGameKind, (props: { size?: number }) => ReactNode> = {
+  chess: Crown,
+  checkers: CheckersIcon,
+};
 
 const KIND_LABEL: Record<BoardGameKind, string> = {
   chess: "Шахматы",
@@ -10,14 +24,33 @@ const KIND_LABEL: Record<BoardGameKind, string> = {
 };
 
 // Order matters here — rendered left-to-right as the difficulty chip row.
-const DIFFICULTY_OPTIONS: BoardGameDifficulty[] = ["very_easy", "easy", "medium", "hard", "very_hard", "impossible"];
+// 10 levels now (was 6) — a new tier inserted between each original pair,
+// explicit request: "чуть выше лёгкого, потом средний, чуть ниже
+// сложного и т.д." Mirrors modules/board_games/domain.py's Difficulty
+// enum member order exactly.
+const DIFFICULTY_OPTIONS: BoardGameDifficulty[] = [
+  "very_easy",
+  "easy",
+  "easy_plus",
+  "medium",
+  "medium_plus",
+  "hard",
+  "hard_plus",
+  "very_hard",
+  "very_hard_plus",
+  "impossible",
+];
 
 const DIFFICULTY_LABEL: Record<BoardGameDifficulty, string> = {
   very_easy: "Очень легко",
   easy: "Легко",
+  easy_plus: "Чуть выше лёгкого",
   medium: "Средне",
+  medium_plus: "Чуть выше среднего",
   hard: "Сложно",
+  hard_plus: "Чуть выше сложного",
   very_hard: "Очень сложно",
+  very_hard_plus: "На грани невозможного",
   impossible: "Невозможно",
 };
 
@@ -26,9 +59,13 @@ const DIFFICULTY_LABEL: Record<BoardGameDifficulty, string> = {
 const DIFFICULTY_CHESS_ELO: Record<BoardGameDifficulty, number> = {
   very_easy: 1320,
   easy: 1500,
+  easy_plus: 1650,
   medium: 1800,
+  medium_plus: 2000,
   hard: 2200,
+  hard_plus: 2450,
   very_hard: 2700,
+  very_hard_plus: 2950,
   impossible: 3190,
 };
 
@@ -199,6 +236,12 @@ function resultText(result: string | null): string {
 }
 
 export function BoardGamesPanel(): JSX.Element {
+  // Solitaire/Minesweeper are self-contained client-side minigames (no
+  // server session, unlike chess/checkers) — separate flags rather than
+  // folding them into `state`/`BoardGameKind` keep this component's
+  // existing server-driven chess/checkers flow completely untouched.
+  const [solitaireOpen, setSolitaireOpen] = useState(false);
+  const [minesweeperOpen, setMinesweeperOpen] = useState(false);
   const [state, setState] = useState<BoardGameState | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [starting, setStarting] = useState<BoardGameKind | null>(null);
@@ -473,6 +516,28 @@ export function BoardGamesPanel(): JSX.Element {
     );
   }
 
+  if (solitaireOpen) {
+    return (
+      <div className="board-games-panel">
+        <SolitaireGame />
+        <button type="button" className="board-games-panel__back" onClick={() => setSolitaireOpen(false)}>
+          ← Выбрать другую игру
+        </button>
+      </div>
+    );
+  }
+
+  if (minesweeperOpen) {
+    return (
+      <div className="board-games-panel">
+        <MinesweeperGame />
+        <button type="button" className="board-games-panel__back" onClick={() => setMinesweeperOpen(false)}>
+          ← Выбрать другую игру
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="board-games-panel">
       {error && <p className="status-error">{error}</p>}
@@ -508,11 +573,38 @@ export function BoardGamesPanel(): JSX.Element {
           </p>
 
           <div className="board-games-panel__start-row">
-            <button type="button" onClick={() => void handleStart("chess")} disabled={starting !== null}>
-              {starting === "chess" ? "…" : "Начать шахматы"}
+            {(["chess", "checkers"] as const).map((kind) => {
+              const Icon = KIND_ICON[kind];
+              return (
+                <button
+                  key={kind}
+                  type="button"
+                  className="board-games-panel__start-tile"
+                  onClick={() => void handleStart(kind)}
+                  disabled={starting !== null}
+                >
+                  <Icon size={26} />
+                  <span>{starting === kind ? "…" : KIND_LABEL[kind]}</span>
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              className="board-games-panel__start-tile board-games-panel__start-tile--solitaire"
+              onClick={() => setSolitaireOpen(true)}
+              disabled={starting !== null}
+            >
+              <SolitaireIcon size={26} />
+              <span>Пасьянс</span>
             </button>
-            <button type="button" onClick={() => void handleStart("checkers")} disabled={starting !== null}>
-              {starting === "checkers" ? "…" : "Начать шашки"}
+            <button
+              type="button"
+              className="board-games-panel__start-tile board-games-panel__start-tile--minesweeper"
+              onClick={() => setMinesweeperOpen(true)}
+              disabled={starting !== null}
+            >
+              <Bomb size={26} />
+              <span>Сапёр</span>
             </button>
           </div>
         </>

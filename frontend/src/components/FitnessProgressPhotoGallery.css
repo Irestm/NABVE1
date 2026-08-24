@@ -23,7 +23,7 @@
   justify-content: center;
   padding: 7px 14px;
   border-radius: 8px;
-  background: linear-gradient(135deg, var(--section-accent), var(--accent-blue));
+  background: linear-gradient(135deg, var(--section-accent), color-mix(in srgb, var(--section-accent) 65%, white));
   color: #04070c;
   font-weight: 600;
   font-size: 13px;

@@ -20,9 +20,13 @@ class Difficulty(str, enum.Enum):
 
     VERY_EASY = "very_easy"
     EASY = "easy"
+    EASY_PLUS = "easy_plus"
     MEDIUM = "medium"
+    MEDIUM_PLUS = "medium_plus"
     HARD = "hard"
+    HARD_PLUS = "hard_plus"
     VERY_HARD = "very_hard"
+    VERY_HARD_PLUS = "very_hard_plus"
     IMPOSSIBLE = "impossible"
 
 

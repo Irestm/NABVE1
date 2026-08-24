@@ -1,16 +1,14 @@
 import { useEffect, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import {
   AlarmClockOff,
   Battery,
   CircleStop,
-  Crown,
-  Disc,
   DownloadCloud,
   FolderInput,
   FolderPlus,
+  Gamepad2,
   Languages,
-  type LucideIcon,
   Minimize2,
   Power,
   RefreshCw,
@@ -28,7 +26,7 @@ import "./CommandPanel.css";
 
 // Matches the "icon" strings in core/command_ui_metadata.py exactly — one
 // entry per command currently exposed on the panel.
-const ICONS: Record<string, LucideIcon> = {
+const ICONS: Record<string, (props: { size?: number }) => ReactNode> = {
   Power,
   RefreshCw,
   Volume2,
@@ -41,24 +39,58 @@ const ICONS: Record<string, LucideIcon> = {
   Languages,
   Battery,
   DownloadCloud,
-  Crown,
-  Disc,
+  Gamepad2,
   Timer,
   AlarmClockOff,
   Watch,
   CircleStop,
 };
 
-// A fixed 6-color palette cycled by index visibly repeated once the
-// backend-driven button list (core/command_ui_metadata.py, arbitrary
-// count) grew past 6 — the user flagged this directly. Golden-angle hue
-// stepping (137.508°, the same trick used for evenly-spread categorical
-// colors in data-viz) instead gives every index a genuinely distinct hue
-// with no repeat no matter how many buttons the backend adds, while
-// staying stable across re-renders since it's a pure function of index.
-function accentForIndex(index: number): string {
-  const hue = (index * 137.508) % 360;
-  return `hsl(${hue.toFixed(1)}, 72%, 58%)`;
+// Mirrors core/command_ui_metadata.py's GROUP_LABELS/GROUP_ORDER exactly —
+// grouping replaced the old per-button golden-angle rainbow (explicit
+// follow-up request: group the panel, one accent color per group instead
+// of per button).
+const GROUP_LABELS: Record<string, string> = {
+  power: "Питание и система",
+  sound: "Звук",
+  windows: "Окна и вкладки",
+  files: "Файлы",
+  time_lang: "Время и язык",
+  games: "Игры",
+};
+const GROUP_ORDER = ["power", "sound", "windows", "files", "time_lang", "games"];
+const GROUP_ACCENT: Record<string, string> = {
+  power: "var(--accent-red)",
+  sound: "var(--accent-blue)",
+  windows: "var(--glow-listening)",
+  files: "var(--accent-amber)",
+  time_lang: "var(--accent-purple)",
+  games: "var(--accent-green)",
+};
+const DEFAULT_GROUP_ACCENT = "var(--accent-blue)";
+
+function groupButtons(buttons: CommandButtonDescriptor[]): Array<[string, CommandButtonDescriptor[]]> {
+  const byGroup = new Map<string, CommandButtonDescriptor[]>();
+  for (const button of buttons) {
+    const list = byGroup.get(button.group) ?? [];
+    list.push(button);
+    byGroup.set(button.group, list);
+  }
+  const ordered: Array<[string, CommandButtonDescriptor[]]> = [];
+  for (const group of GROUP_ORDER) {
+    const list = byGroup.get(group);
+    if (list && list.length > 0) {
+      ordered.push([group, list]);
+      byGroup.delete(group);
+    }
+  }
+  // Any group the backend adds later that this file hasn't been taught a
+  // label/color for yet still shows up, just at the end, generically —
+  // never silently drops buttons.
+  for (const [group, list] of byGroup) {
+    ordered.push([group, list]);
+  }
+  return ordered;
 }
 
 type FormValues = Record<string, string>;
@@ -152,7 +184,7 @@ function ParamFields({
 // Commands that actually start something the user then wants to look at
 // (a running board game, on the Ассистент tab's Игры panel) rather than
 // just reading a confirmation message.
-const NAVIGATE_TO_GAMES_ON: ReadonlySet<string> = new Set(["start_chess_game", "start_checkers_game"]);
+const NAVIGATE_TO_GAMES_ON: ReadonlySet<string> = new Set(["start_board_game"]);
 
 interface CommandPanelProps {
   onNavigateToGames?: () => void;
@@ -203,13 +235,23 @@ export function CommandPanel({ onNavigateToGames }: CommandPanelProps): JSX.Elem
       } else {
         setResultMessage(response.message || `Команда «${command.label}» выполнена.`);
         if (NAVIGATE_TO_GAMES_ON.has(command.name) && onNavigateToGames) {
+          // Also bumps gamesOpenSignal (see App.tsx) so the Board Games
+          // card actually opens — scrolling to it while it's still
+          // collapsed just shows the closed card, not the board.
           onNavigateToGames();
-          // The tab switch above re-renders the Ассистент tab's content
-          // fresh — give it a frame to actually mount before scrolling to
-          // an element that doesn't exist yet.
-          requestAnimationFrame(() => {
-            document.querySelector(".board-games-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
-          });
+          // Two things need time before the board's final on-screen
+          // position is stable enough to scroll to: the tab switch itself
+          // re-mounting the Ассистент page's content (one frame), and the
+          // card's own open transition (--transition-med, 320ms) actually
+          // finishing — scrolling mid-expand targets a position that's
+          // still moving. ".board-games-panel__board" (not the outer
+          // panel) so the board itself ends up on screen, not just the
+          // pre-game difficulty picker above it.
+          setTimeout(() => {
+            document
+              .querySelector(".board-games-panel__board")
+              ?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }, 360);
         }
       }
     } catch (error) {
@@ -234,31 +276,42 @@ export function CommandPanel({ onNavigateToGames }: CommandPanelProps): JSX.Elem
 
   const schema = openCommand?.params_schema ?? null;
   const formReady = !schema || isFormComplete(schema, formValues);
+  const groups = groupButtons(buttons);
 
   return (
     <div className="section command-panel">
       <h3>Команды</h3>
       {loadError && <p className="status-error">{loadError}</p>}
 
-      <div className="command-panel__grid">
-        {buttons.map((command, index) => {
-          const Icon = ICONS[command.icon];
-          return (
-            <button
-              key={command.name}
-              type="button"
-              className="command-panel__button"
-              style={{ "--item-accent": accentForIndex(index) } as CSSProperties}
-              disabled={busyCommand === command.name}
-              onClick={() => handleClick(command)}
-              title={command.description}
-            >
-              {Icon && <Icon size={22} />}
-              <span>{command.label}</span>
-            </button>
-          );
-        })}
-      </div>
+      {groups.map(([group, groupCommands]) => (
+        <div key={group} className="command-panel__group">
+          <span
+            className="command-panel__group-label"
+            style={{ "--item-accent": GROUP_ACCENT[group] ?? DEFAULT_GROUP_ACCENT } as CSSProperties}
+          >
+            {GROUP_LABELS[group] ?? group}
+          </span>
+          <div className="command-panel__grid">
+            {groupCommands.map((command) => {
+              const Icon = ICONS[command.icon];
+              return (
+                <button
+                  key={command.name}
+                  type="button"
+                  className="command-panel__button"
+                  style={{ "--item-accent": GROUP_ACCENT[group] ?? DEFAULT_GROUP_ACCENT } as CSSProperties}
+                  disabled={busyCommand === command.name}
+                  onClick={() => handleClick(command)}
+                  title={command.description}
+                >
+                  {Icon && <Icon size={22} />}
+                  <span>{command.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
 
       {(resultMessage || resultError) && (
         <p className={resultError ? "status-error" : "command-panel__result"}>{resultError || resultMessage}</p>

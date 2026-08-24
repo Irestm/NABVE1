@@ -283,6 +283,7 @@ async def list_command_buttons() -> list[CommandButtonDescriptor]:
                 icon=meta.icon,
                 dangerous=descriptor.dangerous,
                 description=descriptor.description,
+                group=meta.group,
                 params_schema=params_schema,
             )
         )

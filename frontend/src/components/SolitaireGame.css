@@ -1,0 +1,164 @@
+/* Layout/card styling specific to solitaire — the window-chrome classes
+   (titlebar, dots, win overlay) come from GameWindowChrome.css, shared
+   as-is. */
+.solitaire-window {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #0b0f1a;
+  border: 1px solid color-mix(in srgb, #1fa832 45%, transparent);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  position: relative;
+}
+
+.solitaire-window__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+}
+
+.solitaire-window__new-btn {
+  --section-accent: #1fa832;
+  padding: 8px 14px;
+  font-size: 12px;
+}
+
+.solitaire-window__moves {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* Scrolls sideways as one unit on narrow viewports (phone-as-LAN-thin-
+   client) instead of silently clipping the 4th foundation pile / trailing
+   tableau columns behind the CollapsibleCard's own overflow:hidden — the
+   6 fixed-width piles + 7 tableau columns need ~340px, more than a
+   narrow phone's collapsed-card content box gives it. */
+.solitaire-window__table {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 12px 16px;
+  background: radial-gradient(ellipse at 50% 0%, #0e3d1e 0%, #0a2814 70%, #071c0e 100%);
+  overflow-x: auto;
+}
+
+.solitaire-window__top-row {
+  display: flex;
+  gap: 6px;
+  width: max-content;
+  min-width: 100%;
+}
+
+.solitaire-window__spacer {
+  flex: 1;
+  min-width: 14px;
+}
+
+.solitaire-window__tableau {
+  display: flex;
+  gap: 6px;
+  width: max-content;
+  min-width: 100%;
+}
+
+.solitaire-column {
+  position: relative;
+  flex: 0 0 88px;
+  min-height: 124px;
+}
+
+.solitaire-column__slot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  cursor: pointer;
+}
+
+.solitaire-pile {
+  width: 88px;
+  height: 124px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.solitaire-pile__empty {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  border: 2px dashed color-mix(in srgb, #1fa832 55%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  color: color-mix(in srgb, #1fa832 65%, transparent);
+}
+
+.solitaire-pile__empty--recycle {
+  font-size: 36px;
+}
+
+.solitaire-pile__empty--column {
+  border-radius: 5px;
+}
+
+.solitaire-card {
+  width: 100%;
+  height: 124px;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+.solitaire-card--back {
+  background: repeating-linear-gradient(135deg, #2757c9 0 8px, #1c3f9c 8px 16px);
+  border: 2px solid #4f8dff;
+}
+
+.solitaire-card--face {
+  background: #f4f1e6;
+  border: 2px solid #1a1d24;
+  position: relative;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.35);
+  transition: transform 100ms ease;
+}
+
+.solitaire-card--selected {
+  transform: translateY(-8px);
+  box-shadow: 0 0 0 3px #ffd60a, 0 6px 16px rgba(0, 0, 0, 0.45);
+}
+
+.solitaire-card--red {
+  color: #c22a2a;
+}
+
+.solitaire-card--black {
+  color: #1a1d24;
+}
+
+.solitaire-card__corner {
+  position: absolute;
+  left: 6px;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.solitaire-card__corner--top {
+  top: 6px;
+}
+
+.solitaire-card__corner--bottom {
+  bottom: 6px;
+  transform: rotate(180deg);
+}
+
+.solitaire-card__pip {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+}

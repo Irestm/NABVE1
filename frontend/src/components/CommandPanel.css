@@ -5,6 +5,35 @@
   border: 1px solid var(--border);
 }
 
+.command-panel__group {
+  margin-top: 16px;
+}
+
+.command-panel__group:first-of-type {
+  margin-top: 10px;
+}
+
+.command-panel__group-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--item-accent, var(--accent-blue));
+}
+
+.command-panel__group-label::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--item-accent, var(--accent-blue));
+  box-shadow: 0 0 6px var(--item-accent, var(--accent-blue));
+}
+
 .command-panel__grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

@@ -23,6 +23,24 @@ class CommandUIMeta:
     label: str
     icon: str  # lucide-react component name, e.g. "Power"
     params_schema: tuple[ParamField, ...] | None
+    # Group id — see GROUP_LABELS below. Every command button belongs to
+    # exactly one group; CommandPanel.tsx renders one labeled section per
+    # group, in GROUP_ORDER, each with its own accent color instead of the
+    # old one-color-per-button-by-index scheme.
+    group: str = "misc"
+
+
+# Display label for each group id, in the order CommandPanel.tsx should
+# render them — GROUP_ORDER is the single source of truth for both.
+GROUP_LABELS: dict[str, str] = {
+    "power": "Питание и система",
+    "sound": "Звук",
+    "windows": "Окна и вкладки",
+    "files": "Файлы",
+    "time_lang": "Время и язык",
+    "games": "Игры",
+}
+GROUP_ORDER: tuple[str, ...] = ("power", "sound", "windows", "files", "time_lang", "games")
 
 
 # UI-facing subset of core/dispatcher.py's registered commands — the ones
@@ -32,21 +50,25 @@ class CommandUIMeta:
 # merge this with the live CommandDescriptor list (name/dangerous/description)
 # instead of duplicating that bookkeeping here.
 COMMAND_UI_METADATA: dict[str, CommandUIMeta] = {
-    "shutdown": CommandUIMeta("Выключить ПК", "Power", None),
-    "restart": CommandUIMeta("Перезагрузить ПК", "RefreshCw", None),
+    "shutdown": CommandUIMeta("Выключить ПК", "Power", None, group="power"),
+    "restart": CommandUIMeta("Перезагрузить ПК", "RefreshCw", None, group="power"),
+    "get_battery_status": CommandUIMeta("Проверить заряд батареи", "Battery", None, group="power"),
+    "check_system_updates": CommandUIMeta("Проверить обновления", "DownloadCloud", None, group="power"),
     "set_volume": CommandUIMeta(
         "Громкость",
         "Volume2",
         (ParamField("percent", "number", "Громкость, %", min=0, max=100),),
+        group="sound",
     ),
-    "toggle_mute": CommandUIMeta("Заглушить/включить звук", "VolumeX", None),
-    "minimize_window": CommandUIMeta("Скрыть окно", "Minimize2", None),
-    "close_os_window": CommandUIMeta("Закрыть окно", "X", None),
-    "close_browser_tab": CommandUIMeta("Закрыть вкладку", "X", None),
+    "toggle_mute": CommandUIMeta("Заглушить/включить звук", "VolumeX", None, group="sound"),
+    "minimize_window": CommandUIMeta("Скрыть окно", "Minimize2", None, group="windows"),
+    "close_os_window": CommandUIMeta("Закрыть окно", "X", None, group="windows"),
+    "close_browser_tab": CommandUIMeta("Закрыть вкладку", "X", None, group="windows"),
     "create_folder": CommandUIMeta(
         "Создать папку",
         "FolderPlus",
         (ParamField("path", "text", "Путь к папке"),),
+        group="files",
     ),
     "move_folder": CommandUIMeta(
         "Переместить папку",
@@ -55,21 +77,20 @@ COMMAND_UI_METADATA: dict[str, CommandUIMeta] = {
             ParamField("source", "text", "Откуда"),
             ParamField("destination", "text", "Куда"),
         ),
+        group="files",
     ),
     "delete_folder": CommandUIMeta(
         "Удалить папку",
         "Trash2",
         (ParamField("path", "text", "Путь к папке"),),
+        group="files",
     ),
     "switch_keyboard_layout": CommandUIMeta(
         "Сменить раскладку",
         "Languages",
         (ParamField("language_code", "select", "Язык", options=("ru", "uk", "en")),),
+        group="time_lang",
     ),
-    "get_battery_status": CommandUIMeta("Проверить заряд батареи", "Battery", None),
-    "check_system_updates": CommandUIMeta("Проверить обновления", "DownloadCloud", None),
-    "start_chess_game": CommandUIMeta("Шахматы", "Crown", None),
-    "start_checkers_game": CommandUIMeta("Шашки", "Disc", None),
     # One button for both directions, like toggle_stopwatch — minutes given
     # starts a new timer, left blank cancels every active one (see
     # modules.timer.handlers._handle_toggle_timer). Still no separate
@@ -79,6 +100,17 @@ COMMAND_UI_METADATA: dict[str, CommandUIMeta] = {
         "Таймер",
         "Timer",
         (ParamField("minutes", "number", "Минут (пусто — отменить все активные)", min=1, max=180, optional=True),),
+        group="time_lang",
     ),
-    "toggle_stopwatch": CommandUIMeta("Секундомер", "Watch", None),
+    "toggle_stopwatch": CommandUIMeta("Секундомер", "Watch", None, group="time_lang"),
+    # One button for both games (was two separate ones) — picking which is
+    # now the same params_schema-driven "select" dialog every other
+    # multi-choice command already uses (see switch_keyboard_layout above),
+    # instead of a dedicated button per game.
+    "start_board_game": CommandUIMeta(
+        "Игры",
+        "Gamepad2",
+        (ParamField("game", "select", "Игра", options=("Шахматы", "Шашки")),),
+        group="games",
+    ),
 }

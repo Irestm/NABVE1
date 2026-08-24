@@ -23,9 +23,13 @@ _MISTAKE_THRESHOLD = 1.0
 _DIFFICULTY_DEPTH: dict[Difficulty, int] = {
     Difficulty.VERY_EASY: 1,
     Difficulty.EASY: 2,
+    Difficulty.EASY_PLUS: 3,
     Difficulty.MEDIUM: 4,
+    Difficulty.MEDIUM_PLUS: 5,
     Difficulty.HARD: 6,
+    Difficulty.HARD_PLUS: 7,
     Difficulty.VERY_HARD: 9,
+    Difficulty.VERY_HARD_PLUS: 10,
     Difficulty.IMPOSSIBLE: 12,
 }
 

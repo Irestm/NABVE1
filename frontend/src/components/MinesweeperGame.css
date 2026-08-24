@@ -1,0 +1,112 @@
+/* Layout/cell styling specific to minesweeper — the window-chrome classes
+   (titlebar, dots, win/lose overlay, LCD score blocks) come from
+   GameWindowChrome.css, shared as-is. */
+.minesweeper-window {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #0b0f1a;
+  border: 1px solid color-mix(in srgb, #c9c9c9 40%, transparent);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  position: relative;
+}
+
+.minesweeper-window__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  flex-wrap: wrap;
+}
+
+.minesweeper-window__diff-btn {
+  --section-accent: #9aa4b8;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+.minesweeper-window__diff-btn--active {
+  --section-accent: #2ad8ff;
+}
+
+.minesweeper-window__flag-btn {
+  --section-accent: #ff8c1a;
+  padding: 6px 10px;
+  margin-left: auto;
+}
+
+.minesweeper-window__flag-btn--active {
+  --section-accent: #e0453f;
+}
+
+.minesweeper-window__scoreboard {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 0 12px;
+}
+
+.minesweeper-window__face {
+  --section-accent: #ffd60a;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.minesweeper-window__board-scroll {
+  overflow-x: auto;
+  padding: 4px 12px 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.minesweeper-window__grid {
+  display: grid;
+  gap: 1px;
+  background: #05070c;
+  border: 2px solid #1a1d24;
+  width: max-content;
+}
+
+.minesweeper-cell {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 700;
+  box-sizing: border-box;
+  padding: 0;
+}
+
+.minesweeper-cell--covered {
+  background: #3a4256;
+  border-top: 4px solid #545e78;
+  border-left: 4px solid #545e78;
+  border-bottom: 4px solid #22283a;
+  border-right: 4px solid #22283a;
+  color: #ffd60a;
+  cursor: pointer;
+}
+
+.minesweeper-cell--covered:active {
+  border: 4px solid #22283a;
+}
+
+.minesweeper-cell--open {
+  background: #14182a;
+  color: var(--text-dim);
+}
+
+.minesweeper-cell--mine {
+  background: #7a1f1f;
+  color: #ffe9e9;
+}

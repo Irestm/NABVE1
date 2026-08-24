@@ -114,6 +114,7 @@ class CommandButtonDescriptor(BaseModel):
     icon: str
     dangerous: bool
     description: str
+    group: str
     params_schema: list[CommandParamField] | None = None
 
 

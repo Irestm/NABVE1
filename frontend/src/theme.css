@@ -160,7 +160,11 @@ input[type="range"]::-webkit-slider-thumb {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--section-accent, var(--accent-blue)), var(--accent-purple));
+  background: linear-gradient(
+    135deg,
+    var(--section-accent, var(--accent-blue)),
+    color-mix(in srgb, var(--section-accent, var(--accent-blue)) 65%, white)
+  );
   border: 2px solid var(--bg);
   box-shadow: 0 0 8px color-mix(in srgb, var(--section-accent, var(--accent-blue)) 60%, transparent);
 }
@@ -174,14 +178,22 @@ input[type="range"]::-moz-range-track {
 input[type="range"]::-moz-range-progress {
   height: 4px;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--section-accent, var(--accent-blue)), var(--accent-purple));
+  background: linear-gradient(
+    90deg,
+    var(--section-accent, var(--accent-blue)),
+    color-mix(in srgb, var(--section-accent, var(--accent-blue)) 65%, white)
+  );
 }
 
 input[type="range"]::-moz-range-thumb {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--section-accent, var(--accent-blue)), var(--accent-purple));
+  background: linear-gradient(
+    135deg,
+    var(--section-accent, var(--accent-blue)),
+    color-mix(in srgb, var(--section-accent, var(--accent-blue)) 65%, white)
+  );
   border: 2px solid var(--bg);
 }
 

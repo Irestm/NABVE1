@@ -32,9 +32,13 @@ _MATE_SCORE = 100_000
 _DIFFICULTY_ELO: dict[Difficulty, int] = {
     Difficulty.VERY_EASY: 1320,
     Difficulty.EASY: 1500,
+    Difficulty.EASY_PLUS: 1650,
     Difficulty.MEDIUM: 1800,
+    Difficulty.MEDIUM_PLUS: 2000,
     Difficulty.HARD: 2200,
+    Difficulty.HARD_PLUS: 2450,
     Difficulty.VERY_HARD: 2700,
+    Difficulty.VERY_HARD_PLUS: 2950,
     Difficulty.IMPOSSIBLE: 3190,
 }
 

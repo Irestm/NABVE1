@@ -65,6 +65,7 @@ export interface CommandButtonDescriptor {
   icon: string;
   dangerous: boolean;
   description: string;
+  group: string;
   params_schema: CommandParamField[] | null;
 }
 
@@ -258,7 +259,17 @@ export interface MeetingRecording {
 
 export type BoardGameKind = "chess" | "checkers";
 
-export type BoardGameDifficulty = "very_easy" | "easy" | "medium" | "hard" | "very_hard" | "impossible";
+export type BoardGameDifficulty =
+  | "very_easy"
+  | "easy"
+  | "easy_plus"
+  | "medium"
+  | "medium_plus"
+  | "hard"
+  | "hard_plus"
+  | "very_hard"
+  | "very_hard_plus"
+  | "impossible";
 
 export interface LegalMoveSquares {
   from_square: string;

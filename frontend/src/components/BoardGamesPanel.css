@@ -1,7 +1,41 @@
 .board-games-panel__start-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
+}
+
+.board-games-panel__start-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 96px;
+  padding: 14px 18px;
+  font-size: 13px;
+}
+
+.board-games-panel__start-tile:nth-child(1) {
+  --section-accent: var(--accent-amber);
+}
+
+.board-games-panel__start-tile:nth-child(2) {
+  --section-accent: var(--accent-red);
+}
+
+.board-games-panel__start-tile--solitaire {
+  --section-accent: var(--accent-green);
+}
+
+.board-games-panel__start-tile--minesweeper {
+  --section-accent: var(--accent-red);
+}
+
+.board-games-panel__back {
+  align-self: flex-start;
+  margin-top: 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
 }
 
 .board-games-panel__board {
@@ -23,7 +57,7 @@
 .board-games-panel__board-frame {
   position: relative;
   width: 100%;
-  max-width: 320px;
+  max-width: 640px;
   cursor: pointer;
 }
 

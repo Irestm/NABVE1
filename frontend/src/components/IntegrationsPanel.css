@@ -6,7 +6,11 @@
   min-height: var(--control-height-sm);
   padding: 9px 20px;
   border-radius: 8px;
-  background: linear-gradient(135deg, var(--section-accent, var(--accent-blue)), var(--accent-blue));
+  background: linear-gradient(
+    135deg,
+    var(--section-accent, var(--accent-blue)),
+    color-mix(in srgb, var(--section-accent, var(--accent-blue)) 65%, white)
+  );
   color: #04070c;
   font-weight: 600;
   font-size: 15px;

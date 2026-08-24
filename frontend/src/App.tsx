@@ -97,6 +97,11 @@ export function App(): JSX.Element {
     merged: gojoMerged,
     notifyConverged: gojoNotifyConverged,
   } = useGojoEasterEgg(designId);
+  // Bumped by CommandPanel's onNavigateToGames — forces the Board Games
+  // CollapsibleCard open even if the user had collapsed it, so the
+  // "Начать шахматы/шашки" shortcut actually reveals the board instead of
+  // just switching pages and scrolling to a still-closed card.
+  const [gamesOpenSignal, setGamesOpenSignal] = useState(0);
 
   // Re-skins the whole app, not just the avatar — see design/themes.css.
   // html[data-assistant-theme] overrides the same CSS custom properties
@@ -215,7 +220,12 @@ export function App(): JSX.Element {
                 <ImageGenerationPanel />
               </CollapsibleCard>
 
-              <CollapsibleCard title="Настольные игры" icon={<Gamepad2 size={16} />} accent="red">
+              <CollapsibleCard
+                title="Настольные игры"
+                icon={<Gamepad2 size={16} />}
+                accent="red"
+                openSignal={gamesOpenSignal}
+              >
                 <BoardGamesPanel />
               </CollapsibleCard>
 
@@ -229,7 +239,21 @@ export function App(): JSX.Element {
             </div>
           ) : activePage === "commands" ? (
             <div key="commands" className="app-page">
-              <CommandPanel onNavigateToGames={() => setActivePage("assistant")} />
+              <CommandPanel
+                onNavigateToGames={() => {
+                  setActivePage("assistant");
+                  // Deferred to the next tick on purpose — bumping this in
+                  // the same update as setActivePage would have the Board
+                  // Games CollapsibleCard mount for the first time already
+                  // holding the new signal value (it doesn't exist yet
+                  // while activePage is "commands"), so its own "did the
+                  // signal change since I mounted" check would see no
+                  // change and never force itself open. Bumping it once
+                  // the card has already mounted with the old value makes
+                  // that change visible to it.
+                  setTimeout(() => setGamesOpenSignal((n) => n + 1), 0);
+                }}
+              />
             </div>
           ) : activePage === "my_commands" ? (
             <div key="my_commands" className="app-page">
