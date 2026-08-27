@@ -96,6 +96,46 @@ def test_get_secret_returns_the_stored_value(monkeypatch) -> None:
     assert secret_store.get_secret("youtube_api_key") == "abc123"
 
 
+def test_get_secret_finds_an_item_that_carries_extra_attributes(monkeypatch) -> None:
+    # Regression: real secretstorage/libsecret silently adds its own
+    # 'xdg:schema' attribute to every item on creation, on top of whatever
+    # attributes we pass to create_item - comparing get_attributes() by
+    # exact dict equality against our own two-key attributes dict then NEVER
+    # matches, so every secret this module ever stored could be created
+    # successfully but never read back or overwritten (see
+    # core.secret_store._matches's own docstring). This mimics that by
+    # planting an item with one extra attribute key we never asked for.
+    collection = _FakeCollection()
+    _install_fake_secretstorage(monkeypatch, collection)
+    collection.items.append(
+        _FakeItem(
+            "NABVE secret: youtube_api_key",
+            {"application": "nabve", "name": "youtube_api_key", "xdg:schema": "org.freedesktop.Secret.Generic"},
+            "abc123",
+        )
+    )
+
+    assert secret_store.get_secret("youtube_api_key") == "abc123"
+
+
+def test_store_secret_replaces_an_item_that_carries_extra_attributes(monkeypatch) -> None:
+    collection = _FakeCollection()
+    _install_fake_secretstorage(monkeypatch, collection)
+    collection.items.append(
+        _FakeItem(
+            "NABVE secret: youtube_api_key",
+            {"application": "nabve", "name": "youtube_api_key", "xdg:schema": "org.freedesktop.Secret.Generic"},
+            "old-value",
+        )
+    )
+
+    secret_store.store_secret("youtube_api_key", "new-value")
+
+    remaining = collection.get_all_items()
+    assert len(remaining) == 1
+    assert remaining[0].get_secret() == b"new-value"
+
+
 def test_get_secret_returns_none_when_no_item_matches(monkeypatch) -> None:
     collection = _FakeCollection()
     _install_fake_secretstorage(monkeypatch, collection)

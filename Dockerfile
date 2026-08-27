@@ -6,6 +6,8 @@ ARG GID=1000
 # System packages needed for the *full* feature set (not just the bare API):
 #   wmctrl        -> list_windows/focus_window (core/os_adapter/linux.py)
 #   xdotool       -> get_active_window (core/os_adapter/linux.py)
+#   brightnessctl -> set_brightness/change_brightness/get_brightness (core/os_adapter/linux.py);
+#                    falls back to `xrandr --brightness` (software gamma only) when absent
 #   libnotify-bin -> desktop notifications (modules/calendar/notifier.py)
 #   ffmpeg        -> audio decoding for faster-whisper (voice STT, crm_transcribe)
 #   libportaudio2 -> microphone capture (sounddevice)
@@ -21,6 +23,7 @@ ARG GID=1000
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wmctrl \
     xdotool \
+    brightnessctl \
     libnotify-bin \
     ffmpeg \
     libportaudio2 \

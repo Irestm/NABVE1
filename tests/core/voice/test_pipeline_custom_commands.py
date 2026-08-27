@@ -56,7 +56,7 @@ def _launch_app_command(command_id: str = "app1") -> CustomCommand:
 
 def _base_setup(monkeypatch, loop: VoiceAssistantLoop) -> None:
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
     monkeypatch.setattr(loop, "_learn_facts", lambda text, language: None)
     monkeypatch.setattr(loop, "_speak_safely", lambda tts, text, language: False)
@@ -116,7 +116,7 @@ def test_text_instruction_asks_for_confirmation_when_enabled_and_declined(monkey
     dispatcher = CommandDispatcher()
     loop = VoiceAssistantLoop(dispatcher)
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
     monkeypatch.setattr(loop, "_learn_facts", lambda text, language: None)
 
@@ -188,7 +188,7 @@ def test_launch_app_asks_for_confirmation_when_enabled_and_approved(monkeypatch)
     dispatcher.register("custom_app1", handler, dangerous=False, description="")
     loop = VoiceAssistantLoop(dispatcher)
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
     monkeypatch.setattr(loop, "_learn_facts", lambda text, language: None)
     monkeypatch.setattr(loop, "_speak_safely", lambda tts, text, language: False)

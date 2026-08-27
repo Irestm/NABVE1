@@ -15,7 +15,7 @@ class PromptProviderPort(Protocol):
     both already exposed this exact shape by convention; this Protocol makes
     it an explicit, structurally-checked contract so core/voice/ai_router.py
     can depend on the abstraction instead of either concrete class, and
-    tests can supply a fake without touching Playwright or llama-cpp."""
+    tests can supply a fake without touching Playwright or a local Ollama server."""
 
     name: str
 

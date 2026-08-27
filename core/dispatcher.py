@@ -283,6 +283,75 @@ async def _handle_get_volume(_params: dict[str, Any]) -> dict[str, Any]:
     return {"percent": percent, "message": f"Текущая громкость: {percent} процентов."}
 
 
+async def _handle_set_brightness(params: dict[str, Any]) -> dict[str, Any]:
+    percent = params.get("percent")
+    if percent is None:
+        raise ValueError("Не указан уровень яркости.")
+    adapter = get_os_adapter()
+    await asyncio.to_thread(adapter.set_brightness, int(percent))
+    new_level = await asyncio.to_thread(adapter.get_brightness)
+    return {"percent": new_level, "message": f"Яркость установлена на {new_level} процентов."}
+
+
+async def _handle_change_brightness(params: dict[str, Any]) -> dict[str, Any]:
+    delta_percent = params.get("delta_percent")
+    if delta_percent is None:
+        raise ValueError("Не указано изменение яркости.")
+    adapter = get_os_adapter()
+    await asyncio.to_thread(adapter.change_brightness, int(delta_percent))
+    new_level = await asyncio.to_thread(adapter.get_brightness)
+    return {"percent": new_level, "message": f"Яркость: {new_level} процентов."}
+
+
+async def _handle_get_brightness(_params: dict[str, Any]) -> dict[str, Any]:
+    adapter = get_os_adapter()
+    percent = await asyncio.to_thread(adapter.get_brightness)
+    return {"percent": percent, "message": f"Текущая яркость: {percent} процентов."}
+
+
+# The assistant's own TTS output gain (core/voice/tts.py's
+# get_assistant_volume/set_assistant_volume) - separate mixer from the OS
+# volume above. Previously had no dispatcher command at all despite the
+# get/set functions already existing and being used internally by TTS: a
+# voice request for "свою"/"личную" volume had nowhere rule-based or
+# AI-classifiable to land, so it fell through to ai_router's free-text
+# fallback and could come back as a chat model's improvised "sure, done!"
+# reply with nothing actually changed - the assistant's own equivalent of
+# the same "command that doesn't exist gets a fake success" bug the OS
+# volume commands above were added to prevent.
+async def _handle_set_assistant_volume(params: dict[str, Any]) -> dict[str, Any]:
+    # Imported here, not at module level - core.voice.tts pulls in
+    # modules.user_profile, whose own handlers import core.dispatcher back,
+    # so a top-level import here would be circular.
+    from core.voice import tts
+
+    percent = params.get("percent")
+    if percent is None:
+        raise ValueError("Не указан уровень громкости.")
+    tts.set_assistant_volume(int(percent))
+    new_level = tts.get_assistant_volume()
+    return {"percent": new_level, "message": f"Громкость голоса ассистента установлена на {new_level} процентов."}
+
+
+async def _handle_change_assistant_volume(params: dict[str, Any]) -> dict[str, Any]:
+    from core.voice import tts
+
+    delta_percent = params.get("delta_percent")
+    if delta_percent is None:
+        raise ValueError("Не указано изменение громкости.")
+    new_level = tts.get_assistant_volume() + int(delta_percent)
+    tts.set_assistant_volume(new_level)
+    new_level = tts.get_assistant_volume()
+    return {"percent": new_level, "message": f"Громкость голоса ассистента: {new_level} процентов."}
+
+
+async def _handle_get_assistant_volume(_params: dict[str, Any]) -> dict[str, Any]:
+    from core.voice import tts
+
+    percent = tts.get_assistant_volume()
+    return {"percent": percent, "message": f"Текущая громкость голоса ассистента: {percent} процентов."}
+
+
 async def _handle_mute(_params: dict[str, Any]) -> dict[str, Any]:
     adapter = get_os_adapter()
     await asyncio.to_thread(adapter.mute)
@@ -489,6 +558,48 @@ def build_dispatcher(confirmation_ttl_seconds: int = 60) -> CommandDispatcher:
         _handle_get_volume,
         dangerous=False,
         description="Report the current system volume level.",
+    )
+    dispatcher.register(
+        "set_brightness",
+        _handle_set_brightness,
+        dangerous=False,
+        description="Set the primary display brightness to an exact level (percent, 0-100).",
+    )
+    dispatcher.register(
+        "change_brightness",
+        _handle_change_brightness,
+        dangerous=False,
+        description="Change display brightness relative to its current level (delta_percent, can be negative).",
+    )
+    dispatcher.register(
+        "get_brightness",
+        _handle_get_brightness,
+        dangerous=False,
+        description="Report the current display brightness level.",
+    )
+    dispatcher.register(
+        "set_assistant_volume",
+        _handle_set_assistant_volume,
+        dangerous=False,
+        description=(
+            "Set the assistant's own voice (TTS) output volume to an exact level (percent, 0-100) — "
+            "distinct from the system/OS volume set_volume controls."
+        ),
+    )
+    dispatcher.register(
+        "change_assistant_volume",
+        _handle_change_assistant_volume,
+        dangerous=False,
+        description=(
+            "Change the assistant's own voice (TTS) output volume relative to its current level "
+            "(delta_percent, can be negative) — distinct from the system/OS volume change_volume controls."
+        ),
+    )
+    dispatcher.register(
+        "get_assistant_volume",
+        _handle_get_assistant_volume,
+        dangerous=False,
+        description="Report the assistant's own voice (TTS) output volume level.",
     )
     dispatcher.register("mute", _handle_mute, dangerous=False, description="Mute system audio.")
     dispatcher.register("unmute", _handle_unmute, dangerous=False, description="Unmute system audio.")

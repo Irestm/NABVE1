@@ -169,6 +169,38 @@ class WindowsAdapter(OSAdapter):
         volume.SetMute(1 if new_state else 0, None)
         return new_state
 
+    # --- brightness ---
+
+    # Never let a voice command drop the screen to a level the user then
+    # can't see well enough to raise back.
+    _MIN_BRIGHTNESS_PERCENT = 5
+
+    @staticmethod
+    def _wmi_brightness():
+        try:
+            import wmi
+        except ImportError as exc:
+            raise RuntimeError(
+                "Brightness control requires the wmi package. Install with: pip install wmi"
+            ) from exc
+        return wmi.WMI(namespace="wmi")
+
+    def set_brightness(self, percent: int) -> None:
+        percent = max(self._MIN_BRIGHTNESS_PERCENT, min(100, percent))
+        methods = self._wmi_brightness().WmiMonitorBrightnessMethods()
+        if not methods:
+            raise RuntimeError("This display does not expose WMI brightness control.")
+        methods[0].WmiSetBrightness(Brightness=percent, Timeout=0)
+
+    def change_brightness(self, delta_percent: int) -> None:
+        self.set_brightness(self.get_brightness() + delta_percent)
+
+    def get_brightness(self) -> int:
+        readings = self._wmi_brightness().WmiMonitorBrightness()
+        if not readings:
+            raise RuntimeError("This display does not report WMI brightness.")
+        return int(readings[0].CurrentBrightness)
+
     # --- windows / tabs ---
 
     @staticmethod

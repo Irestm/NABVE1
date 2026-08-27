@@ -8,6 +8,7 @@ from core.logger import get_logger
 from core.voice import audio_io
 from core.voice import voice_preference
 from core.voice.config import VoiceSettings
+from core.voice.number_speech import spell_out_numbers
 from core.voice.silero_tts import SAMPLE_RATE as SILERO_SAMPLE_RATE
 from core.voice.silero_tts import SileroVoice, resolve_silero_speaker, resolve_voice_prosody_rate
 from core.voice.sound_effects import BREATH_MARKER, generate_breath_sound
@@ -204,7 +205,16 @@ class TextToSpeech:
         spliced in at that exact position instead of always being prepended
         before the whole reply. No marker in the text means no sound at
         all for that reply, even with the setting on — it's the model's
-        call, not an unconditional per-reply effect."""
+        call, not an unconditional per-reply effect.
+
+        Numbers in `text` are spelled out as words before either engine
+        ever sees them (see number_speech.spell_out_numbers's own
+        docstring for the live-found bug this fixes — Silero silently
+        dropping/crashing on bare digits) — done once here, ahead of the
+        breath-marker split below, so a marker sitting right next to a
+        number isn't affected by the substitution changing string
+        offsets."""
+        text = spell_out_numbers(text, language)
         style = get_current_style()
         voice_rate = resolve_voice_prosody_rate(speaker or voice_preference.get_selected_speaker())
         effective_rate = style.prosody_rate * voice_rate

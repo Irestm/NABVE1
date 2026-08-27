@@ -84,6 +84,7 @@ from core.models import (
     TextQueryRequest,
     TranscribeResponse,
     UIVisibilityRequest,
+    VoiceLoopSignalResult,
     VoiceLoopStatus,
     VoiceOptionsResponse,
     VoiceQueryResponse,
@@ -346,6 +347,26 @@ async def start_voice() -> VoiceLoopStatus:
 async def stop_voice() -> VoiceLoopStatus:
     await asyncio.to_thread(voice_loop.stop)
     return VoiceLoopStatus(running=voice_loop.is_running)
+
+
+@app.post("/api/voice/trigger", response_model=VoiceLoopSignalResult)
+async def trigger_voice() -> VoiceLoopSignalResult:
+    """Emulates the wake phrase without it being spoken — the Electron
+    "Начать разговор" button drives this same always-on backend loop/mic
+    instead of opening a second one in the browser (see
+    VoiceAssistantLoop.request_manual_wake). Unlike /api/voice/start, this
+    never starts the loop itself; `accepted=False` means it wasn't
+    running to receive the trigger."""
+    return VoiceLoopSignalResult(accepted=voice_loop.request_manual_wake())
+
+
+@app.post("/api/voice/pause", response_model=VoiceLoopSignalResult)
+async def pause_voice() -> VoiceLoopSignalResult:
+    """Emulates the configured stop word — the Electron "Завершить
+    разговор" button pauses this same loop the way saying the stop word
+    would, instead of the full /api/voice/stop teardown (see
+    VoiceAssistantLoop.request_pause)."""
+    return VoiceLoopSignalResult(accepted=voice_loop.request_pause())
 
 
 @app.post("/api/voice/query", response_model=VoiceQueryResponse)

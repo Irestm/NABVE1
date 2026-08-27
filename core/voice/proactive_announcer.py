@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 # assistant is already doing (answering a question, running the onboarding
 # interview) — these states mean "leave it alone, the next poll will try
 # again if the condition is still true", not "queue and interrupt".
-_BUSY_STATES = frozenset(
+BUSY_STATES = frozenset(
     {AssistantState.SPEAKING, AssistantState.PROCESSING, AssistantState.ONBOARDING}
 )
 
@@ -38,7 +38,7 @@ class ProactiveAnnouncer:
     async def handle(self, event: HardwareAlertRaised) -> None:
         if not self._voice_loop.is_running:
             return
-        if state_manager.state in _BUSY_STATES:
+        if state_manager.state in BUSY_STATES:
             return
         if self._tts is None:
             self._tts = TextToSpeech(self._settings)

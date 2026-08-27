@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.voice.phrase_matching import fuzzy_contains_phrase, fuzzy_matches_any
+from core.voice.phrase_matching import fuzzy_contains_phrase, fuzzy_matches_any, with_transliterated_variant
 
 
 def test_matches_single_word_phrase() -> None:
@@ -60,3 +60,33 @@ def test_yo_ye_orthographic_variants_match_each_other() -> None:
     assert fuzzy_contains_phrase("орёл", "орел")
     assert fuzzy_contains_phrase("орел", "орёл")
     assert fuzzy_contains_phrase("скажи орёл громко", "орел")
+
+
+def test_transliterated_variant_lets_a_latin_transcription_of_a_stop_word_match() -> None:
+    # Regression: Whisper's own language detection is unreliable on a short
+    # word said in isolation - a stop word configured as "стоп" regularly
+    # comes back transcribed as the Latin "Stop" instead. Character-level
+    # SequenceMatcher never matched these (Cyrillic and Latin letters share
+    # no codepoints even when they sound the same), so the stop word would
+    # silently fail to register whenever STT flipped language mid-word.
+    # fuzzy_contains_phrase itself is untouched (see the false-positive test
+    # below) - callers fold in with_transliterated_variant's extra candidate
+    # instead, exactly like core/voice/special_phrases.py does.
+    assert fuzzy_matches_any("Stop", with_transliterated_variant("стоп"))
+    assert fuzzy_matches_any("okay Stop now", with_transliterated_variant("стоп"))
+    assert not fuzzy_contains_phrase("Stop", "стоп")  # unmodified — no transliteration built in
+
+
+def test_transliterated_variant_is_unchanged_for_already_latin_phrases() -> None:
+    assert with_transliterated_variant("stop") == ("stop",)
+
+
+def test_transliteration_is_not_folded_into_the_shared_matchers_by_default() -> None:
+    # Regression: an earlier version of this fix transliterated every
+    # window inside fuzzy_contains_phrase itself. Multi-character mappings
+    # (ж->zh, ш->sh, щ->shch) skew SequenceMatcher's length-based ratio just
+    # enough to push unrelated same-script pairs like "включи"/"выключи"
+    # over threshold, which broke youtube/spotify/shutdown trigger matching
+    # (core/voice/intent.py) elsewhere in the app. fuzzy_contains_phrase and
+    # fuzzy_matches_any must stay exactly as they always were.
+    assert not fuzzy_contains_phrase("включи на ютубе лоу фай бит", "выключи компьютер")

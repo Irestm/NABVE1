@@ -22,6 +22,16 @@ rich>=13.0
 # set_volume/change_volume/get_volume/mute/unmute/toggle_mute on Linux require pactl
 # (PulseAudio/PipeWire) or amixer (ALSA) — usually already present, otherwise:
 #   sudo apt-get install pulseaudio-utils
+# set_brightness/change_brightness/get_brightness on Linux use brightnessctl for the
+# real hardware backlight:
+#   sudo apt-get install brightnessctl
+# The apt package ships a udev rule (90-brightnessctl.rules) that gives the "video"
+# group write access to /sys/class/backlight — so no root at call time, BUT the user
+# must be in that group:
+#   sudo usermod -aG video $USER   # then log out and back in
+# Without brightnessctl, or when it still can't write the backlight, the adapter
+# falls back to `xrandr --brightness`: a software gamma ramp on the primary output
+# only (screen looks dimmer, backlight power unchanged).
 # switch_keyboard_layout on Linux requires setxkbmap (X11) — usually already present
 # with any X server — or gsettings (GNOME, incl. Wayland) as fallback.
 # change_system_locale and delete_folder(force_admin=True) on Linux require localectl
@@ -36,6 +46,14 @@ pygetwindow>=0.0.9 ; sys_platform == 'win32'
 # import time, not merely transitive.
 pycaw>=20240210 ; sys_platform == 'win32'
 comtypes>=1.2 ; sys_platform == 'win32'
+# Windows-only display brightness — set_brightness/change_brightness/get_brightness
+# on Windows go through the WmiMonitorBrightness / WmiMonitorBrightnessMethods WMI
+# classes (root/WMI namespace), the OS-native path for real backlight control on
+# laptop panels and DDC/CI-capable monitors. The `wmi` wrapper is a thin layer over
+# pywin32 (already required above), pinned here because core/os_adapter/windows.py
+# imports it at call time. There is no Linux counterpart package — Linux uses the
+# brightnessctl/xrandr CLIs noted in the os_adapter comment block above.
+wmi>=1.5.1 ; sys_platform == 'win32'
 # Windows/win32com Office automation bridge — office_bridge/server_win.py and
 # win_*_handlers.py (Word/Excel/PowerPoint/Access COM automation, the
 # Windows counterpart of the Linux/pyuno bridge). A pip wheel, unlike pyuno
@@ -81,6 +99,16 @@ webrtcvad-wheels>=2.0.14,<3
 # pip; see core/voice/silero_tts.py's module docstring for where to get them.
 torch>=2.0,<3
 omegaconf>=2.3
+# Spells out numbers ("22" -> "двадцать два") before any text reaches
+# Silero/Piper (core/voice/number_speech.py) — found live: Silero's own
+# built-in text normalizer either silently drops bare Arabic-numeral tokens
+# from the spoken audio entirely, or raises outright for a text that's just
+# a bare number, which core/voice/tts.py used to latch as a permanent
+# fallback to Piper (a single voice, not the multi-speaker Silero catalog)
+# for the rest of the process's life. Correct Russian number declension
+# ("1 градус"/"2 градуса"/"5 градусов") is genuinely hard to hand-roll
+# reliably — this is a small, mature library used for exactly this.
+num2words>=0.5.10
 
 # --- core/watchdog (implemented, stdlib only, no new deps) ---
 
@@ -137,15 +165,17 @@ psutil>=5.9
 # Silero TTS), so this only adds the sentence-transformers wrapper itself.
 sentence-transformers>=3.0
 
-# --- modules/hardware_adaptive (implemented, lazy-imported, optional) ---
-# Only needed if this machine has an NVIDIA/CUDA GPU with >=4GB VRAM (see
+# --- modules/hardware_adaptive (implemented, optional) ---
+# Only used if this machine has an NVIDIA/CUDA GPU with >=4GB VRAM (see
 # modules/hardware_adaptive/model_tiers.py); otherwise all AI requests use
-# modules/ai_bridge instead and this package is never imported at runtime.
-# Requires a CUDA-enabled build, e.g.:
-#   CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python
-# and a GGUF model file downloaded manually into data/models/ (see
-# modules/hardware_adaptive/inference_engine.py for the expected filenames).
-# llama-cpp-python>=0.2.90
+# modules/ai_bridge instead. No Python package needed here — talks to a
+# locally-running Ollama server (http://127.0.0.1:11434) over HTTP via the
+# httpx dependency already above. Install Ollama itself separately (not a
+# pip package): https://ollama.com/download — it handles GPU offload and
+# model downloading on its own, no CUDA toolkit compile step required. A
+# previous raw llama-cpp-python-based backend needed exactly that compile
+# step (CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python) plus a
+# GGUF file downloaded by hand — replaced for being fragile to set up.
 
 # --- modules/plugin_agent (implemented) ---
 # hot-reload of modules/plugins/ falls back to "restart to pick up changes"

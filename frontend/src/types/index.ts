@@ -6,12 +6,20 @@ export type AssistantState =
   | "thinking"
   | "speaking"
   | "error"
-  | "paused";
+  | "paused"
+  | "onboarding";
 
 export interface StatusResponse {
   state: AssistantState;
   detail: string;
   active_module_context: string | null;
+}
+
+// Response of both POST /api/voice/trigger and POST /api/voice/pause —
+// `accepted` is false only when the backend voice loop wasn't running to
+// receive the signal (see core/voice/pipeline.py's VoiceAssistantLoop).
+export interface VoiceLoopSignalResult {
+  accepted: boolean;
 }
 
 export type ProviderName = "gemini" | "chatgpt" | "deepseek" | "grok";

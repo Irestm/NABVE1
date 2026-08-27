@@ -72,7 +72,7 @@ def is_degenerate_answer(text: str) -> bool:
     return longest_run >= _DEGENERATE_REPEAT_RUN
 
 
-def _with_memory_context(text: str) -> str:
+def _with_memory_context(text: str, context_hint: str | None = None) -> str:
     """Prepends a short "what we know about the user" block — the same
     place SYSTEM_PROMPT_PREFIX is centrally applied for tone (see
     modules/ai_bridge/system_prompt.py), just one layer up, since here it's
@@ -80,12 +80,23 @@ def _with_memory_context(text: str) -> str:
     text that's actually going to a model as a question to answer, not for
     command classification, so cached facts can't skew intent matching.
 
+    `context_hint`, if given, is prepended too — a one-line summary of the
+    previous exchange within the same active voice session (see
+    core/voice/pipeline.py's VoiceAssistantLoop._last_exchange), distinct
+    from the profile facts above: this is short-term "what did we just
+    talk about" continuity, not long-term "what do we know about this
+    user", so a plain conversational follow-up ("а что насчёт вчера?")
+    resolves against the topic just discussed instead of being answered
+    with zero context.
+
     Also where the breath-marker instruction (see core/voice/tts.py's
     marker-splicing) gets appended, gated on the same profile setting the
     settings-panel checkbox writes — no point telling the model about a
     marker core/voice/tts.py won't be looking for anyway."""
     facts = profile_service_layer.get_context_facts(ProfileUnitOfWork(), budget=_MEMORY_CONTEXT_FACT_BUDGET)
     summary = profile_service_layer.format_context_summary(facts)
+    if context_hint:
+        summary = f"{summary}\n{context_hint}" if summary else context_hint
     prompt = f"{summary}\n\n{text}" if summary else text
 
     breath_enabled = profile_service_layer.get_fact(ProfileUnitOfWork(), BREATH_EFFECT_KEY) == "1"
@@ -128,6 +139,8 @@ async def resolve_free_text(
     commands: list[CommandDescriptor],
     *,
     on_stream_chunk: Callable[[str], Awaitable[None]] | None = None,
+    on_progress: Callable[[str], None] | None = None,
+    context_hint: str | None = None,
 ) -> tuple[Command | None, str | None]:
     """Classifies free text (from voice or a phone/browser text query) that
     didn't match any rule-based command pattern, and either resolves it to a
@@ -142,22 +155,50 @@ async def resolve_free_text(
     thing has finished generating. The returned `answer` is still the full,
     concatenated text either way, so callers that don't pass this (e.g. the
     phone/browser HTTP endpoint, which needs the complete text up front to
-    synthesize one WAV file) are unaffected."""
+    synthesize one WAV file) are unaffected.
+
+    `on_progress`, if given, is called (sync, not awaited) with an adapter's
+    `.name` right before it's tried — for a caller that wants to surface
+    "which candidate is this waiting on" while a slow chain (local model
+    down, browser fallback) works through candidate_chain()'s list. Purely
+    advisory: never affects which adapter is picked or the returned result.
+
+    `context_hint`, if given, is a one-line summary of the previous
+    exchange in the same active voice session — passed to both the command
+    classifier (so an elliptical follow-up like "а сегодня какая была?"
+    can resolve against the same command/params as the turn before it) and
+    the direct-answer prompt (see _with_memory_context)."""
     adapters = _candidate_adapters(text)
 
-    result = await classify(text, commands, adapters[0])
+    if on_progress is not None:
+        on_progress(adapters[0].name)
+    result = await classify(text, commands, adapters[0], context_hint=context_hint)
     if result.matched_command is not None:
         return Command(name=result.matched_command, params=dict(result.params)), None
+
+    if result.classification_failed:
+        # The classifier never actually looked at this text and decided
+        # "it's a question" - the round-trip itself failed (provider error,
+        # unparseable output). Falling through to the conversational-answer
+        # loop below for this case used to produce a hallucinated "sure,
+        # done!" reply from whichever fallback adapter answered next, for
+        # what may well have been a real command nobody executed. Safer to
+        # report "didn't understand" (see callers' not_understood()) than to
+        # let a chat model improvise a confirmation with nothing behind it.
+        logger.warning("Command classification failed for %r; reporting as unhandled, not asking a chat model", text)
+        return None, None
 
     if not result.is_direct_question:
         return None, None
 
     await _record_gap_candidate(text, message_bus)
 
-    prompt_text = await asyncio.to_thread(_with_memory_context, text)
+    prompt_text = await asyncio.to_thread(_with_memory_context, text, context_hint)
 
     last_error: Exception | None = None
     for adapter in adapters:
+        if on_progress is not None:
+            on_progress(adapter.name)
         try:
             if on_stream_chunk is not None and hasattr(adapter, "stream_prompt"):
                 answer = await _stream_and_collect(adapter, prompt_text, on_stream_chunk)

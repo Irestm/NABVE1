@@ -29,6 +29,7 @@ def record_until_silence(
     stop_event: threading.Event,
     *,
     onset_timeout_seconds: float | None = None,
+    barge_in_stop_event: threading.Event | None = None,
 ) -> np.ndarray:
     """Records until the user stops talking, or `command_max_seconds` is
     hit as a hard cap. "Stopped talking" is judged with real voice-activity
@@ -50,7 +51,16 @@ def record_until_silence(
     expected, common case — most answers don't get a follow-up — so
     waiting a full 90 seconds before giving up on every single turn would
     make the assistant feel stuck instead of quietly returning to
-    wake-word listening."""
+    wake-word listening.
+
+    `barge_in_stop_event`, if given, is an independent early-abort signal —
+    distinct from `stop_event` (the whole assistant shutting down) — set by
+    a BargeInMonitor running concurrently on a second mic stream (see
+    core/voice/pipeline.py's _record_command_audio) the instant it hears
+    the user's own configured stop word said mid-utterance, so a recording
+    already in progress cuts short right away instead of only being
+    checked against the stop word after the fact, once VAD silence ends
+    it naturally."""
     sd = require_sounddevice()
     vad = SpeechActivityDetector(settings.sample_rate, settings.vad_aggressiveness)
     frame_seconds = vad.frame_samples / settings.sample_rate
@@ -66,6 +76,7 @@ def record_until_silence(
         while (
             elapsed_seconds < settings.command_max_seconds
             and not stop_event.is_set()
+            and (barge_in_stop_event is None or not barge_in_stop_event.is_set())
         ):
             if (
                 onset_timeout_seconds is not None
@@ -98,6 +109,21 @@ def record_until_silence(
     return np.concatenate(frames)
 
 
+# sd.play()/.stop() (python-sounddevice's convenience functions) share one
+# global playback slot — its own docs say a second concurrent play() call
+# just cuts off whatever the first one was doing rather than queuing or
+# mixing. Nothing enforced that at the Python level: the always-on voice
+# loop (core/voice/pipeline.py), calendar reminder announcements
+# (core/voice/announcements.py) and hardware-alert announcements
+# (core/voice/proactive_announcer.py) each run on their own thread and could
+# all call this function at once, so a reminder firing mid-question used to
+# audibly stomp on/layer over whatever the assistant was already saying.
+# Holding this for the whole call (not just around sd.play()) makes a
+# second caller wait its turn instead of colliding with the first one's
+# still-playing audio.
+_PLAYBACK_LOCK = threading.Lock()
+
+
 def play_audio(samples: np.ndarray, sample_rate: int, stop_event: threading.Event | None = None) -> None:
     """Plays `samples`, blocking until playback finishes — or, if `stop_event`
     is given and gets set while playing (see core/voice/barge_in.py), aborts
@@ -106,17 +132,18 @@ def play_audio(samples: np.ndarray, sample_rate: int, stop_event: threading.Even
     if samples.size == 0:
         return
     sd = require_sounddevice()
-    sd.play(samples, samplerate=sample_rate)
-    if stop_event is None:
-        sd.wait()
-        return
-
-    poll_seconds = 0.05
-    stream = sd.get_stream()
-    while stream is not None and stream.active:
-        if stop_event.wait(poll_seconds):
-            sd.stop()
+    with _PLAYBACK_LOCK:
+        sd.play(samples, samplerate=sample_rate)
+        if stop_event is None:
+            sd.wait()
             return
+
+        poll_seconds = 0.05
+        stream = sd.get_stream()
+        while stream is not None and stream.active:
+            if stop_event.wait(poll_seconds):
+                sd.stop()
+                return
 
 
 class RollingAudioBuffer:

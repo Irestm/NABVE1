@@ -13,6 +13,10 @@ const IDLE_BASELINE: Partial<Record<AssistantState, number>> = {
   thinking: 0.34,
   error: 0.4,
   paused: 0.08,
+  // Fallback only — onboarding normally drives the real mic analyser (see
+  // `listening` below), this just covers the moment before getUserMedia
+  // resolves, or if it's denied/fails.
+  onboarding: 0.18,
 };
 
 /**
@@ -26,7 +30,11 @@ const IDLE_BASELINE: Partial<Record<AssistantState, number>> = {
  * animation-frame rate without re-rendering React on every sample.
  */
 export function useAmplitude(targetRef: RefObject<HTMLElement>, state: AssistantState): void {
-  const listening = state === "listening";
+  // Onboarding (see modules/user_profile/onboarding.py) records the user's
+  // spoken answers the exact same way a normal voice command does — the
+  // orb reacting to actual mic input during the first-run interview, not
+  // just sitting on a flat baseline, was the whole point of adding this.
+  const listening = state === "listening" || state === "onboarding";
   const synthActive = state === "speaking" || state === "thinking" || state === "processing";
 
   const micAnalyserRef = useMicAnalyser(listening);

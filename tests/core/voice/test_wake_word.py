@@ -32,7 +32,11 @@ def test_defaults_to_wake_tier_when_model_size_not_given(monkeypatch) -> None:
         "SpeechToText",
         lambda settings, model_size: seen.append(model_size) or _FakeSTT(model_size),
     )
-    monkeypatch.setattr(wake_word_module, "_listen_for_any", lambda stt, settings, phrases, stop_event: "wake")
+    monkeypatch.setattr(
+        wake_word_module,
+        "_listen_for_any",
+        lambda stt, settings, phrases, stop_event, extra_stop_event=None: "wake",
+    )
 
     result = wake_word_module.listen_for_phrases(settings, {"wake": settings.wake_word}, threading.Event())
 
@@ -48,7 +52,11 @@ def test_explicit_model_size_overrides_wake_tier_default(monkeypatch) -> None:
         "SpeechToText",
         lambda settings, model_size: seen.append(model_size) or _FakeSTT(model_size),
     )
-    monkeypatch.setattr(wake_word_module, "_listen_for_any", lambda stt, settings, phrases, stop_event: "pause")
+    monkeypatch.setattr(
+        wake_word_module,
+        "_listen_for_any",
+        lambda stt, settings, phrases, stop_event, extra_stop_event=None: "pause",
+    )
 
     result = wake_word_module.listen_for_phrases(
         settings, {"pause": "стоп"}, threading.Event(), model_size=settings.whisper_model_size
@@ -67,7 +75,11 @@ def test_caches_one_instance_per_model_size(monkeypatch) -> None:
         return _FakeSTT(model_size)
 
     monkeypatch.setattr(wake_word_module, "SpeechToText", fake_speech_to_text)
-    monkeypatch.setattr(wake_word_module, "_listen_for_any", lambda stt, settings, phrases, stop_event: "wake")
+    monkeypatch.setattr(
+        wake_word_module,
+        "_listen_for_any",
+        lambda stt, settings, phrases, stop_event, extra_stop_event=None: "wake",
+    )
 
     wake_word_module.listen_for_phrases(settings, {"wake": "x"}, threading.Event(), model_size="tiny")
     wake_word_module.listen_for_phrases(settings, {"wake": "x"}, threading.Event(), model_size="tiny")
@@ -116,6 +128,51 @@ def test_listen_for_any_pins_language_to_fallback_language(monkeypatch) -> None:
 
     assert result == "pause"
     assert stt.calls == [settings.fallback_language]
+
+
+def test_listen_for_any_returns_none_immediately_when_extra_stop_event_is_already_set(monkeypatch) -> None:
+    # request_manual_wake()'s whole point: cut a blocking listen short
+    # without a phrase ever being heard. If extra_stop_event is already set
+    # before the first iteration, _listen_for_any must not touch the mic at
+    # all - read_window would loop forever here otherwise (always returns a
+    # non-empty window, never satisfying stop_event).
+    settings = VoiceSettings()
+    stt = _RecordingSTT("never transcribed")
+
+    monkeypatch.setattr(
+        wake_word_module.RollingAudioBuffer, "read_window", lambda self, timeout: np.ones(1, dtype=np.float32)
+    )
+    monkeypatch.setattr(wake_word_module.RollingAudioBuffer, "start", lambda self: None)
+    monkeypatch.setattr(wake_word_module.RollingAudioBuffer, "stop", lambda self: None)
+
+    extra_stop_event = threading.Event()
+    extra_stop_event.set()
+    result = wake_word_module._listen_for_any(
+        stt, settings, {"wake": "привет"}, threading.Event(), extra_stop_event=extra_stop_event
+    )
+
+    assert result is None
+    assert stt.calls == []
+
+
+def test_listen_for_phrases_forwards_extra_stop_event_to_listen_for_any(monkeypatch) -> None:
+    settings = VoiceSettings()
+    monkeypatch.setattr(wake_word_module, "SpeechToText", lambda settings, model_size: _FakeSTT(model_size))
+    seen: dict[str, object] = {}
+
+    def fake_listen_for_any(stt, settings, phrases, stop_event, extra_stop_event=None):
+        seen["extra_stop_event"] = extra_stop_event
+        return "wake"
+
+    monkeypatch.setattr(wake_word_module, "_listen_for_any", fake_listen_for_any)
+
+    extra_stop_event = threading.Event()
+    result = wake_word_module.listen_for_phrases(
+        settings, {"wake": "привет"}, threading.Event(), extra_stop_event=extra_stop_event
+    )
+
+    assert result == "wake"
+    assert seen["extra_stop_event"] is extra_stop_event
 
 
 def test_listen_for_any_matches_any_variant_in_a_phrase_tuple(monkeypatch) -> None:

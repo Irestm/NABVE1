@@ -396,6 +396,286 @@ def test_restart_trigger_tolerates_stt_noise() -> None:
     assert command == Command(name="restart", params={})
 
 
+# --- Weather (modules/weather) -----------------------------------------------
+
+
+def test_weather_with_city_and_tomorrow_marker() -> None:
+    command = interpret("какая погода завтра в Киеве", "ru")
+    assert command == Command(name="weather_get", params={"city": "киеве", "when": "tomorrow"})
+
+
+def test_weather_city_before_when_marker_also_works() -> None:
+    command = interpret("погода в Киеве завтра", "ru")
+    assert command == Command(name="weather_get", params={"city": "киеве", "when": "tomorrow"})
+
+
+def test_weather_defaults_to_today_without_a_when_marker() -> None:
+    command = interpret("какая погода в Одессе", "ru")
+    assert command == Command(name="weather_get", params={"city": "одессе", "when": "today"})
+
+
+def test_weather_day_after_tomorrow_is_not_swallowed_by_tomorrow() -> None:
+    # Regression: "послезавтра" contains "завтра" as a substring - the
+    # longer marker must win, or this would always be misread as "tomorrow".
+    command = interpret("погода послезавтра в Киеве", "ru")
+    assert command == Command(name="weather_get", params={"city": "киеве", "when": "day_after_tomorrow"})
+
+
+def test_weather_without_a_city_leaves_city_empty_for_the_handler_to_reject() -> None:
+    command = interpret("какая сегодня погода", "ru")
+    assert command == Command(name="weather_get", params={"city": "", "when": "today"})
+
+
+def test_weather_when_marker_preceded_by_a_preposition_does_not_swallow_the_city() -> None:
+    # Regression, found live: "на завтра" (idiomatic "for tomorrow") ahead
+    # of "в Киеве" used to be captured whole as the city ("завтра в киеве")
+    # since the city pattern's capture group tolerates spaces and the
+    # search started at "на завтра" (the first в/на it found) instead of
+    # the real "в Киеве".
+    command = interpret("Ок скажи мне погоду на завтра в киеве", "ru")
+    assert command == Command(name="weather_get", params={"city": "киеве", "when": "tomorrow"})
+
+
+def test_weather_english() -> None:
+    command = interpret("what's the weather in London tomorrow", "en")
+    assert command == Command(name="weather_get", params={"city": "london", "when": "tomorrow"})
+
+
+def test_weather_city_with_vo_elision() -> None:
+    # Regression, found live: "во Львове" (the standard Russian elision
+    # spelling of "в" before a word starting with certain consonant
+    # clusters) left city empty, since the pattern only recognized bare "в".
+    command = interpret("погода во Львове", "ru")
+    assert command == Command(name="weather_get", params={"city": "львове", "when": "today"})
+
+
+# --- Weather: yesterday/day-before-yesterday/arbitrary day range ------------
+# Found live: the app supports a full 7-day-back/7-day-forward range (see
+# modules/weather/domain.py's resolve_day_offset) but interpret() only ever
+# produced "today"/"tomorrow"/"day_after_tomorrow" - "какая погода вчера"
+# had no rule-based path at all and fell through to the (unreliable) AI
+# classifier chain for something that should be instant and deterministic,
+# same reasoning as every other weather marker above.
+
+
+def test_weather_yesterday_and_day_before_yesterday() -> None:
+    assert interpret("какая погода вчера в Киеве", "ru") == Command(
+        name="weather_get", params={"city": "киеве", "when": "yesterday"}
+    )
+    assert interpret("погода позавчера", "ru") == Command(
+        name="weather_get", params={"city": "", "when": "day_before_yesterday"}
+    )
+
+
+def test_weather_day_before_yesterday_is_not_swallowed_by_yesterday() -> None:
+    # Same substring-ordering regression as day_after_tomorrow/tomorrow —
+    # "позавчера" contains "вчера".
+    command = interpret("погода позавчера в Киеве", "ru")
+    assert command == Command(name="weather_get", params={"city": "киеве", "when": "day_before_yesterday"})
+
+
+def test_weather_arbitrary_day_range_forward_and_backward() -> None:
+    assert interpret("погода в Киеве через 5 дней", "ru") == Command(
+        name="weather_get", params={"city": "киеве", "when": "5"}
+    )
+    assert interpret("погода 3 дня назад в Одессе", "ru") == Command(
+        name="weather_get", params={"city": "одессе", "when": "-3"}
+    )
+
+
+def test_weather_yesterday_and_arbitrary_range_ukrainian() -> None:
+    assert interpret("яка погода вчора", "uk") == Command(
+        name="weather_get", params={"city": "", "when": "yesterday"}
+    )
+    assert interpret("погода через 4 дні у Львові", "uk") == Command(
+        name="weather_get", params={"city": "львові", "when": "4"}
+    )
+
+
+def test_weather_yesterday_and_arbitrary_range_english() -> None:
+    assert interpret("what is the weather yesterday in Kyiv", "en") == Command(
+        name="weather_get", params={"city": "kyiv", "when": "yesterday"}
+    )
+    assert interpret("what is the weather 3 days ago", "en") == Command(
+        name="weather_get", params={"city": "", "when": "-3"}
+    )
+
+
+# --- System volume (core/dispatcher.py's set_volume/change_volume) ---------
+# Regression: none of these had a rule-based pattern at all before - every
+# phrase, even a clean common one, fell through interpret() entirely and
+# depended on AI classification succeeding.
+
+
+def test_system_volume_set_with_na() -> None:
+    assert interpret("поставь громкость на 50", "ru") == Command(name="set_volume", params={"percent": "50"})
+
+
+def test_system_volume_set_bare_number() -> None:
+    assert interpret("громкость 50", "ru") == Command(name="set_volume", params={"percent": "50"})
+
+
+def test_system_volume_set_with_percent_word() -> None:
+    assert interpret("установи громкость 30 процентов", "ru") == Command(
+        name="set_volume", params={"percent": "30"}
+    )
+
+
+def test_system_volume_set_with_do_regardless_of_verb() -> None:
+    # "increase ... TO 100" means set it to 100, not raise it BY 100 - "до"
+    # always means absolute regardless of which verb comes before it.
+    assert interpret("увеличь мне громкость до 100 процентов", "ru") == Command(
+        name="set_volume", params={"percent": "100"}
+    )
+    assert interpret("уменьши громкость до 0", "ru") == Command(name="set_volume", params={"percent": "0"})
+
+
+def test_system_volume_increase_by_na_is_relative() -> None:
+    assert interpret("увеличь громкость на 20", "ru") == Command(
+        name="change_volume", params={"delta_percent": "20"}
+    )
+    assert interpret("увеличь мне громкость на 20", "ru") == Command(
+        name="change_volume", params={"delta_percent": "20"}
+    )
+
+
+def test_system_volume_decrease_by_na_is_relative_and_negative() -> None:
+    assert interpret("уменьши громкость на 30", "ru") == Command(
+        name="change_volume", params={"delta_percent": "-30"}
+    )
+    assert interpret("убавь громкость на 15", "ru") == Command(
+        name="change_volume", params={"delta_percent": "-15"}
+    )
+
+
+def test_system_volume_does_not_shadow_video_or_music_volume() -> None:
+    assert interpret("громкость видео на 50", "ru") == Command(
+        name="youtube_set_volume", params={"percent": "50"}
+    )
+    assert interpret("громкость музыки на 50", "ru") == Command(
+        name="spotify_set_volume", params={"percent": "50"}
+    )
+
+
+def test_system_volume_english() -> None:
+    assert interpret("set volume to 50", "en") == Command(name="set_volume", params={"percent": "50"})
+    assert interpret("increase the volume by 20 percent", "en") == Command(
+        name="change_volume", params={"delta_percent": "20"}
+    )
+    assert interpret("increase the volume to 100 percent", "en") == Command(
+        name="set_volume", params={"percent": "100"}
+    )
+
+
+# Found live: "поднять громкость на ноутбуке до 10%" fell through the
+# system-volume patterns entirely because they had zero tolerance for a
+# device-name filler between "громкость" and the number.
+def test_system_volume_tolerates_device_filler() -> None:
+    assert interpret("подними громкость на ноутбуке на 20", "ru") == Command(
+        name="change_volume", params={"delta_percent": "20"}
+    )
+    assert interpret("увеличь громкость на компьютере до 50", "ru") == Command(
+        name="set_volume", params={"percent": "50"}
+    )
+    assert interpret("уменьши громкость на ноутбуке на 15", "ru") == Command(
+        name="change_volume", params={"delta_percent": "-15"}
+    )
+
+
+# The assistant's own TTS output volume (core/dispatcher.py's
+# set_assistant_volume/change_assistant_volume) — distinct from the OS
+# volume above. Found missing entirely live: no rule-based path existed for
+# "свою"/"личную" volume, so it fell to the AI free-text fallback with no
+# real command behind it.
+def test_assistant_volume_set_and_change() -> None:
+    assert interpret("поставь личную громкость на 30", "ru") == Command(
+        name="set_assistant_volume", params={"percent": "30"}
+    )
+    assert interpret("подними твою громкость на 10", "ru") == Command(
+        name="change_assistant_volume", params={"delta_percent": "10"}
+    )
+    assert interpret("убавь свою громкость на 20", "ru") == Command(
+        name="change_assistant_volume", params={"delta_percent": "-20"}
+    )
+    assert interpret("увеличь свою громкость до 100", "ru") == Command(
+        name="set_assistant_volume", params={"percent": "100"}
+    )
+
+
+def test_assistant_volume_does_not_collide_with_system_volume() -> None:
+    assert interpret("подними громкость на 20", "ru") == Command(
+        name="change_volume", params={"delta_percent": "20"}
+    )
+    assert interpret("поставь громкость на 30", "ru") == Command(name="set_volume", params={"percent": "30"})
+
+
+# --- Screen brightness (core/dispatcher.py's set_brightness/change_brightness)
+# Mirrors the system-volume patterns one-for-one, keyed on "яркость" instead
+# of "громкость". Same "до N = absolute, на N = relative" split.
+
+
+def test_system_brightness_set_with_na_and_bare_number() -> None:
+    assert interpret("поставь яркость на 50", "ru") == Command(
+        name="set_brightness", params={"percent": "50"}
+    )
+    assert interpret("яркость 40", "ru") == Command(name="set_brightness", params={"percent": "40"})
+
+
+def test_system_brightness_set_to_is_absolute_regardless_of_verb() -> None:
+    assert interpret("увеличь яркость до 80 процентов", "ru") == Command(
+        name="set_brightness", params={"percent": "80"}
+    )
+    assert interpret("уменьши яркость до 20", "ru") == Command(
+        name="set_brightness", params={"percent": "20"}
+    )
+
+
+def test_system_brightness_increase_and_decrease_by_na_are_relative() -> None:
+    assert interpret("прибавь яркость на 15", "ru") == Command(
+        name="change_brightness", params={"delta_percent": "15"}
+    )
+    assert interpret("убавь яркость на 30", "ru") == Command(
+        name="change_brightness", params={"delta_percent": "-30"}
+    )
+
+
+def test_system_brightness_tolerates_device_filler() -> None:
+    assert interpret("подними яркость на ноутбуке на 20", "ru") == Command(
+        name="change_brightness", params={"delta_percent": "20"}
+    )
+    assert interpret("установи яркость на компьютере до 50", "ru") == Command(
+        name="set_brightness", params={"percent": "50"}
+    )
+
+
+def test_system_brightness_ukrainian_and_english() -> None:
+    assert interpret("постав яскравість на 60", "uk") == Command(
+        name="set_brightness", params={"percent": "60"}
+    )
+    assert interpret("set the screen brightness to 50", "en") == Command(
+        name="set_brightness", params={"percent": "50"}
+    )
+    assert interpret("increase brightness by 10 percent", "en") == Command(
+        name="change_brightness", params={"delta_percent": "10"}
+    )
+    assert interpret("dim the screen brightness by 25", "en") == Command(
+        name="change_brightness", params={"delta_percent": "-25"}
+    )
+
+
+def test_system_brightness_does_not_collide_with_system_volume() -> None:
+    assert interpret("поставь громкость на 30", "ru") == Command(name="set_volume", params={"percent": "30"})
+    assert interpret("прибавь громкость на 15", "ru") == Command(
+        name="change_volume", params={"delta_percent": "15"}
+    )
+
+
+def test_bare_brighter_without_a_number_is_not_matched_by_rules() -> None:
+    # Deliberately left to the embedding classifier's change_brightness with
+    # a default step, exactly as "сделай погромче" is for volume.
+    assert interpret("сделай экран ярче", "ru") is None
+
+
 # --- YouTube (modules/youtube_control) --------------------------------------
 
 

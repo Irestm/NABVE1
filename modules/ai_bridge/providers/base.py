@@ -31,6 +31,13 @@ PROMPT_BOX_WAIT_TIMEOUT_MS = 20_000
 # cause of "the very first prompt after a fresh launch reliably fails, and
 # never again after that" — the box just genuinely hadn't rendered yet.
 COLD_START_PROMPT_BOX_WAIT_TIMEOUT_MS = 45_000
+# Overall budget for _ensure_page's launch-context/new-page/goto sequence —
+# see _ensure_page's own comment for why this exists at all (none of those
+# individual Playwright calls reliably time out on their own if the browser
+# process dies mid-launch rather than just being slow). Generous enough for
+# a genuinely cold Xvfb+browser start on modest hardware, not so long that a
+# hung adapter blocks resolve_free_text's fallback chain for minutes.
+PAGE_READY_TIMEOUT_SECONDS = 75
 
 
 @runtime_checkable
@@ -157,6 +164,62 @@ class BrowserProviderAdapter(ABC):
                 "pip install playwright && playwright install firefox chromium"
             ) from exc
 
+        try:
+            return await asyncio.wait_for(
+                self._ensure_page_uncapped(async_playwright, force_headed=force_headed),
+                timeout=PAGE_READY_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            # Nothing in the launch-context/new-page/goto sequence below has
+            # its own timeout (Playwright's own defaults, ~30s each, only
+            # cover a *responsive* browser - if the browser process crashes
+            # right after launch, as opposed to merely being slow, the
+            # driver can be left waiting on a connection that will never
+            # answer, with nothing here to ever time that out on its own).
+            # Confirmed the hard way: a stale Xvfb display collision (see
+            # virtual_display.py's lock-reuse fix) used to send this whole
+            # method into exactly that kind of silent, unbounded hang - the
+            # caller (resolve_free_text's per-adapter loop) never got an
+            # exception to catch and move on to the next adapter with, so
+            # the assistant just sat on "Уточняю у ИИ"/the browser-fallback
+            # detail state forever instead of trying the next candidate.
+            await self._cleanup_after_timeout()
+            raise RuntimeError(
+                f"Timed out preparing the {self.name} browser page after "
+                f"{PAGE_READY_TIMEOUT_SECONDS}s - the browser process may have crashed or hung."
+            ) from exc
+
+    async def _cleanup_after_timeout(self) -> None:
+        """Best-effort teardown for whatever _ensure_page_uncapped managed to
+        set before asyncio.wait_for cancelled it: cancellation only stops
+        *this* coroutine from waiting any longer, it can't retroactively
+        un-launch a browser subprocess that had already started - without
+        this, a timed-out launch could leak an orphaned browser process
+        exactly like the one virtual_display.py's own lock-reuse fix was
+        written to clean up after.
+
+        Deliberately duplicates close()'s teardown instead of calling it:
+        every caller of _ensure_page (send_prompt, open, is_limit_reached,
+        is_logged_in) already holds self._lock for the whole call, and
+        asyncio.Lock isn't reentrant - close() re-acquiring it here would
+        deadlock against the very call frame this runs inside of."""
+        if self._context is not None:
+            try:
+                await self._context.close()
+            except Exception:
+                logger.debug("Could not close %s context after timeout", self.name, exc_info=True)
+            finally:
+                self._context = None
+                self._page = None
+        if self._playwright is not None:
+            try:
+                await self._playwright.stop()
+            except Exception:
+                logger.debug("Could not stop %s playwright driver after timeout", self.name, exc_info=True)
+            finally:
+                self._playwright = None
+
+    async def _ensure_page_uncapped(self, async_playwright: Any, *, force_headed: bool) -> Any:
         if self._context is None:
             self.profile_dir.mkdir(parents=True, exist_ok=True)
             self._playwright = await async_playwright().start()

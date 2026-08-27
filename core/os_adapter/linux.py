@@ -31,6 +31,20 @@ _VOLUME_TOOL_INSTALL_HINT = (
 )
 _PERCENT_RE = re.compile(r"(\d+)%")
 
+# brightnessctl drives the real backlight without root (it talks to logind);
+# xrandr is a fallback that only applies a software gamma ramp on the primary
+# output (no backlight change) but always works under X11 with no extra
+# package. Neither exists under a bare Wayland session with no compositor
+# helper — same platform caveat as the wmctrl/xdotool tools above.
+_BRIGHTNESS_TOOL_INSTALL_HINT = (
+    "Brightness control requires brightnessctl or xrandr. "
+    "Install with: sudo apt-get install brightnessctl"
+)
+# Never let a voice command drop the screen to an unreadable level it would
+# then be impossible to raise back by looking at the screen.
+_MIN_BRIGHTNESS_PERCENT = 5
+_XRANDR_BRIGHTNESS_RE = re.compile(r"Brightness:\s*([\d.]+)")
+
 _KEYBOARD_LAYOUT_CODES: dict[str, str] = {"ru": "ru", "uk": "ua", "en": "us"}
 _LOCALE_CODES: dict[str, str] = {"ru": "ru_RU.UTF-8", "uk": "uk_UA.UTF-8", "en": "en_US.UTF-8"}
 
@@ -322,6 +336,77 @@ class LinuxAdapter(OSAdapter):
             ["amixer", "set", "Master", "toggle"], capture_output=True, text=True, check=True
         ).stdout
         return "[off]" in output.lower()
+
+    # --- brightness ---
+
+    def _brightness_backend(self) -> str:
+        # Sticky downgrade: once a brightnessctl write has failed on permission
+        # (user not in the "video" group / no udev uaccess), stay on xrandr for
+        # the rest of this process so get and set never straddle two backends
+        # with unrelated scales. Reset naturally on the next app start.
+        if not getattr(self, "_brightness_force_xrandr", False) and shutil.which("brightnessctl"):
+            return "brightnessctl"
+        if shutil.which("xrandr"):
+            return "xrandr"
+        if shutil.which("brightnessctl"):
+            return "brightnessctl"
+        raise RuntimeError(_BRIGHTNESS_TOOL_INSTALL_HINT)
+
+    @staticmethod
+    def _primary_xrandr_output() -> str:
+        query = subprocess.run(
+            ["xrandr", "--query"], capture_output=True, text=True, check=True
+        ).stdout
+        connected = [line for line in query.splitlines() if " connected" in line]
+        for line in connected:
+            if " connected primary" in line:
+                return line.split()[0]
+        if connected:
+            return connected[0].split()[0]
+        raise RuntimeError("xrandr reports no connected display")
+
+    def _set_brightness_xrandr(self, percent: int) -> None:
+        subprocess.run(
+            ["xrandr", "--output", self._primary_xrandr_output(), "--brightness", f"{percent / 100:.2f}"],
+            check=True,
+        )
+
+    def set_brightness(self, percent: int) -> None:
+        percent = max(_MIN_BRIGHTNESS_PERCENT, min(100, percent))
+        if self._brightness_backend() == "brightnessctl":
+            try:
+                subprocess.run(["brightnessctl", "set", f"{percent}%"], check=True, capture_output=True)
+                return
+            except subprocess.CalledProcessError:
+                if not shutil.which("xrandr"):
+                    raise
+                logger.warning(
+                    "brightnessctl could not set the backlight (permission denied). Falling back to "
+                    "xrandr software gamma. For real backlight control add your user to the 'video' "
+                    "group ('sudo usermod -aG video $USER') and log out and back in."
+                )
+                self._brightness_force_xrandr = True
+        self._set_brightness_xrandr(percent)
+
+    def change_brightness(self, delta_percent: int) -> None:
+        self.set_brightness(self.get_brightness() + delta_percent)
+
+    def get_brightness(self) -> int:
+        if self._brightness_backend() == "brightnessctl":
+            output = subprocess.run(
+                ["brightnessctl", "-m"], capture_output=True, text=True, check=True
+            ).stdout
+            match = _PERCENT_RE.search(output)
+            if not match:
+                raise RuntimeError("Could not parse brightness from brightnessctl output")
+            return int(match.group(1))
+        output = subprocess.run(
+            ["xrandr", "--verbose"], capture_output=True, text=True, check=True
+        ).stdout
+        match = _XRANDR_BRIGHTNESS_RE.search(output)
+        if not match:
+            raise RuntimeError("Could not parse brightness from xrandr output")
+        return round(float(match.group(1)) * 100)
 
     # --- windows / tabs ---
 

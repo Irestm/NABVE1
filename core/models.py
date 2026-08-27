@@ -24,10 +24,10 @@ class AssistantState(str, Enum):
     # a command" state as pressing "Начать разговор"), so this exists only
     # to give the background-waiting phase its own distinct CentralOrb look.
     BACKGROUND_LISTENING = "background_listening"
-    # The user said their configured stop word (see
-    # modules/user_profile/onboarding.py._ask_stop_word) — the assistant
-    # ignores the wake word and everything else until the same word is said
-    # again (see core/voice/pipeline.py._wait_for_wake_or_pause).
+    # The user said their configured stop word (set via
+    # frontend/src/components/SettingsPanel.tsx's Профиль tab) — the
+    # assistant ignores the wake word and everything else until the same
+    # word is said again (see core/voice/pipeline.py._wait_for_wake_or_pause).
     PAUSED = "paused"
 
 
@@ -120,6 +120,14 @@ class CommandButtonDescriptor(BaseModel):
 
 class VoiceLoopStatus(BaseModel):
     running: bool
+
+
+class VoiceLoopSignalResult(BaseModel):
+    # False means the loop wasn't running to receive the signal (e.g.
+    # voice_autostart is off, or it crashed) — distinct from `running` in
+    # VoiceLoopStatus, since this reports whether *this specific action*
+    # (manual wake / pause) took effect, not just current loop liveness.
+    accepted: bool
 
 
 class AIBridgeStatus(BaseModel):

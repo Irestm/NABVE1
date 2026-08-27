@@ -1,6 +1,86 @@
 import { useEffect, useRef, useState } from "react";
-import { confirmCommand, sendVoiceConfirmation, sendVoiceQuery, speak } from "../api/client";
-import type { VoiceQueryResponse } from "../types";
+import { confirmCommand, pauseVoiceLoop, sendVoiceConfirmation, sendVoiceQuery, speak, triggerVoiceLoop } from "../api/client";
+import { isElectron } from "../platform/electronAdapter";
+import type { AssistantState, VoiceQueryResponse } from "../types";
+
+// Two genuinely different implementations behind one exported component:
+// on the desktop Electron build, "Начать разговор" drives the same
+// always-on backend voice loop the wake word does (core/voice/pipeline.py's
+// VoiceAssistantLoop, via /api/voice/trigger and /api/voice/pause — see
+// ElectronVoiceRecorder below) instead of opening a second microphone in
+// the browser. A phone/LAN thin client has no such backend loop to share —
+// it's the only microphone in the picture — so it keeps the original
+// MediaRecorder+getUserMedia flow (BrowserVoiceRecorder) completely
+// unchanged. See frontend/src/platform/electronAdapter.ts for the rule on
+// what needs this kind of branch.
+interface VoiceRecorderProps {
+  // Lifts local mic/playback activity up to App so the shared CentralOrb /
+  // VoiceWaveform (normally driven by the backend's polled assistant state,
+  // which BrowserVoiceRecorder's thin-client request/response flow never
+  // touches) animates for browser-side voice too, instead of staying stuck
+  // on "idle". ElectronVoiceRecorder doesn't call these — its turns already
+  // show up in the same polled assistant state App already renders from.
+  onRecordingChange?: (recording: boolean) => void;
+  onSpeakingChange?: (speaking: boolean) => void;
+  // Only read by ElectronVoiceRecorder (App.tsx already polls both for the
+  // main state label/orb — see App.tsx's poll() effect).
+  assistantState: AssistantState;
+  detail: string;
+}
+
+export function VoiceRecorder(props: VoiceRecorderProps): JSX.Element {
+  return isElectron() ? <ElectronVoiceRecorder {...props} /> : <BrowserVoiceRecorder {...props} />;
+}
+
+const ELECTRON_ACTIVE_STATES: ReadonlySet<AssistantState> = new Set([
+  "listening",
+  "processing",
+  "thinking",
+  "speaking",
+]);
+
+function ElectronVoiceRecorder({ assistantState, detail }: VoiceRecorderProps): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  // Derived, not tracked locally: the backend loop is always on regardless
+  // of this button, so "is a conversation currently active" is whatever
+  // the polled assistant state already says, not a separate flag that
+  // could drift out of sync with it (e.g. if a turn started/ended via the
+  // spoken wake/stop word instead of this button).
+  const conversationActive = ELECTRON_ACTIVE_STATES.has(assistantState);
+
+  async function handleClick(): Promise<void> {
+    setBusy(true);
+    setError("");
+    try {
+      const result = conversationActive ? await pauseVoiceLoop() : await triggerVoiceLoop();
+      if (!result.accepted) {
+        setError("Голосовой цикл ассистента сейчас не запущен.");
+      }
+    } catch (error) {
+      console.error("Failed to signal the voice loop:", error);
+      setError("Нет связи с ядром ассистента.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="section voice-recorder">
+      <h3>Голосовой ввод</h3>
+
+      <div className="row">
+        <button className={conversationActive ? "danger" : ""} disabled={busy} onClick={() => void handleClick()}>
+          {conversationActive ? "Завершить разговор" : "Начать разговор"}
+        </button>
+      </div>
+
+      {conversationActive && detail && <p className="status-detail">{detail}</p>}
+      {error && <p className="status-error">{error}</p>}
+    </div>
+  );
+}
 
 // Standard Web APIs only (MediaRecorder + getUserMedia): this works
 // identically in Electron's renderer and in a plain phone browser, so no
@@ -38,15 +118,6 @@ export function readStoredVoiceLanguage(): string | null {
   }
 }
 
-interface VoiceRecorderProps {
-  // Lifts local mic/playback activity up to App so the shared CentralOrb /
-  // VoiceWaveform (normally driven by the backend's polled assistant state,
-  // which this thin-client request/response flow never touches) animates for
-  // browser-side voice too, instead of staying stuck on "idle".
-  onRecordingChange?: (recording: boolean) => void;
-  onSpeakingChange?: (speaking: boolean) => void;
-}
-
 function rms(data: Uint8Array): number {
   let sumSquares = 0;
   for (let i = 0; i < data.length; i += 1) {
@@ -56,7 +127,7 @@ function rms(data: Uint8Array): number {
   return Math.sqrt(sumSquares / data.length);
 }
 
-export function VoiceRecorder({ onRecordingChange, onSpeakingChange }: VoiceRecorderProps): JSX.Element {
+function BrowserVoiceRecorder({ onRecordingChange, onSpeakingChange }: VoiceRecorderProps): JSX.Element {
   // `active` toggles the whole real-time conversation on/off; there is no
   // separate per-utterance "stop" control — each turn stops itself once the
   // mic level drops below SILENCE_RMS_THRESHOLD for SILENCE_DURATION_MS, and

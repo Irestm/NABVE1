@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 from unittest.mock import MagicMock
 
+import pytest
+
 from core.os_adapter.base import ActiveWindow
 from core.os_adapter.linux import LinuxAdapter, _resolve_launch_argv
 
@@ -225,3 +227,112 @@ def test_get_active_window_bbox_none_when_geometry_lookup_fails(monkeypatch) -> 
     result = LinuxAdapter().get_active_window()
     assert result is not None
     assert result.bbox is None
+
+
+# --- brightness -----------------------------------------------------------
+
+
+def test_brightness_backend_prefers_brightnessctl(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.os_adapter.linux.shutil.which",
+        lambda name: "/usr/bin/brightnessctl" if name == "brightnessctl" else "/usr/bin/xrandr",
+    )
+    assert LinuxAdapter()._brightness_backend() == "brightnessctl"
+
+
+def test_brightness_backend_falls_back_to_xrandr(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.os_adapter.linux.shutil.which",
+        lambda name: "/usr/bin/xrandr" if name == "xrandr" else None,
+    )
+    assert LinuxAdapter()._brightness_backend() == "xrandr"
+
+
+def test_brightness_backend_raises_without_any_tool(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: None)
+    with pytest.raises(RuntimeError):
+        LinuxAdapter()._brightness_backend()
+
+
+def test_set_brightness_downgrades_to_xrandr_when_brightnessctl_lacks_permission(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.os_adapter.linux.shutil.which",
+        lambda name: "/usr/bin/brightnessctl" if name == "brightnessctl" else "/usr/bin/xrandr",
+    )
+    calls: list[list[str]] = []
+
+    def _run(args, **_kwargs):
+        if args[:2] == ["brightnessctl", "set"]:
+            raise subprocess.CalledProcessError(1, args, stderr="Permission denied")
+        if args[:2] == ["xrandr", "--query"]:
+            return MagicMock(returncode=0, stdout="eDP-1 connected primary 1920x1080+0+0\n")
+        calls.append(args)
+        return MagicMock(returncode=0)
+
+    monkeypatch.setattr("core.os_adapter.linux.subprocess.run", _run)
+    adapter = LinuxAdapter()
+
+    adapter.set_brightness(40)
+
+    assert calls == [["xrandr", "--output", "eDP-1", "--brightness", "0.40"]]
+    # Sticky: subsequent reads/writes stay on xrandr, not back to brightnessctl.
+    assert adapter._brightness_backend() == "xrandr"
+
+
+def test_set_brightness_via_brightnessctl_clamps_to_safe_floor(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: "/usr/bin/brightnessctl")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "core.os_adapter.linux.subprocess.run",
+        lambda args, **k: calls.append(args) or MagicMock(returncode=0),
+    )
+
+    LinuxAdapter().set_brightness(0)
+
+    assert calls == [["brightnessctl", "set", "5%"]]
+
+
+def test_set_brightness_via_xrandr_uses_primary_output_and_fraction(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.os_adapter.linux.shutil.which",
+        lambda name: "/usr/bin/xrandr" if name == "xrandr" else None,
+    )
+    calls: list[list[str]] = []
+
+    def _run(args, **_kwargs):
+        if args[:2] == ["xrandr", "--query"]:
+            return MagicMock(
+                returncode=0,
+                stdout="Screen 0: minimum 320 x 200\neDP-1 connected primary 1920x1080+0+0\nHDMI-1 disconnected\n",
+            )
+        calls.append(args)
+        return MagicMock(returncode=0)
+
+    monkeypatch.setattr("core.os_adapter.linux.subprocess.run", _run)
+
+    LinuxAdapter().set_brightness(50)
+
+    assert calls == [["xrandr", "--output", "eDP-1", "--brightness", "0.50"]]
+
+
+def test_get_brightness_parses_brightnessctl_machine_output(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: "/usr/bin/brightnessctl")
+    monkeypatch.setattr(
+        "core.os_adapter.linux.subprocess.run",
+        lambda args, **k: MagicMock(returncode=0, stdout="amdgpu_bl1,backlight,127,67%,255\n"),
+    )
+
+    assert LinuxAdapter().get_brightness() == 67
+
+
+def test_get_brightness_parses_xrandr_verbose_output(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.os_adapter.linux.shutil.which",
+        lambda name: "/usr/bin/xrandr" if name == "xrandr" else None,
+    )
+    monkeypatch.setattr(
+        "core.os_adapter.linux.subprocess.run",
+        lambda args, **k: MagicMock(returncode=0, stdout="\tGamma:      1.0:1.0:1.0\n\tBrightness: 0.75\n"),
+    )
+
+    assert LinuxAdapter().get_brightness() == 75

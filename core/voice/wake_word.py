@@ -61,6 +61,8 @@ def _listen_for_any(
     settings: VoiceSettings,
     phrases: dict[str, str | tuple[str, ...]],
     stop_event: threading.Event,
+    *,
+    extra_stop_event: threading.Event | None = None,
 ) -> str | None:
     """Polls the mic in settings.wake_word_check_interval_seconds-spaced
     2s windows, transcribing each and fuzzy-matching against every phrase in
@@ -68,7 +70,15 @@ def _listen_for_any(
     phrase variants — e.g. modules/tray_hide's default/custom hide-phrase
     list, all of which should count as the same "name" matching), until one
     matches or `stop_event` is set. Returns the matching name, or None if
-    `stop_event` fired first. Shared by KeywordWakeWordDetector.listen and
+    `stop_event` fired first.
+
+    `extra_stop_event`, if given, is a second, caller-defined interrupt
+    source checked at the same cadence as `stop_event` (e.g.
+    core/voice/pipeline.py's manual wake-button trigger, which needs to cut
+    this off without a phrase ever being heard). Both events produce the
+    same `None` return — callers that pass one already hold their own
+    reference to it and check it themselves afterward to tell the two
+    apart. Shared by KeywordWakeWordDetector.listen and
     listen_for_phrases so checking multiple phrases (e.g. the wake word and
     a configured stop word) costs one STT pass per window instead of one per
     phrase.
@@ -91,7 +101,7 @@ def _listen_for_any(
     buffer = RollingAudioBuffer(settings, window_seconds=2.0)
     buffer.start()
     try:
-        while not stop_event.is_set():
+        while not stop_event.is_set() and not (extra_stop_event is not None and extra_stop_event.is_set()):
             window = buffer.read_window(timeout=settings.wake_word_check_interval_seconds)
             if window.size == 0:
                 continue
@@ -173,6 +183,7 @@ def listen_for_phrases(
     stop_event: threading.Event,
     *,
     model_size: str | None = None,
+    extra_stop_event: threading.Event | None = None,
 ) -> str | None:
     """STT-based multi-phrase listener, independent of whichever
     WakeWordDetector backend is actually configured — Porcupine is a fixed
@@ -199,4 +210,4 @@ def listen_for_phrases(
     if stt is None:
         stt = SpeechToText(settings, model_size=size)
         _phrase_stt_by_size[size] = stt
-    return _listen_for_any(stt, settings, phrases, stop_event)
+    return _listen_for_any(stt, settings, phrases, stop_event, extra_stop_event=extra_stop_event)

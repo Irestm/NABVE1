@@ -4,11 +4,13 @@ import asyncio
 import re
 import threading
 
+import numpy as np
+
 from core.dispatcher import CommandDispatcher
 from core.logger import get_logger
 from core.models import AssistantState, CommandResponse, CommandStatus
 from core.state import state_manager
-from core.voice import ai_router, audio_io, confirmation_phrase, wake_word
+from core.voice import ai_router, audio_io, confirmation_phrase, special_phrases, wake_word
 from core.voice.barge_in import BargeInMonitor
 from core.voice.config import VoiceSettings, voice_settings
 from core.voice.intent import (
@@ -21,7 +23,7 @@ from core.voice.intent import (
 )
 from core.voice.interruption import TurnCancelled, run_cancellable
 from core.voice.language import resolve_language, resolve_response_language
-from core.voice.phrase_matching import fuzzy_contains_phrase
+from core.voice.phrase_matching import fuzzy_contains_phrase, fuzzy_matches_any, with_transliterated_variant
 from core.voice.plugin_match import match_plugin_command
 from core.voice.fact_extraction import extract_facts
 from core.voice.responses import localize_response, not_understood, tray_hide_ack, tray_show_ack
@@ -57,14 +59,12 @@ from modules.os_agent import session as os_agent_session
 from modules.os_agent.domain import AgentSession
 from modules.task_orchestrator import announce as task_orchestrator_announce
 from modules.task_orchestrator import service_layer as task_orchestrator_service_layer
-from modules.tray_hide import detector as tray_hide_detector
-from modules.tray_hide.config import HIDE_PHRASE_KEY, SHOW_PHRASE_KEY
 from modules.ui_automation import announce as ui_announce
 from modules.ui_automation import service_layer as ui_service_layer
 from modules.ui_automation.domain import UIStep
 from modules.ui_control import service_layer as ui_control_service_layer
 from modules.user_profile import service_layer as profile_service_layer
-from modules.user_profile.domain import STOP_WORD_KEY, WAKE_PHRASE_KEY
+from modules.user_profile.domain import STOP_WORD_KEY
 from modules.user_profile.onboarding import run_onboarding
 from modules.user_profile.uow import ProfileUnitOfWork
 
@@ -85,6 +85,20 @@ _TELEGRAM_SUFFIX_PATTERN = re.compile(r"\s*(?:в\s+телеграм[е]?|in\s+te
 _GMAIL_SUFFIX_PATTERN = re.compile(
     r"\s*(?:на\s+почте|в\s+gmail|на\s+email|in\s+gmail)\s*$", re.IGNORECASE
 )
+
+# Keyed by PromptProviderPort.name (see core/ai_adapter_chain.py:candidate_chain
+# and its adapters) — surfaced via ai_router.resolve_free_text's on_progress in
+# _classify_via_ai_bridge below, so a slow chain (local model down, browser
+# fallback) shows something other than a static "Уточняю у ИИ" the whole time.
+# Any name not listed here (there isn't one currently) falls back to that
+# same default text rather than a KeyError.
+_AI_ADAPTER_PROGRESS_DETAIL = {
+    "local": "Пробую локальную модель",
+    "groq_api": "Пробую быстрый облачный ИИ",
+    "gemini_api": "Пробую Gemini",
+    "claude_api": "Пробую Claude",
+    "ai_bridge": "Локально не получилось, открываю браузер",
+}
 
 
 class _SentenceStreamSpeaker:
@@ -192,8 +206,26 @@ class VoiceAssistantLoop:
         # _wait_for_wake_or_pause) must leave it dormant-but-alive so the
         # stop word can wake it back up later.
         self._paused_event = threading.Event()
+        # Separate from both events above: set by request_manual_wake() to
+        # let something outside this thread (the Electron "Начать разговор"
+        # button, via /api/voice/trigger) emulate hearing the wake phrase
+        # without a stop_event-style full loop teardown. Checked by
+        # _wait_for_wake_or_pause as an extra_stop_event passed into
+        # wake_word.listen_for_phrases, so it interrupts a blocking listen
+        # call rather than only being noticed on the next pass.
+        self._manual_trigger_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._barge_in = BargeInMonitor(settings)
+        # One-line summary of the previous exchange within the current
+        # continuous-conversation activation (see _run()) — lets an
+        # elliptical follow-up ("а сегодня какая была?" with no "погода" at
+        # all) resolve against the same topic/params as the turn before it
+        # instead of every utterance being classified in total isolation.
+        # Set at _handle_command's single choke point for a dispatched
+        # command, or in _classify_via_ai_bridge for a direct answer; reset
+        # to None at the start of each fresh activation in _run() so it
+        # never leaks into an unrelated later conversation.
+        self._last_exchange: str | None = None
 
     @property
     def is_running(self) -> bool:
@@ -215,10 +247,59 @@ class VoiceAssistantLoop:
         state_manager.set_state(AssistantState.IDLE)
         logger.info("Voice assistant loop stopped")
 
+    def request_manual_wake(self) -> bool:
+        """Emulates hearing the wake phrase, for a UI trigger that isn't a
+        spoken phrase (see /api/voice/trigger — the Electron "Начать
+        разговор" button, routed through this same loop/mic instead of
+        opening a second microphone in the browser). Returns False without
+        effect if the loop isn't running.
+
+        Clears _paused_event itself (rather than leaving that to
+        _wait_for_wake_or_pause) before setting _manual_trigger_event, so
+        the single check that consumes the trigger there (see that
+        method's docstring) can tell "genuinely start a turn" apart from
+        request_pause()'s own use of the same event purely to interrupt a
+        blocking listen — by the time it's consumed, _paused_event already
+        reflects which one actually happened."""
+        if not self.is_running:
+            return False
+        self._paused_event.clear()
+        self._manual_trigger_event.set()
+        return True
+
+    def request_pause(self) -> bool:
+        """Emulates hearing the configured stop word — pauses this loop the
+        same way _wait_for_wake_or_pause's own "pause" branch does, without
+        tearing the thread down like stop() does. Used by /api/voice/pause
+        (the Electron "Завершить разговор" button) so ending a
+        button-driven conversation doesn't kill the always-on assistant.
+        Returns False without effect if the loop isn't running.
+
+        Also sets _manual_trigger_event, purely to interrupt whatever
+        listen_for_phrases call is currently blocking (see
+        _wait_for_wake_or_pause) — found live: without this, setting
+        _paused_event alone had no real effect until that blocking call
+        happened to return on its own (hearing wake/pause/tray/resume),
+        which could be indefinitely far in the future. The status display
+        updated immediately (misleadingly implying it had worked) while the
+        loop itself kept right on listening for the wake word as if nothing
+        had changed — the button read as "does nothing the first time" and
+        the stop word then had to be said twice to actually resume anything
+        (once to make the stale pause finally register, once more to
+        genuinely resume)."""
+        if not self.is_running:
+            return False
+        self._paused_event.set()
+        state_manager.set_state(AssistantState.PAUSED, "Скажите стоп-слово ещё раз, чтобы продолжить")
+        self._manual_trigger_event.set()
+        return True
+
     def _speak_safely(self, tts: TextToSpeech, text: str, language: str) -> bool:
-        """Speaks `text`. Returns True if the user cut it off with a stop
-        phrase partway through (see BargeInMonitor) — the caller should treat
-        that as "go straight back to listening", not "finished talking"."""
+        """Speaks `text`. Returns True if the user's stop word cut it off
+        partway through (see BargeInMonitor) — the caller should treat that
+        exactly like any other barge-in interruption: propagate it up as
+        `interrupted` until it reaches VoiceAssistantLoop._run, which pauses
+        (AssistantState.PAUSED), not "go straight back to listening"."""
         try:
             samples, sample_rate = tts.synthesize(text, language)
         except RuntimeError as exc:
@@ -240,6 +321,50 @@ class VoiceAssistantLoop:
             monitor_thread.join(timeout=1.0)
         return interrupted.is_set()
 
+    def _record_command_audio(self, *, onset_timeout_seconds: float | None = None) -> tuple[np.ndarray, bool]:
+        """Records the same way audio_io.record_until_silence always has,
+        except a BargeInMonitor listens on a second mic stream at the same
+        time for the user's own configured stop word (context="recording" —
+        see core/voice/special_phrases.py) — saying it while still
+        mid-utterance now cuts the recording short right away, instead of
+        only being caught after VAD silence ends it naturally and
+        _handle_command's own post-transcription text check runs. Mirrors
+        _speak_safely's bracket exactly (fresh stop_event/interrupted pair,
+        a dedicated monitor thread torn down in `finally`), just around a
+        capture instead of playback.
+
+        Best-effort: BargeInMonitor.run already degrades silently (logs at
+        DEBUG, never sets `interrupted`) if the audio backend can't actually
+        open a second concurrent input stream alongside the one
+        record_until_silence itself holds — this never fails the turn, it
+        just means no live interruption for that one recording, same as
+        before this existed.
+
+        Returns (audio, interrupted) — `audio` is whatever was captured
+        before an interruption, if any (the caller should discard it, not
+        transcribe/dispatch it, when `interrupted` is True — same contract
+        as every other barge-in interruption in this file)."""
+        stop_event = threading.Event()
+        interrupted = threading.Event()
+        monitor_thread = threading.Thread(
+            target=self._barge_in.run,
+            args=(self._settings.fallback_language, stop_event, interrupted),
+            kwargs={"context": "recording"},
+            daemon=True,
+        )
+        monitor_thread.start()
+        try:
+            audio = audio_io.record_until_silence(
+                self._settings,
+                self._stop_event,
+                onset_timeout_seconds=onset_timeout_seconds,
+                barge_in_stop_event=stop_event,
+            )
+        finally:
+            stop_event.set()
+            monitor_thread.join(timeout=1.0)
+        return audio, interrupted.is_set()
+
     def _run_onboarding_if_needed(self) -> None:
         if profile_service_layer.is_onboarded(ProfileUnitOfWork()):
             return
@@ -258,17 +383,35 @@ class VoiceAssistantLoop:
         proceed to _handle_command) or the whole loop should stop (returns
         False — self._stop_event fired).
 
-        The stop word is re-read from the profile on every pass through this
-        loop (each iteration is one ~2s listening window, so this is a cheap
-        sqlite read at that cadence, not a hot loop) rather than captured
-        once when the thread started — it used to be fetched once in _run()
-        before this method even existed as a loop, which meant setting a
-        stop word for the first time via the personality settings panel (see
-        modules/user_profile/handlers.py's profile_set) had no effect at all
-        until the whole assistant was restarted: this method had already
-        captured "no stop word" and never looked again. The tray hide/show
-        phrases (modules/tray_hide) and the custom activation phrase
-        (WAKE_PHRASE_KEY) are re-read the same way and for the same reason.
+        self._manual_trigger_event is passed into every listen_for_phrases
+        call as extra_stop_event, so it cuts a blocking listen short the
+        same way the wake phrase itself would — but it means two different
+        things depending on who set it, disambiguated once, at the top of
+        the outer loop below, rather than separately in each branch:
+        request_manual_wake() clears _paused_event before setting the
+        event (a genuine "start a turn now"), while request_pause() sets
+        _paused_event first (the event here only interrupts whatever's
+        currently blocking so the loop can re-evaluate _paused_event
+        immediately instead of whenever that blocking call happens to
+        return on its own). So: _paused_event still set when the trigger
+        is consumed means "just re-sync to the real paused state", not set
+        means "actually start a turn". A single Event with two possible
+        intents behind it, rather than a second one, keeps
+        wake_word.listen_for_phrases's signature to one extra_stop_event
+        instead of needing to interrupt on either of two.
+
+        The full set of phrases checked in each pass — the stop word (if
+        configured), the wake phrase(s), and the tray hide/show phrases — is
+        resolved fresh from the profile on every pass through this loop via
+        core/voice/special_phrases.py's REGISTRY (each iteration is one ~2s
+        listening window, so this is a cheap sqlite read at that cadence,
+        not a hot loop) rather than captured once when the thread started —
+        it used to be fetched once in _run() before this method even existed
+        as a loop, which meant setting a stop word for the first time via
+        the personality settings panel (see modules/user_profile/handlers.py's
+        profile_set) had no effect at all until the whole assistant was
+        restarted: this method had already captured "no stop word" and never
+        looked again.
 
         If a stop word is configured, it's listened for in the same pass as
         the wake word (see core/voice/wake_word.py's listen_for_phrases).
@@ -294,22 +437,43 @@ class VoiceAssistantLoop:
         method (the UI is not a voice command turn), it just requests the
         window visibility change and keeps listening."""
         while not self._stop_event.is_set():
-            stop_word = profile_service_layer.get_fact(ProfileUnitOfWork(), STOP_WORD_KEY)
-            hide_phrase = profile_service_layer.get_fact(ProfileUnitOfWork(), HIDE_PHRASE_KEY)
-            show_phrase = profile_service_layer.get_fact(ProfileUnitOfWork(), SHOW_PHRASE_KEY)
-            custom_wake_phrase = profile_service_layer.get_fact(ProfileUnitOfWork(), WAKE_PHRASE_KEY)
+            if self._manual_trigger_event.is_set():
+                self._manual_trigger_event.clear()
+                if not self._paused_event.is_set():
+                    logger.info("Manual trigger received; starting a turn")
+                    return True
+                # else: this trigger was request_pause()'s own interrupt-
+                # only use of the event (see its docstring) - fall through
+                # to the paused branch below, which (re)broadcasts PAUSED
+                # and genuinely starts listening for the resume phrase,
+                # instead of a blocking call from before the pause was
+                # requested just continuing to run as if nothing changed.
 
             if self._paused_event.is_set():
-                if not stop_word:
+                # Re-asserted on every pass through this branch, not just
+                # once when the pause was first requested (by the "pause"
+                # branch below, a barge-in interruption, or
+                # request_pause()) — a pause requested while a command turn
+                # was still in flight (see request_pause's own docstring)
+                # otherwise left /api/status showing whatever that turn's
+                # own later state updates (processing/thinking/speaking/
+                # idle) landed on once it finally finished, even though the
+                # loop really had moved on to waiting here for the resume
+                # phrase and wouldn't react to the wake word at all — a
+                # real, observed live-testing bug, not hypothetical.
+                state_manager.set_state(AssistantState.PAUSED, "Скажите стоп-слово ещё раз, чтобы продолжить")
+                phrases = special_phrases.variants_for_context(self._settings, "paused")
+                if "resume" not in phrases:
                     # Nothing to resume on; shouldn't normally happen since
                     # pausing requires a stop word, but don't get stuck here.
                     self._paused_event.clear()
                     continue
                 heard = wake_word.listen_for_phrases(
                     self._settings,
-                    {"resume": stop_word},
+                    phrases,
                     self._stop_event,
                     model_size=self._settings.whisper_model_size,
+                    extra_stop_event=self._manual_trigger_event,
                 )
                 if heard == "resume":
                     self._paused_event.clear()
@@ -332,18 +496,22 @@ class VoiceAssistantLoop:
             # detection itself a bit slower than the fast single-word path
             # — but reliably honoring a pause/hide/show/wake request matters
             # more here than shaving time off wake latency.
-            phrases: dict[str, str | tuple[str, ...]] = {
-                "wake": wake_word.resolve_wake_phrases(self._settings, custom_wake_phrase),
-                "tray_hide": tray_hide_detector.hide_phrases(hide_phrase),
-                "tray_show": tray_hide_detector.show_phrases(show_phrase),
-            }
-            if stop_word:
-                phrases["pause"] = stop_word
+            # "pause" comes out of REGISTRY ahead of "wake" on purpose: see
+            # special_phrases.REGISTRY's own docstring — a stop word said
+            # right after the wake/activation phrase in the same breath
+            # ("привет стоп") must always win that race, never lose to
+            # "wake" and get treated as ordinary command text that falls
+            # through every local resolver straight into the AI-classification
+            # fallback (see _classify_via_ai_bridge and its "Уточняю у ИИ"
+            # state — that's what silently swallowing the stop word here used
+            # to produce).
+            phrases = special_phrases.variants_for_context(self._settings, "idle")
             heard = wake_word.listen_for_phrases(
                 self._settings,
                 phrases,
                 self._stop_event,
                 model_size=self._settings.whisper_model_size,
+                extra_stop_event=self._manual_trigger_event,
             )
             if heard == "wake":
                 return True
@@ -368,38 +536,80 @@ class VoiceAssistantLoop:
 
         self._run_onboarding_if_needed()
 
-        # Set when the user barge-in-interrupted the previous reply with a
-        # stop phrase: they're already mid-conversation, so the next turn
-        # starts listening immediately instead of waiting for the wake word
-        # again.
-        listen_immediately = False
         while not self._stop_event.is_set():
-            if not listen_immediately:
-                try:
-                    detected = self._wait_for_wake_or_pause(tts)
-                except Exception:
-                    # continue (not return): a transient failure here — a
-                    # brief audio-device hiccup, a one-off STT error — used
-                    # to permanently kill the whole voice loop (ERROR state,
-                    # thread exits) with nothing to auto-recover it, while
-                    # the exact same category of transient failure in
-                    # _handle_command just below already logs and keeps
-                    # going. Mirror that: log with a traceback, report ERROR
-                    # transiently, and let the next loop iteration retry the
-                    # wake-word wait instead of ending the thread for good.
-                    logger.exception("Wake-word detector failed")
-                    state_manager.set_state(AssistantState.ERROR, "Ошибка распознавания слова пробуждения")
-                    continue
+            try:
+                detected = self._wait_for_wake_or_pause(tts)
+            except Exception:
+                # continue (not return): a transient failure here — a
+                # brief audio-device hiccup, a one-off STT error — used
+                # to permanently kill the whole voice loop (ERROR state,
+                # thread exits) with nothing to auto-recover it, while
+                # the exact same category of transient failure in
+                # _handle_command just below already logs and keeps
+                # going. Mirror that: log with a traceback, report ERROR
+                # transiently, and let the next loop iteration retry the
+                # wake-word wait instead of ending the thread for good.
+                logger.exception("Wake-word detector failed")
+                state_manager.set_state(AssistantState.ERROR, "Ошибка распознавания слова пробуждения")
+                continue
 
-                if not detected:
+            if not detected:
+                break
+
+            # Fresh activation, fresh conversation - no memory of whatever
+            # topic an earlier, already-ended session was about.
+            self._last_exchange = None
+
+            # Continuous conversation: one activation (spoken wake phrase
+            # or the manual-trigger button) now covers a whole back-to-back
+            # exchange, not just one command — after a command finishes
+            # without being paused/interrupted, this goes straight into the
+            # next _handle_command() instead of falling back to
+            # _wait_for_wake_or_pause(), which would require the wake
+            # phrase again. Found live: the assistant "ending the dialog"
+            # after every single question, needing the wake phrase said
+            # again for each follow-up, is exactly the behavior the user
+            # reported and asked to have removed. Only a real pause (stop
+            # word, mid-reply barge-in, or the "Завершить разговор" button
+            # — both land here via self._paused_event) or a hard error ends
+            # this inner loop; deliberately no silence/idle timeout of its
+            # own, since the whole point is to keep listening until the
+            # user explicitly stops it, exactly as asked. This makes
+            # _maybe_continue_free_text's own narrower, shorter follow-up
+            # window (free-text AI answers only) redundant in spirit but
+            # not wrong to keep — it still gives a quick, low-latency
+            # continuation for that one case before this broader,
+            # unbounded wait would otherwise kick in.
+            while not self._stop_event.is_set() and not self._paused_event.is_set():
+                try:
+                    interrupted = self._handle_command(command_stt, tts)
+                except Exception:
+                    # Retreat to requiring the wake phrase again rather than
+                    # risking a tight retry loop with no blocking mic wait
+                    # in between if _handle_command fails before it ever
+                    # gets to one (e.g. SpeechToText/TextToSpeech
+                    # construction itself broken) — same caution as the
+                    # wake-word-detector except above, just scoped to not
+                    # spinning *inside* an already-active conversation.
+                    logger.exception("Voice command handling failed")
+                    state_manager.set_state(AssistantState.IDLE)
                     break
 
-            try:
-                listen_immediately = self._handle_command(command_stt, tts)
-            except Exception:
-                logger.exception("Voice command handling failed")
-                state_manager.set_state(AssistantState.IDLE)
-                listen_immediately = False
+                if interrupted:
+                    # BargeInMonitor only ever sets this when it heard the
+                    # user's own configured stop word mid-reply (see
+                    # core/voice/barge_in.py) — the same phrase, the same
+                    # meaning as everywhere else: a full pause, not "keep
+                    # listening right away" (which this used to do at one
+                    # point, skipping straight back into _handle_command
+                    # unconditionally — a different, already-fixed bug from
+                    # this same continuous-conversation behavior, which
+                    # only ever re-enters _handle_command when NOT
+                    # interrupted).
+                    self._paused_event.set()
+                    state_manager.set_state(AssistantState.PAUSED, "Скажите стоп-слово ещё раз, чтобы продолжить")
+                    logger.info("Stop word heard while speaking; pausing")
+                    break
 
         state_manager.set_state(AssistantState.IDLE)
 
@@ -433,6 +643,10 @@ class VoiceAssistantLoop:
         state_manager.set_state(AssistantState.THINKING, "Уточняю у ИИ")
         commands = self._dispatcher.list_commands()
 
+        def on_progress(adapter_name: str) -> None:
+            detail = _AI_ADAPTER_PROGRESS_DETAIL.get(adapter_name, "Уточняю у ИИ")
+            state_manager.set_state(AssistantState.THINKING, detail)
+
         async def run() -> tuple[Command | None, str | None, bool | None]:
             speaker: _SentenceStreamSpeaker | None = None
 
@@ -443,13 +657,25 @@ class VoiceAssistantLoop:
                     speaker = _SentenceStreamSpeaker(tts, response_language, self._barge_in, self._stop_event)
                 await speaker.feed(chunk)
 
-            command, answer = await ai_router.resolve_free_text(text, commands, on_stream_chunk=on_chunk)
+            command, answer = await ai_router.resolve_free_text(
+                text, commands, on_stream_chunk=on_chunk, on_progress=on_progress,
+                context_hint=self._last_exchange,
+            )
             if speaker is None or speaker.aborted:
                 return command, answer, None
             return command, answer, await speaker.finish()
 
         try:
-            command, answer, streamed_interrupted = asyncio.run(run())
+            # run_cancellable, not a bare asyncio.run(run()) — every other
+            # AI-calling resolver in this file already goes through this so
+            # a stop phrase said mid-call cancels it; this one used to be
+            # the one exception, so saying the stop word while stuck on
+            # "Уточняю у ИИ" (this state, set above) was silently unheard —
+            # the barge-in monitor only started later, inside on_chunk,
+            # once a streamed local-model answer actually began speaking.
+            command, answer, streamed_interrupted = run_cancellable(run(), self._barge_in, response_language)
+        except TurnCancelled:
+            raise
         except Exception:
             logger.exception("AI intent classification failed")
             state_manager.set_state(AssistantState.SPEAKING)
@@ -458,6 +684,13 @@ class VoiceAssistantLoop:
 
         if command is not None:
             return command, False
+
+        if answer is not None:
+            # Recorded regardless of whether the answer ends up interrupted
+            # below — the user's question and what was determined as its
+            # answer are both valid context for a follow-up either way, the
+            # interruption only affects whether it finished being *spoken*.
+            self._last_exchange = f"Пользователь спросил: «{text}». Ассистент ответил: «{answer}»."
 
         if streamed_interrupted is not None:
             if streamed_interrupted:
@@ -493,7 +726,16 @@ class VoiceAssistantLoop:
         core/voice/intent.py's fast rule-based parser — the fast-path
         regexes never see it. Widening this to every command type (i.e.
         re-running _handle_command's full pipeline on a follow-up) is a
-        larger change than this first slice."""
+        larger change than this first slice.
+
+        The transcribed follow-up is checked against the stop word (see
+        _pause_if_stop_word) before it's handed to the AI classifier —
+        found missing via live testing: without it, saying the stop word
+        right after an answer sent it into another AI round-trip as an
+        ordinary follow-up question instead of pausing, which read as the
+        stop word randomly "not working" rather than as a genuinely
+        unhandled case one call site down from _handle_command's own
+        backstop for the exact same thing."""
         window = self._settings.follow_up_window_seconds
         if not window or window <= 0:
             return None, False
@@ -508,6 +750,8 @@ class VoiceAssistantLoop:
         state_manager.set_state(AssistantState.PROCESSING, "Распознаю")
         result = command_stt.transcribe(audio)
         if not result.text.strip():
+            return None, False
+        if self._pause_if_stop_word(result.text, context="during a follow-up"):
             return None, False
 
         return self._classify_via_ai_bridge(result.text, command_stt, tts, response_language)
@@ -976,9 +1220,10 @@ class VoiceAssistantLoop:
         _resolve_active_board_game_utterance, before interpret() — while
         modules.os_agent.session is active (agent mode on, waiting for a
         task), every utterance is claimed here instead of going through
-        normal command interpretation: either a stop phrase (reusing the
-        same STOP_PHRASES/is_stop_command barge-in already recognizes
-        elsewhere — no separate exit-phrase set needed) or free-text task
+        normal command interpretation: either a stop phrase (is_stop_command/
+        STOP_PHRASES — a fixed word list, deliberately not the user's own
+        configured stop word from core/voice/special_phrases.py; exiting
+        agent mode doesn't need a separate exit-phrase set) or free-text task
         description. Returns None only when the mode isn't active at all, so
         an unrelated utterance keeps working normally when it happens to
         arrive while the mode is off."""
@@ -1528,12 +1773,45 @@ class VoiceAssistantLoop:
         confirm_result = command_stt.transcribe(confirm_audio)
         return is_affirmative(confirm_result.text, response_language), False
 
+    def _pause_if_stop_word(self, text: str, *, context: str) -> bool:
+        """Checks `text` — something already transcribed outside
+        _wait_for_wake_or_pause's own listen_for_phrases pass, which
+        already listens for the stop word as one of its phrases — against
+        the configured stop word (with a Latin-transliterated variant,
+        since a short single-word STT transcription routinely misfires the
+        alphabet; see with_transliterated_variant). On a match, pauses
+        immediately (sets _paused_event/PAUSED state, same as every other
+        pause path in this file) and returns True so the caller drops
+        `text` instead of treating it as a real command or free-text
+        question. `context` only flavors the log line (e.g. "as the
+        command itself", "during a follow-up") to tell call sites apart.
+
+        Found live: _maybe_continue_free_text's follow-up window used to
+        have no stop-word check at all, so saying the stop word there sent
+        it straight into another AI round-trip (candidate_chain/ai_router)
+        as if it were a genuine follow-up question, instead of pausing —
+        which read as the stop word "not working"/hanging rather than as
+        the real bug, a missing check one call site down from the one that
+        already had it (_handle_command's own backstop below)."""
+        stop_word = profile_service_layer.get_fact(ProfileUnitOfWork(), STOP_WORD_KEY)
+        if not stop_word or not fuzzy_matches_any(text, with_transliterated_variant(stop_word)):
+            return False
+        self._paused_event.set()
+        state_manager.set_state(AssistantState.PAUSED, "Скажите стоп-слово ещё раз, чтобы продолжить")
+        logger.info("Stop word heard %s; pausing", context)
+        return True
+
     def _handle_command(self, command_stt: SpeechToText, tts: TextToSpeech) -> bool:
         """Returns True if the user barge-in-interrupted the spoken reply
-        with a stop phrase — see VoiceAssistantLoop._run, which then skips
-        the wake-word wait for the next turn."""
+        (or the recording of their own command, or the "thinking" in
+        between — see _record_command_audio/run_cancellable) with the stop
+        word — see VoiceAssistantLoop._run, which then pauses (same as
+        _wait_for_wake_or_pause's own "pause" branch) instead of listening
+        for a new command right away."""
         state_manager.set_state(AssistantState.LISTENING, "Слушаю команду")
-        audio = audio_io.record_until_silence(self._settings, self._stop_event)
+        audio, interrupted = self._record_command_audio()
+        if interrupted:
+            return True
         if audio.size == 0:
             state_manager.set_state(AssistantState.IDLE)
             return False
@@ -1544,6 +1822,25 @@ class VoiceAssistantLoop:
             "STT transcribed: %r (detected_language=%s, probability=%.2f)",
             result.text, result.detected_language, result.language_probability,
         )
+
+        # Backstop for _record_command_audio's own live BargeInMonitor
+        # (context="recording") above — that one covers the ordinary case
+        # (stop word heard mid-utterance cuts the recording short right
+        # away), but two things can still slip past it: the second mic
+        # stream failing to open at all on this audio backend (silent
+        # best-effort degradation — see BargeInMonitor.run), or the stop
+        # word being said so close to the very end of the utterance that
+        # VAD silence-detection already ended the recording before the
+        # live monitor's own ~1.2s window got a chance to transcribe it.
+        # Either way, this text-level check on what actually got
+        # transcribed still catches it before interpret()/custom_commands/
+        # board-game ever sees it — mirrors the same pause behavior
+        # _wait_for_wake_or_pause uses for "heard == pause": set
+        # _paused_event and go straight to PAUSED, no command processing
+        # at all for this turn.
+        if self._pause_if_stop_word(result.text, context="as the command itself"):
+            return False
+
         decision = resolve_language(result.detected_language, result.language_probability, self._settings)
         # decision.resolved drives interpretation of the user's own words (interpret,
         # is_affirmative); response_language drives what the assistant speaks back and
@@ -1641,9 +1938,21 @@ class VoiceAssistantLoop:
                 # the AI classifier.
                 command = command_classifier.match_system_command(text_to_interpret)
             if command is None:
-                command, interrupted = self._classify_via_ai_bridge(
-                    text_to_interpret, command_stt, tts, response_language
-                )
+                # Own try/except here rather than relying on the big
+                # try/except TurnCancelled below (starting at the
+                # command.name dispatch): that one only wraps resolving a
+                # command's *parameters* and dispatch()/confirm() itself —
+                # this call happens earlier, while `command` is still being
+                # determined at all, so it isn't covered by it. Mirrors that
+                # same block's own TurnCancelled handling exactly (stop
+                # silently, listen again immediately, no error logged).
+                try:
+                    command, interrupted = self._classify_via_ai_bridge(
+                        text_to_interpret, command_stt, tts, response_language
+                    )
+                except TurnCancelled:
+                    state_manager.set_state(AssistantState.IDLE)
+                    return True
                 if command is None:
                     state_manager.set_state(AssistantState.IDLE)
                     return interrupted
@@ -1655,7 +1964,18 @@ class VoiceAssistantLoop:
         # command type passes through (system command, custom command,
         # plugin match, Figma/Blender command, ...), so it's also the right
         # place for the Jarvis-style "Да, сэр"/"Да, мэм" acknowledgement —
-        # see modules/user_profile/domain.py's CONFIRMATION_PHRASE_ENABLED_KEY.
+        # see modules/user_profile/domain.py's CONFIRMATION_PHRASE_ENABLED_KEY
+        # — and for recording this turn as the session's _last_exchange
+        # (see its own docstring in __init__) regardless of which tier
+        # resolved it (rule-based interpret(), a custom/plugin trigger, the
+        # local embedding classifier, or the AI classifier) — a later
+        # elliptical follow-up needs this recorded no matter how *this*
+        # turn itself got resolved.
+        self._last_exchange = (
+            f"Пользователь сказал: «{text_to_interpret}». Ассистент выполнил команду "
+            f"{command.name} с параметрами {command.params}."
+        )
+
         if confirmation_phrase.is_enabled():
             state_manager.set_state(AssistantState.SPEAKING)
             if self._speak_safely(tts, confirmation_phrase.get_confirmation_phrase(), response_language):
@@ -1775,11 +2095,11 @@ class VoiceAssistantLoop:
                 # interruption here must NOT bail out early: dispatch() has
                 # already created a live pending token that needs resolving one
                 # way or another, and the interruption itself carries no
-                # yes/no answer (BargeInMonitor only recognizes STOP_PHRASES,
-                # e.g. "отмена" - a real decline - not "да"). Bailing used to
-                # silently abandon the token and let the next loop iteration
-                # treat whatever the user said next as a brand new top-level
-                # command instead of the answer to this question - the exact
+                # yes/no answer (BargeInMonitor only recognizes the stop word,
+                # never "да"). Bailing used to silently abandon the token and
+                # let the next loop iteration treat whatever the user said
+                # next as a brand new top-level command instead of the
+                # answer to this question - the exact
                 # "да воспринимается как ещё один запрос" symptom this fixes.
                 state_manager.set_state(AssistantState.SPEAKING)
                 self._speak_safely(tts, localize_response(response, response_language), response_language)

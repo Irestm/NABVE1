@@ -32,6 +32,34 @@ def test_extract_change_volume_respects_explicit_negative_number() -> None:
     assert cc._extract_change_volume("измени громкость на -15") == {"delta_percent": "-15"}
 
 
+def test_extract_set_brightness_parses_and_clamps() -> None:
+    assert cc._extract_set_brightness("поставь яркость 40 процентов") == {"percent": "40"}
+    assert cc._extract_set_brightness("поставь яркость 500") == {"percent": "100"}
+    assert cc._extract_set_brightness("поставь яркость -10") == {"percent": "0"}
+
+
+def test_extract_set_brightness_returns_none_without_a_number() -> None:
+    assert cc._extract_set_brightness("поставь яркость") is None
+
+
+def test_extract_change_brightness_detects_dim_word() -> None:
+    assert cc._extract_change_brightness("убавь яркость на 20 процентов") == {"delta_percent": "-20"}
+    assert cc._extract_change_brightness("сделай экран темнее на 15") == {"delta_percent": "-15"}
+
+
+def test_extract_change_brightness_defaults_to_increase() -> None:
+    assert cc._extract_change_brightness("прибавь яркость на 10") == {"delta_percent": "10"}
+    assert cc._extract_change_brightness("сделай экран ярче") == {
+        "delta_percent": str(cc._DEFAULT_BRIGHTNESS_STEP)
+    }
+
+
+def test_extract_change_brightness_uses_default_step_when_dimming_without_a_number() -> None:
+    assert cc._extract_change_brightness("сделай потемнее") == {
+        "delta_percent": str(-cc._DEFAULT_BRIGHTNESS_STEP)
+    }
+
+
 def test_extract_minimize_window_with_app_name() -> None:
     assert cc._extract_minimize_window("сверни окно спотифай") == {"app_name": "спотифай"}
 
@@ -116,6 +144,29 @@ def test_match_system_command_returns_none_when_extractor_declines(monkeypatch: 
     monkeypatch.setattr(cc._matcher, "best_match", lambda query: ("switch_keyboard_layout", 0.95))
 
     assert cc.match_system_command("смени раскладку без указания языка") is None
+
+
+# Regression: toggle_timer/toggle_stopwatch were found live with no fast
+# path at all (missing from both this catalog and core/voice/intent.py's
+# regexes), forcing every voice timer/stopwatch request through the slower,
+# less reliable AI classifier chain. This asserts every catalog command
+# has a matching extractor going forward, so a new command added to one
+# without the other fails a test instead of silently degrading to that
+# same fallback-only behavior.
+def test_every_catalog_command_has_a_param_extractor() -> None:
+    catalog_commands = {spec.command for spec in cc._CATALOG}
+    assert catalog_commands == set(cc._PARAM_EXTRACTORS.keys())
+
+
+def test_extract_toggle_timer_parses_minutes() -> None:
+    assert cc._extract_toggle_timer("поставь таймер на 10 минут") == {"minutes": "10"}
+    assert cc._extract_toggle_timer("set a timer for 5 minutes") == {"minutes": "5"}
+    assert cc._extract_toggle_timer("постав таймер на 15 хвилин") == {"minutes": "15"}
+
+
+def test_extract_toggle_timer_without_a_number_means_cancel() -> None:
+    assert cc._extract_toggle_timer("отмени таймер") == {}
+    assert cc._extract_toggle_timer("cancel the timer") == {}
 
 
 def test_unavailable_reason_reflects_initialization_failure(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -36,8 +36,19 @@ class _FakeBuffer:
         return next(self._windows, np.zeros(0, dtype=np.float32))
 
 
-def _monitor(monkeypatch, buffer: _FakeBuffer, transcriptions: list[TranscriptionResult | Exception]) -> BargeInMonitor:
+def _monitor(
+    monkeypatch,
+    buffer: _FakeBuffer,
+    transcriptions: list[TranscriptionResult | Exception],
+    *,
+    stop_word: str | None = "стоп",
+) -> BargeInMonitor:
     monkeypatch.setattr(barge_in_module, "RollingAudioBuffer", lambda settings, window_seconds: buffer)
+    monkeypatch.setattr(
+        barge_in_module.special_phrases.profile_service_layer,
+        "get_fact",
+        lambda uow, key: stop_word,
+    )
     monitor = BargeInMonitor(VoiceSettings())
 
     results = iter(transcriptions)
@@ -74,13 +85,15 @@ def test_stop_phrase_sets_interrupted_and_stop_event(monkeypatch) -> None:
 
 
 def test_fuzzy_stop_phrase_variant_is_still_recognized(monkeypatch) -> None:
-    """is_stop_command is fuzzy (core/voice/intent.py), not exact — a
-    slightly-off transcription of a real stop word must still interrupt."""
+    """special_phrases.check is fuzzy (core/voice/phrase_matching.py), not
+    exact — a slightly-off transcription of the configured stop word, or
+    one buried among a couple of extra words, must still interrupt."""
     buffer = _FakeBuffer([_non_empty_window()])
     monitor = _monitor(
         monkeypatch,
         buffer,
         [TranscriptionResult(text="хватит уже", detected_language="ru", language_probability=0.9)],
+        stop_word="хватит",
     )
 
     stop_event = threading.Event()
@@ -143,6 +156,86 @@ def test_transcription_failure_is_swallowed_and_does_not_crash(monkeypatch) -> N
     assert interrupted.is_set()  # recovered and caught the stop phrase on the next window
 
 
+def test_no_configured_stop_word_means_nothing_can_interrupt(monkeypatch) -> None:
+    """Regression: barge-in used to always recognize a fixed built-in word
+    list (STOP_PHRASES/is_stop_command) regardless of profile configuration.
+    Now it checks only the user's own configured stop word (see
+    core/voice/special_phrases.py) - with none set, even a bare "стоп" must
+    not interrupt."""
+    buffer = _FakeBuffer([_non_empty_window(), _non_empty_window()])
+    monitor = _monitor(
+        monkeypatch,
+        buffer,
+        [
+            TranscriptionResult(text="стоп", detected_language="ru", language_probability=0.95),
+            TranscriptionResult(text="", detected_language="ru", language_probability=0.9),
+        ],
+        stop_word=None,
+    )
+
+    stop_event = threading.Event()
+    interrupted = threading.Event()
+
+    def stop_soon() -> None:
+        stop_event.set()
+
+    timer = threading.Timer(0.05, stop_soon)
+    timer.start()
+    try:
+        monitor.run("ru", stop_event, interrupted)
+    finally:
+        timer.cancel()
+
+    assert not interrupted.is_set()
+
+
+def test_context_defaults_to_speaking_but_forwards_a_custom_one(monkeypatch) -> None:
+    # BargeInMonitor is reused to bracket the user's own command recording
+    # too (context="recording" — see core/voice/pipeline.py's
+    # _record_command_audio), not just TTS playback ("speaking", the
+    # default). special_phrases.check must see whichever one was passed.
+    buffer = _FakeBuffer([_non_empty_window()])
+    monitor = _monitor(
+        monkeypatch,
+        buffer,
+        [TranscriptionResult(text="стоп", detected_language="ru", language_probability=0.9)],
+    )
+
+    seen_contexts: list[str] = []
+    real_check = barge_in_module.special_phrases.check
+
+    def spying_check(text, context, settings):
+        seen_contexts.append(context)
+        return real_check(text, context, settings)
+
+    monkeypatch.setattr(barge_in_module.special_phrases, "check", spying_check)
+
+    stop_event = threading.Event()
+    interrupted = threading.Event()
+    monitor.run("ru", stop_event, interrupted, context="recording")
+
+    assert interrupted.is_set()
+    assert seen_contexts == ["recording"]
+
+
+def test_custom_stop_word_not_in_the_old_fixed_list_still_interrupts(monkeypatch) -> None:
+    """The flip side of the above: a stop word the user picked themselves,
+    which was never one of the old fixed STOP_PHRASES entries, must work."""
+    buffer = _FakeBuffer([_non_empty_window()])
+    monitor = _monitor(
+        monkeypatch,
+        buffer,
+        [TranscriptionResult(text="орел", detected_language="ru", language_probability=0.9)],
+        stop_word="орел",
+    )
+
+    stop_event = threading.Event()
+    interrupted = threading.Event()
+    monitor.run("ru", stop_event, interrupted)
+
+    assert interrupted.is_set()
+
+
 def test_mic_unavailable_degrades_to_no_interruption_instead_of_raising(monkeypatch) -> None:
     buffer = _FakeBuffer([], start_error=RuntimeError("no audio backend"))
     monitor = _monitor(monkeypatch, buffer, [])
@@ -172,10 +265,11 @@ def test_response_language_override_outside_supported_languages_is_rejected_befo
     """Documents WHY BargeInMonitor never needs to defend against an
     unrecognized `language` itself: core/voice/config.py's
     VoiceSettings.__post_init__ already clears an invalid
-    response_language_override before it can ever reach is_stop_command's
-    STOP_PHRASES.get(language, set()) (which has no fallback — an
-    unrecognized language means the stop phrase can never match at all,
-    silently). See tests/core/voice/test_config.py for that guarantee
-    directly."""
+    response_language_override before it can ever reach
+    self._stt.transcribe(window, language) — special_phrases.check's own
+    matching is language-agnostic (a plain text fuzzy match against the
+    configured stop word), so only the transcription call itself would be
+    at risk from a bad language code. See tests/core/voice/test_config.py
+    for that guarantee directly."""
     settings = VoiceSettings(response_language_override="not-a-real-language")
     assert settings.response_language_override is None

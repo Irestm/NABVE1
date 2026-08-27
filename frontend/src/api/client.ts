@@ -34,6 +34,7 @@ import type {
   TelegramContact,
   TelegramCredentialsStatus,
   TelegramLoginCodeResult,
+  VoiceLoopSignalResult,
   VoiceOptionsResponse,
   VoiceQueryResponse,
   YouTubeStatus,
@@ -133,6 +134,17 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getStatus(): Promise<StatusResponse> {
   return requestJson<StatusResponse>("/api/status");
+}
+
+// Both drive the same always-on backend voice loop VoiceRecorder.tsx's
+// Electron branch uses instead of a second, browser-side microphone — see
+// core/main.py's /api/voice/trigger and /api/voice/pause docstrings.
+export function triggerVoiceLoop(): Promise<VoiceLoopSignalResult> {
+  return requestJson<VoiceLoopSignalResult>("/api/voice/trigger", { method: "POST" });
+}
+
+export function pauseVoiceLoop(): Promise<VoiceLoopSignalResult> {
+  return requestJson<VoiceLoopSignalResult>("/api/voice/pause", { method: "POST" });
 }
 
 export function listCommands(): Promise<CommandDescriptor[]> {

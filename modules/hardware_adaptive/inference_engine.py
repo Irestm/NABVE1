@@ -1,43 +1,52 @@
 from __future__ import annotations
 
+import json
 import threading
 from collections.abc import Iterator
 
-from core.config import DATA_DIR
+import httpx
+
 from core.logger import get_logger
 from modules.ai_bridge.system_prompt import apply_system_prompt
 from modules.hardware_adaptive.model_tiers import MODEL_TIERS, TIER_NONE
 
 logger = get_logger(__name__)
 
-MODELS_DIR = DATA_DIR / "models"
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
-
-# GGUF filenames expected under MODELS_DIR for each tier. The weights
-# themselves aren't part of the repo and must be downloaded separately (e.g.
-# from Hugging Face) into that directory before load_model() can succeed.
-_MODEL_FILENAMES: dict[str, str] = {
-    "mid": "qwen2.5-3b-instruct-q4_k_m.gguf",
-    "high": "qwen2.5-7b-instruct-q4_k_m.gguf",
-}
-
+_BASE_URL = "http://127.0.0.1:11434"
+_REQUEST_TIMEOUT_SECONDS = 60.0
+# A first-run model pull is a multi-GB download - generous on purpose, this
+# only ever applies to that one-time request, not the ordinary chat calls
+# below (_REQUEST_TIMEOUT_SECONDS covers those).
+_PULL_TIMEOUT_SECONDS = 1800.0
 _DEFAULT_CONTEXT_SIZE = 4096
 _DEFAULT_MAX_TOKENS = 512
 
 
-class LocalInferenceEngine:
-    """Thin wrapper around llama-cpp-python with full CUDA GPU offload
-    (n_gpu_layers=-1). One instance holds at most one loaded GGUF model,
-    matching the tier picked by modules.hardware_adaptive.model_tiers."""
+class OllamaUnavailableError(RuntimeError):
+    pass
 
-    def __init__(self) -> None:
-        self._llm: object | None = None
+
+class LocalInferenceEngine:
+    """Thin wrapper around a locally-running Ollama server
+    (http://127.0.0.1:11434 by default — see https://ollama.com/download)
+    instead of a raw llama-cpp-python model held in this process's own
+    memory (the previous implementation). Ollama handles GPU offload and
+    model download itself against just the NVIDIA driver — no separate
+    CUDA toolkit compile step, which is what made the old backend fragile
+    to set up in the first place (see AGENT_NOTES.md's entry on this
+    switch). Model state (what's "loaded") now lives in Ollama's own
+    server process, not here — this class only tracks which tag it last
+    asked for."""
+
+    def __init__(self, base_url: str = _BASE_URL) -> None:
+        self._base_url = base_url
+        self._model_name: str | None = None
         self._tier: str | None = None
         self._lock = threading.Lock()
 
     @property
     def is_loaded(self) -> bool:
-        return self._llm is not None
+        return self._model_name is not None
 
     @property
     def tier(self) -> str | None:
@@ -48,74 +57,110 @@ class LocalInferenceEngine:
             raise ValueError(f"Cannot load local model for tier '{tier}'")
 
         with self._lock:
-            if self._llm is not None and self._tier == tier:
+            if self._model_name is not None and self._tier == tier:
                 return
 
+            model_name = MODEL_TIERS[tier].model_name
+
             try:
-                from llama_cpp import Llama
-            except ImportError as exc:
-                raise RuntimeError(
-                    "llama-cpp-python is not installed. Install a CUDA-enabled build, e.g.: "
-                    "CMAKE_ARGS='-DGGML_CUDA=on' pip install llama-cpp-python"
+                response = httpx.get(f"{self._base_url}/api/tags", timeout=_REQUEST_TIMEOUT_SECONDS)
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise OllamaUnavailableError(
+                    f"Ollama is not reachable at {self._base_url}. Install and start it first: "
+                    "https://ollama.com/download"
                 ) from exc
 
-            model_path = MODELS_DIR / _MODEL_FILENAMES[tier]
-            if not model_path.exists():
-                raise FileNotFoundError(
-                    f"Model file for tier '{tier}' not found at {model_path}. "
-                    "Download the matching GGUF file into data/models/ first."
-                )
+            installed = {entry.get("name") for entry in response.json().get("models", [])}
+            if model_name not in installed:
+                logger.info("Pulling Ollama model '%s' (first run only, may take a while)", model_name)
+                self._pull(model_name)
 
-            logger.info("Loading local model tier='%s' from %s (CUDA GPU offload)", tier, model_path)
-            self._llm = Llama(
-                model_path=str(model_path),
-                n_ctx=_DEFAULT_CONTEXT_SIZE,
-                n_gpu_layers=-1,
-                verbose=False,
-            )
+            self._model_name = model_name
             self._tier = tier
 
-    def generate(self, prompt: str, *, max_tokens: int = _DEFAULT_MAX_TOKENS) -> str:
-        wrapped_prompt = apply_system_prompt(prompt)
+    def _pull(self, model_name: str) -> None:
+        with httpx.Client(timeout=_PULL_TIMEOUT_SECONDS) as client:
+            with client.stream("POST", f"{self._base_url}/api/pull", json={"name": model_name}) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    payload = json.loads(line)
+                    error = payload.get("error")
+                    if error:
+                        raise OllamaUnavailableError(f"Failed to pull Ollama model '{model_name}': {error}")
+
+    def _require_model_name(self) -> str:
         with self._lock:
-            # Checked inside the lock, not before it: unload() takes the
-            # same lock, so checking is_loaded first and calling
-            # create_chat_completion() second (two separate steps) left a
-            # window where unload() could run in between and this would
-            # crash on a None self._llm instead of raising the clean
-            # RuntimeError callers (LocalEngineAdapter) already handle.
-            if self._llm is None:
+            if self._model_name is None:
                 raise RuntimeError("No local model loaded; call load_model(tier) first")
-            response = self._llm.create_chat_completion(  # type: ignore[attr-defined]
-                messages=[{"role": "user", "content": wrapped_prompt}],
-                max_tokens=max_tokens,
-            )
-        return response["choices"][0]["message"]["content"].strip()
+            return self._model_name
+
+    def generate(self, prompt: str, *, max_tokens: int = _DEFAULT_MAX_TOKENS) -> str:
+        model_name = self._require_model_name()
+        wrapped_prompt = apply_system_prompt(prompt)
+        response = httpx.post(
+            f"{self._base_url}/api/chat",
+            json={
+                "model": model_name,
+                "messages": [{"role": "user", "content": wrapped_prompt}],
+                "stream": False,
+                "options": {"num_ctx": _DEFAULT_CONTEXT_SIZE, "num_predict": max_tokens},
+            },
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        return response.json()["message"]["content"].strip()
 
     def generate_stream(self, prompt: str, *, max_tokens: int = _DEFAULT_MAX_TOKENS) -> Iterator[str]:
-        """Same as generate(), but yields text deltas as llama.cpp produces
-        them instead of waiting for the full completion — lets the caller
-        start speaking the first sentence long before the model has finished
-        generating the rest of the reply. Holds the engine lock for the
-        entire generation, same as generate(): only one generation (streamed
-        or not) may run against this single loaded model at a time."""
+        """Same as generate(), but yields text deltas as Ollama produces
+        them (newline-delimited JSON over a chunked HTTP response) instead
+        of waiting for the full completion — lets the caller start speaking
+        the first sentence long before the model has finished generating
+        the rest of the reply."""
+        model_name = self._require_model_name()
         wrapped_prompt = apply_system_prompt(prompt)
-        with self._lock:
-            # See the comment in generate() above — same check-inside-lock
-            # reasoning applies here.
-            if self._llm is None:
-                raise RuntimeError("No local model loaded; call load_model(tier) first")
-            stream = self._llm.create_chat_completion(  # type: ignore[attr-defined]
-                messages=[{"role": "user", "content": wrapped_prompt}],
-                max_tokens=max_tokens,
-                stream=True,
-            )
-            for chunk in stream:
-                delta = chunk["choices"][0]["delta"].get("content")
-                if delta:
-                    yield delta
+        with httpx.Client(timeout=_REQUEST_TIMEOUT_SECONDS) as client:
+            with client.stream(
+                "POST",
+                f"{self._base_url}/api/chat",
+                json={
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": wrapped_prompt}],
+                    "stream": True,
+                    "options": {"num_ctx": _DEFAULT_CONTEXT_SIZE, "num_predict": max_tokens},
+                },
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    payload = json.loads(line)
+                    delta = payload.get("message", {}).get("content")
+                    if delta:
+                        yield delta
+                    if payload.get("done"):
+                        break
 
     def unload(self) -> None:
         with self._lock:
-            self._llm = None
+            model_name = self._model_name
+            self._model_name = None
             self._tier = None
+        if model_name is None:
+            return
+        # This class never held the model in its own memory to begin with
+        # (Ollama's server does) — "unload" here means asking that server
+        # to evict it from VRAM right away (keep_alive: 0) instead of
+        # waiting out its own default keep-alive window, mirroring the old
+        # backend's immediate-unload behavior. Best-effort: if this request
+        # fails, Ollama's own keep-alive timeout still frees it eventually.
+        try:
+            httpx.post(
+                f"{self._base_url}/api/generate",
+                json={"model": model_name, "keep_alive": 0},
+                timeout=_REQUEST_TIMEOUT_SECONDS,
+            )
+        except httpx.HTTPError:
+            logger.debug("Failed to signal Ollama to unload '%s'", model_name, exc_info=True)

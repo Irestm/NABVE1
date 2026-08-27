@@ -7,8 +7,12 @@ def test_short_ordinary_question_is_not_complex() -> None:
     assert not is_complex_query("как меня зовут")
 
 
-def test_text_over_length_threshold_is_complex() -> None:
-    assert is_complex_query("а" * 241)
+def test_long_ordinary_text_without_a_marker_is_not_complex() -> None:
+    # Regression: a length threshold used to flag any sufficiently long text
+    # as complex regardless of content, which routed ordinary long-but-not-
+    # live-data questions away from the user's own configured API key for
+    # no good reason. Marker presence is now the only signal.
+    assert not is_complex_query("а" * 500)
 
 
 def test_web_search_marker_is_complex() -> None:

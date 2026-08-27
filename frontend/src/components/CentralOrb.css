@@ -62,6 +62,15 @@
   --glow-strength: 0.85;
 }
 
+/* First-run "getting acquainted" interview (modules/user_profile/
+   onboarding.py) — reuses the listening glow since it's the same "actively
+   engaged with you" feel, just a distinct enough state to need its own
+   rule (see AssistantState.ONBOARDING). */
+.central-orb--onboarding {
+  --glow: var(--glow-listening);
+  --glow-strength: 0.75;
+}
+
 .central-orb__halo {
   position: absolute;
   inset: -30px;
@@ -159,6 +168,13 @@
   overflow: hidden;
   box-shadow: 0 0 24px color-mix(in srgb, var(--glow) 70%, transparent);
   transition: box-shadow var(--transition-med), transform var(--transition-med);
+  /* Baseline "alive" pulse for every state — idle/processing/thinking/error
+     previously had no pulse at all on this element (only the constant
+     background core-spin rotation below), which read as frozen/static.
+     The more specific .central-orb--X .central-orb__core rules further
+     down (speaking/listening/paused/background_listening) still win via
+     specificity, so this only fills in the states that had nothing. */
+  animation: orb-pulse 6s ease-in-out infinite;
 }
 
 /* Separate element for the rotation — .central-orb__core itself already
@@ -254,13 +270,21 @@
   }
 }
 
+/* var(--amplitude) is driven every animation frame by useAmplitude.ts (a
+   real Web Audio analyser reading the mic while listening/onboarding, a
+   synthetic one while speaking/thinking/processing, a flat per-state
+   baseline otherwise) — folding it into the peak scale here is what makes
+   the core visibly react to actual loudness instead of pulsing at a fixed
+   rate regardless of sound. The 0.14 fallback matches useAmplitude's own
+   idle baseline, so states where the JS hook hasn't run yet still land on
+   roughly the original fixed 1.12 peak (1.06 + 0.14 * 0.35 ≈ 1.109). */
 @keyframes orb-pulse {
   0%,
   100% {
     transform: scale(1);
   }
   50% {
-    transform: scale(1.12);
+    transform: scale(calc(1.06 + var(--amplitude, 0.14) * 0.35));
   }
 }
 

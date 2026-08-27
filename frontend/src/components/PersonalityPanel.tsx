@@ -11,9 +11,10 @@ import "./PersonalityPanel.css";
 // "Профиль" tab; ASSISTANT_VOLUME_KEY moved to components/
 // VoiceSettingsPanel.tsx as of the 2026-08-24 redesign — "громкость" now
 // groups with "голос" in Settings, not with the personality-trait fields
-// this panel owns; стоп-слово/активационная фраза/фразы трея moved to
-// components/CustomCommandsPanel.tsx's "Системные команды" section, so
-// they're no longer read/written here.)
+// this panel owns; активационная фраза/фразы трея moved to components/
+// CustomCommandsPanel.tsx's "Системные команды" section, and стоп-слово to
+// components/SettingsPanel.tsx's "Профиль" tab — none of them are
+// read/written here.)
 const COMMUNICATION_STYLE_KEY = "communication_style";
 const BREATH_EFFECT_KEY = "breath_effect_enabled";
 const DELAY_EFFECT_ENABLED_KEY = "delay_effect_enabled";

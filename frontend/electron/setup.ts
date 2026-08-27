@@ -9,7 +9,7 @@ import path from "node:path";
 // gain a new entry — an existing install's persisted setup_state.json will
 // then be considered stale and runSetup() runs again, instead of the app
 // silently starting with dependencies missing forever.
-const SETUP_SCHEMA_VERSION = 1;
+const SETUP_SCHEMA_VERSION = 3;
 
 const PYTHON_MIN_MAJOR = 3;
 const PYTHON_MIN_MINOR = 12;
@@ -31,12 +31,25 @@ const LINUX_APT_PACKAGES = [
   "python3-dev",
   "wmctrl",
   "xdotool",
+  // Real hardware backlight control for set_brightness/change_brightness/
+  // get_brightness (core/os_adapter/linux.py). The apt package ships a udev
+  // rule granting the "video" group write access to /sys/class/backlight;
+  // installLinuxSystemPackages() adds the user to that group in the same
+  // pkexec call (takes effect on next login). Without brightnessctl, or
+  // before that first re-login, the adapter falls back to `xrandr
+  // --brightness` — a software gamma dim only (backlight power unchanged).
+  "brightnessctl",
   "libnotify-bin",
   "libreoffice",
   "ffmpeg",
   "tesseract-ocr",
   "tesseract-ocr-rus",
   "stockfish",
+  // sounddevice's Linux wheel doesn't bundle PortAudio the way its Windows
+  // wheel does — without this, core/voice/audio_io.py's require_sounddevice()
+  // raises "PortAudio library not found" and voice input/wake-word never
+  // works at all on Linux.
+  "libportaudio2",
   // Hidden display for modules/ai_bridge/virtual_display.py's headed-but-
   // invisible browser automation — without it, ai_bridge silently falls
   // back to a real, visible browser window for ordinary questions instead
@@ -48,11 +61,27 @@ const LINUX_APT_PACKAGES = [
 // uses pygetwindow (pip) and native toast notifications instead (see
 // core/os_adapter/windows.py) — so this list is shorter than the apt one.
 // IDs verified against the public winget-pkgs manifests.
+//
+// Ollama.Ollama: the local-model backend (see modules/hardware_adaptive/
+// inference_engine.py) — a real installer (systemd-equivalent Windows
+// service), not a pip package, so it belongs in this list like the others,
+// not requirements.txt. Windows-only for now: unlike the rest of this list,
+// Ollama has no apt package at all on Linux, only its own curl|sh installer
+// script — running an arbitrary remote script via pkexec during automated
+// setup is a materially different trust story than installing pinned,
+// versioned apt packages, so Linux users install it by hand instead (see
+// INSTALL.md's own section on this). Same as every other entry here: purely
+// optional, non-fatal if it fails to install — modules/hardware_adaptive
+// already degrades to ai_bridge with no local model either way, and this
+// doesn't pre-pull an actual model (a multi-GB download) regardless of
+// whether the machine's hardware could even use one — that still happens
+// lazily on first real use, see LocalInferenceEngine.load_model.
 const WINGET_PACKAGES = [
   "TheDocumentFoundation.LibreOffice",
   "Gyan.FFmpeg",
   "UB-Mannheim.TesseractOCR",
   "Stockfish.Stockfish",
+  "Ollama.Ollama",
 ];
 
 // Python is installed straight from python.org (see installWindowsPython
@@ -297,7 +326,22 @@ async function installLinuxSystemPackages(): Promise<void> {
   // idempotent, so already-present packages (including python3 itself on
   // most systems) are just skipped quickly rather than needing a separate
   // "is it missing" check first.
-  await runCommand("apt-get install", "pkexec", ["apt-get", "install", "-y", ...LINUX_APT_PACKAGES], {
+  //
+  // The same elevated shell also adds the desktop user to the "video" group:
+  // the brightnessctl package's udev rule grants that group write access to
+  // /sys/class/backlight, and on modern Ubuntu the first user is NOT in it by
+  // default, so real backlight control (core/os_adapter/linux.py) would
+  // otherwise need a manual `usermod` + re-login from every such user. Chained
+  // with `&&` so an apt-get failure still rejects; the usermod's own result is
+  // swallowed (`|| true`) because it's optional — without it the adapter just
+  // falls back to xrandr's software gamma. Group membership only takes effect
+  // on the user's next login (see INSTALL.md).
+  const user = process.env.USER ?? "";
+  const addToVideoGroup = /^[a-z_][a-z0-9_-]*$/.test(user)
+    ? ` && { usermod -aG video ${user} || true; }`
+    : "";
+  const script = `apt-get install -y ${LINUX_APT_PACKAGES.join(" ")}${addToVideoGroup}`;
+  await runCommand("apt-get install", "pkexec", ["sh", "-c", script], {
     env: { ...process.env, DEBIAN_FRONTEND: "noninteractive" },
   });
 }

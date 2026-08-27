@@ -88,6 +88,28 @@ def test_recurses_into_classify_via_ai_bridge_on_captured_follow_up(monkeypatch)
     assert result == (None, False)
 
 
+def test_stop_word_during_follow_up_pauses_instead_of_recursing(monkeypatch) -> None:
+    # Regression, found via live testing: this follow-up window used to have
+    # no stop-word check at all, so saying the stop word right after a
+    # spoken answer was sent straight into another AI round-trip as an
+    # ordinary follow-up question (candidate_chain/ai_router) instead of
+    # pausing - it read as the stop word randomly "not working"/hanging.
+    loop = _make_loop()
+    monkeypatch.setattr(
+        pipeline_module.audio_io, "record_until_silence", lambda *a, **k: np.ones(10, dtype=np.float32)
+    )
+    monkeypatch.setattr(pipeline_module.profile_service_layer, "get_fact", lambda uow, key: "стоп")
+    called = []
+    monkeypatch.setattr(loop, "_classify_via_ai_bridge", lambda *a, **k: called.append(1))
+
+    stt = _FakeSTT(["стоп"])
+    result = loop._maybe_continue_free_text(stt, tts=None, response_language="ru")
+
+    assert result == (None, False)
+    assert called == []  # never sent to the AI classifier
+    assert loop._paused_event.is_set()
+
+
 def test_empty_transcription_does_not_recurse(monkeypatch) -> None:
     loop = _make_loop()
     monkeypatch.setattr(
@@ -109,7 +131,7 @@ def test_empty_transcription_does_not_recurse(monkeypatch) -> None:
 def test_opens_follow_up_after_uninterrupted_direct_answer(monkeypatch) -> None:
     loop = _make_loop()
 
-    async def fake_resolve_free_text(text, commands, *, on_stream_chunk=None):
+    async def fake_resolve_free_text(text, commands, *, on_stream_chunk=None, on_progress=None, context_hint=None):
         return None, "Ответ от облака."
 
     monkeypatch.setattr(pipeline_module.ai_router, "resolve_free_text", fake_resolve_free_text)
@@ -131,7 +153,7 @@ def test_opens_follow_up_after_uninterrupted_direct_answer(monkeypatch) -> None:
 def test_skips_follow_up_when_answer_was_interrupted(monkeypatch) -> None:
     loop = _make_loop()
 
-    async def fake_resolve_free_text(text, commands, *, on_stream_chunk=None):
+    async def fake_resolve_free_text(text, commands, *, on_stream_chunk=None, on_progress=None, context_hint=None):
         return None, "Ответ от облака."
 
     monkeypatch.setattr(pipeline_module.ai_router, "resolve_free_text", fake_resolve_free_text)
@@ -153,7 +175,7 @@ def test_skips_follow_up_when_answer_was_interrupted(monkeypatch) -> None:
 def test_skips_follow_up_when_resolved_to_a_dispatchable_command(monkeypatch) -> None:
     loop = _make_loop()
 
-    async def fake_resolve_free_text(text, commands, *, on_stream_chunk=None):
+    async def fake_resolve_free_text(text, commands, *, on_stream_chunk=None, on_progress=None, context_hint=None):
         return Command(name="open_app", params={"target": "steam"}), None
 
     monkeypatch.setattr(pipeline_module.ai_router, "resolve_free_text", fake_resolve_free_text)
@@ -171,10 +193,36 @@ def test_skips_follow_up_when_resolved_to_a_dispatchable_command(monkeypatch) ->
     assert follow_up_calls == []
 
 
+def test_ai_bridge_progress_updates_state_detail_via_on_progress(monkeypatch) -> None:
+    from core.models import AssistantState
+    from core.state import state_manager
+
+    loop = _make_loop()
+    seen_details: list[str] = []
+
+    async def fake_resolve_free_text(text, commands, *, on_stream_chunk=None, on_progress=None, context_hint=None):
+        on_progress("local")
+        seen_details.append(state_manager.detail)
+        on_progress("ai_bridge")
+        seen_details.append(state_manager.detail)
+        return None, "Ответ от облака."
+
+    monkeypatch.setattr(pipeline_module.ai_router, "resolve_free_text", fake_resolve_free_text)
+    monkeypatch.setattr(loop, "_speak_safely", lambda tts, text, language: False)
+    monkeypatch.setattr(
+        loop, "_maybe_continue_free_text", lambda command_stt, tts, language: (None, False)
+    )
+
+    loop._classify_via_ai_bridge("вопрос", _FakeSTT([]), tts=None, response_language="ru")
+
+    assert seen_details == ["Пробую локальную модель", "Локально не получилось, открываю браузер"]
+    assert state_manager.state == AssistantState.SPEAKING  # set after resolve_free_text returns
+
+
 def test_skips_follow_up_when_nothing_usable_came_back(monkeypatch) -> None:
     loop = _make_loop()
 
-    async def fake_resolve_free_text(text, commands, *, on_stream_chunk=None):
+    async def fake_resolve_free_text(text, commands, *, on_stream_chunk=None, on_progress=None, context_hint=None):
         return None, None
 
     monkeypatch.setattr(pipeline_module.ai_router, "resolve_free_text", fake_resolve_free_text)

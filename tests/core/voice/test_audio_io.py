@@ -104,6 +104,39 @@ def test_stop_event_interrupts_recording(monkeypatch: pytest.MonkeyPatch) -> Non
     assert result.shape[0] == 0
 
 
+def test_barge_in_stop_event_interrupts_recording_independently_of_stop_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Distinct from stop_event (the whole assistant shutting down) - this is
+    # the per-call signal a concurrent BargeInMonitor sets on hearing the
+    # user's own stop word mid-recording (see
+    # core/voice/pipeline.py._record_command_audio). Must cut the recording
+    # short even though stop_event itself is never set.
+    fake_sd = _FakeSoundDevice([_speech_frame()] * 50)
+    monkeypatch.setattr(audio_io, "require_sounddevice", lambda: fake_sd)
+
+    barge_in_stop_event = threading.Event()
+    barge_in_stop_event.set()
+
+    result = audio_io.record_until_silence(
+        _settings(), threading.Event(), barge_in_stop_event=barge_in_stop_event
+    )
+
+    assert result.shape[0] == 0
+
+
+def test_barge_in_stop_event_none_does_not_affect_ordinary_recording(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chunks = [_speech_frame()] * 3 + [_silence_frame()] * 5
+    fake_sd = _FakeSoundDevice(chunks)
+    monkeypatch.setattr(audio_io, "require_sounddevice", lambda: fake_sd)
+
+    result = audio_io.record_until_silence(_settings(), threading.Event(), barge_in_stop_event=None)
+
+    assert result.shape[0] > 0
+
+
 def test_onset_timeout_gives_up_when_no_speech_ever_starts(monkeypatch: pytest.MonkeyPatch) -> None:
     chunks = [_silence_frame()] * 20  # never any speech at all
     fake_sd = _FakeSoundDevice(chunks)

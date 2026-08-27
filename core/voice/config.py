@@ -106,9 +106,9 @@ class VoiceSettings:
         # responses.py, core/voice/tts.py) degrade gracefully to English/
         # fallback_language for a key they don't recognize, but
         # core/voice/intent.py's STOP_PHRASES/AFFIRMATIVE_PHRASES (used by
-        # is_stop_command/is_affirmative — barge-in "стоп" mid-reply and
-        # yes/no confirmation of dangerous commands) do a plain dict.get()
-        # with an EMPTY set as the fallback: an override value outside
+        # is_stop_command/is_affirmative — exiting OS-agent mode and yes/no
+        # confirmation of dangerous commands) do a plain dict.get() with an
+        # EMPTY set as the fallback: an override value outside
         # supported_languages (a typo, "RU" uppercase, a locale-style
         # "ru-RU", ...) would silently make both of those permanently
         # unrecognizable for the whole session, with nothing in the logs

@@ -14,8 +14,8 @@ from enum import Enum
 ONBOARDING_COMPLETE_KEY = "__onboarding_complete__"
 ASSISTANT_NAME_KEY = "assistant_name"
 COMMUNICATION_STYLE_KEY = "communication_style"
-# The phrase that pauses/resumes the voice loop — see
-# modules/user_profile/onboarding.py._ask_stop_word and
+# The phrase that pauses/resumes the voice loop — set via
+# frontend/src/components/SettingsPanel.tsx's Профиль tab, read by
 # core/voice/pipeline.py._wait_for_wake_or_pause.
 STOP_WORD_KEY = "stop_word"
 # Custom activation phrase, added to core/voice/wake_word.py's
@@ -54,6 +54,13 @@ ASSISTANT_VOLUME_KEY = "assistant_volume"
 # core/voice/fact_extraction.py's rule-based extractor — see that function
 # for why extraction is duplicated here instead of only on spoken utterances.
 ABOUT_ME_KEY = "about_me"
+# Optional explicit home-city override for modules/weather, checked before
+# its own IP-geolocation fallback (see modules/weather/service_layer.py) -
+# not surfaced in a dedicated Settings field yet, but settable right now
+# through the same generic profile_get/profile_set commands STOP_WORD_KEY
+# uses (e.g. "запомни, город Одесса" via ABOUT_ME_KEY's own extractor, or
+# profile_set directly).
+CITY_KEY = "city"
 # "male" | "female" — which gendered form of address (сэр/мэм) the assistant
 # uses. Currently drives core/voice/confirmation_phrase.py's
 # get_confirmation_phrase() only. See modules/user_profile/handlers.py's

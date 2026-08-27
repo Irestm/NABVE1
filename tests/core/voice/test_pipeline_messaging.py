@@ -174,7 +174,7 @@ def test_resolve_target_multiple_pending_asks_who_and_matches_answer(tmp_path, m
     loop = _make_loop()
     monkeypatch.setattr(loop, "_speak_safely", lambda tts, text, language: False)
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
 
     target, interrupted = loop._resolve_pending_message_target(
@@ -216,7 +216,7 @@ def test_resolve_messaging_reply_full_flow_sends_and_marks_replied(tmp_path, mon
 
     monkeypatch.setattr(loop, "_speak_safely", lambda tts, text, language: False)
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
 
     command = Command(name="messaging_reply", params={"raw_target": ""})
@@ -273,7 +273,7 @@ def test_resolve_messaging_reply_declines_when_answer_is_negative(tmp_path, monk
 
     monkeypatch.setattr(loop, "_speak_safely", lambda tts, text, language: False)
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
 
     command = Command(name="messaging_reply", params={"raw_target": ""})
@@ -324,7 +324,7 @@ def test_resolve_messaging_snooze_asks_for_duration_when_missing(tmp_path, monke
     loop = _make_loop()
     monkeypatch.setattr(loop, "_speak_safely", lambda tts, text, language: False)
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
 
     command = Command(name="messaging_snooze", params={"raw_text": ""})
@@ -345,7 +345,7 @@ def test_resolve_messaging_snooze_gives_up_when_duration_never_parses(tmp_path, 
     loop = _make_loop()
     monkeypatch.setattr(loop, "_speak_safely", lambda tts, text, language: False)
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
 
     command = Command(name="messaging_snooze", params={"raw_text": ""})
@@ -370,7 +370,7 @@ def test_resolve_edit_pending_message_asks_for_instruction(tmp_path, monkeypatch
     loop = _make_loop()
     monkeypatch.setattr(loop, "_speak_safely", lambda tts, text, language: False)
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
 
     command = Command(name="edit_pending_message", params={"raw_target": "ira"})
@@ -393,7 +393,7 @@ def test_resolve_edit_pending_message_gives_up_on_an_empty_instruction(tmp_path,
     loop = _make_loop()
     monkeypatch.setattr(loop, "_speak_safely", lambda tts, text, language: False)
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
 
     command = Command(name="edit_pending_message", params={"raw_target": "ira"})
@@ -440,7 +440,7 @@ def test_handle_command_falls_through_to_ai_when_nothing_is_pending(tmp_path, mo
     loop = VoiceAssistantLoop(dispatcher)
 
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
     monkeypatch.setattr(loop, "_learn_facts", lambda text, language: None)
     # Isolates this test from whichever plugins happen to be registered in
@@ -494,7 +494,7 @@ def test_handle_command_still_uses_messaging_flow_when_something_is_pending(tmp_
     loop = VoiceAssistantLoop(dispatcher)
 
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
     monkeypatch.setattr(loop, "_learn_facts", lambda text, language: None)
 

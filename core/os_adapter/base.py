@@ -18,6 +18,7 @@ from core.config import LOGS_DIR
 _AUDIT_LOG_PATH = LOGS_DIR / "audit_privileged_ops.log"
 
 
+
 def log_privileged_action(
     action: str,
     *,
@@ -129,6 +130,23 @@ class OSAdapter(ABC):
     @abstractmethod
     def toggle_mute(self) -> bool:
         """Returns the new muted state (True = now muted)."""
+        raise NotImplementedError
+
+    # --- brightness ---
+
+    @abstractmethod
+    def set_brightness(self, percent: int) -> None:
+        """Sets the primary display's brightness to an exact level. Callers
+        pass 0-100; implementations clamp to a safe floor above 0 so a voice
+        command can never leave the user with an unrecoverable black screen."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def change_brightness(self, delta_percent: int) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_brightness(self) -> int:
         raise NotImplementedError
 
     # --- windows / tabs ---

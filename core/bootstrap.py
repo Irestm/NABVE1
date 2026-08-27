@@ -55,6 +55,7 @@ from modules.timer.notification_adapter import send_desktop_notification as send
 from modules.ui_automation import register_commands as register_ui_automation_commands
 from modules.ui_control import register_commands as register_ui_control_commands
 from modules.user_profile import register_commands as register_user_profile_commands
+from modules.weather import register_commands as register_weather_commands
 from modules.wordpress_bridge import register_commands as register_wordpress_bridge_commands
 from modules.youtube_control import register_commands as register_youtube_control_commands
 
@@ -127,6 +128,7 @@ def compose(bus: MessageBus = message_bus) -> Composed:
     register_crm_transcribe_commands(dispatcher)
     register_ai_bridge_commands(dispatcher)
     register_search_commands(dispatcher)
+    register_weather_commands(dispatcher)
     register_calendar_commands(dispatcher)
     register_cmd_executor_commands(dispatcher)
     register_code_analysis_commands(dispatcher)

@@ -16,12 +16,12 @@ import type { CustomCommand, CustomCommandActionType } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
 import "./CustomCommandsPanel.css";
 
-// Matches modules/user_profile/domain.py's STOP_WORD_KEY/WAKE_PHRASE_KEY/
+// Matches modules/user_profile/domain.py's WAKE_PHRASE_KEY/
 // CUSTOM_COMMANDS_REQUIRE_CONFIRMATION_KEY and modules/tray_hide/config.py's
 // HIDE_PHRASE_KEY/SHOW_PHRASE_KEY exactly — these fields used to live in
 // components/PersonalityPanel.tsx; moved here as the "Системные команды"
-// section, single source of truth now that this tab exists.
-const STOP_WORD_KEY = "stop_word";
+// section, single source of truth now that this tab exists. Стоп-слово
+// itself moved again, to SettingsPanel.tsx's "Профиль" tab.
 const WAKE_PHRASE_KEY = "wake_phrase";
 const TRAY_HIDE_PHRASE_KEY = "tray_hide_phrase";
 const TRAY_SHOW_PHRASE_KEY = "tray_show_phrase";
@@ -94,8 +94,6 @@ const EMPTY_FORM: FormState = {
 
 export function CustomCommandsPanel(): JSX.Element {
   // --- Системные команды ---------------------------------------------------
-  const [stopWord, setStopWord] = useState("");
-  const [stopWordInput, setStopWordInput] = useState("");
   const [wakePhrase, setWakePhrase] = useState("");
   const [wakePhraseInput, setWakePhraseInput] = useState("");
   const [trayHidePhrase, setTrayHidePhrase] = useState("");
@@ -120,8 +118,7 @@ export function CustomCommandsPanel(): JSX.Element {
 
     async function load(): Promise<void> {
       try {
-        const [word, wake, hide, show, requireConfirm, list] = await Promise.all([
-          getProfileFact(STOP_WORD_KEY),
+        const [wake, hide, show, requireConfirm, list] = await Promise.all([
           getProfileFact(WAKE_PHRASE_KEY),
           getProfileFact(TRAY_HIDE_PHRASE_KEY),
           getProfileFact(TRAY_SHOW_PHRASE_KEY),
@@ -131,8 +128,6 @@ export function CustomCommandsPanel(): JSX.Element {
         if (cancelled) {
           return;
         }
-        setStopWord(word ?? "");
-        setStopWordInput(word ?? "");
         setWakePhrase(wake ?? "");
         setWakePhraseInput(wake ?? "");
         setTrayHidePhrase(hide ?? "");
@@ -157,32 +152,25 @@ export function CustomCommandsPanel(): JSX.Element {
     };
   }, []);
 
-  async function handleSaveStopWord(): Promise<void> {
-    const trimmed = stopWordInput.trim();
-    if (!trimmed) {
-      return;
-    }
-    try {
-      await setProfileFact(STOP_WORD_KEY, trimmed);
-      setStopWord(trimmed);
-    } catch (err) {
-      console.error("Failed to save the stop word:", err);
-      setError("Не удалось сохранить стоп-слово.");
-    }
-  }
-
   async function handleSaveWakePhrase(): Promise<void> {
-    const trimmed = wakePhraseInput.trim();
-    if (!trimmed) {
+    // See handleSaveStopWord's counterpart in SettingsPanel.tsx for why this
+    // normalizes to lowercase on save rather than as the user types — same
+    // reasoning applies to every phrase-matched field (this one, and the
+    // two tray phrases below): core/voice/wake_word.py's matching is
+    // already case-insensitive, this is purely about a consistent stored
+    // value regardless of caps lock/alternating case.
+    const normalized = wakePhraseInput.trim().toLowerCase();
+    if (!normalized) {
       return;
     }
-    if (trimmed.length < MIN_WAKE_PHRASE_LENGTH) {
+    if (normalized.length < MIN_WAKE_PHRASE_LENGTH) {
       setError(`Активационная фраза слишком короткая — минимум ${MIN_WAKE_PHRASE_LENGTH} символа, иначе она будет срабатывать на случайный шум.`);
       return;
     }
     try {
-      await setProfileFact(WAKE_PHRASE_KEY, trimmed);
-      setWakePhrase(trimmed);
+      await setProfileFact(WAKE_PHRASE_KEY, normalized);
+      setWakePhrase(normalized);
+      setWakePhraseInput(normalized);
     } catch (err) {
       console.error("Failed to save the wake phrase:", err);
       setError("Не удалось сохранить активационную фразу.");
@@ -190,13 +178,14 @@ export function CustomCommandsPanel(): JSX.Element {
   }
 
   async function handleSaveTrayHidePhrase(): Promise<void> {
-    const trimmed = trayHidePhraseInput.trim();
-    if (!trimmed) {
+    const normalized = trayHidePhraseInput.trim().toLowerCase();
+    if (!normalized) {
       return;
     }
     try {
-      await setProfileFact(TRAY_HIDE_PHRASE_KEY, trimmed);
-      setTrayHidePhrase(trimmed);
+      await setProfileFact(TRAY_HIDE_PHRASE_KEY, normalized);
+      setTrayHidePhrase(normalized);
+      setTrayHidePhraseInput(normalized);
     } catch (err) {
       console.error("Failed to save the tray-hide phrase:", err);
       setError("Не удалось сохранить фразу скрытия.");
@@ -204,13 +193,14 @@ export function CustomCommandsPanel(): JSX.Element {
   }
 
   async function handleSaveTrayShowPhrase(): Promise<void> {
-    const trimmed = trayShowPhraseInput.trim();
-    if (!trimmed) {
+    const normalized = trayShowPhraseInput.trim().toLowerCase();
+    if (!normalized) {
       return;
     }
     try {
-      await setProfileFact(TRAY_SHOW_PHRASE_KEY, trimmed);
-      setTrayShowPhrase(trimmed);
+      await setProfileFact(TRAY_SHOW_PHRASE_KEY, normalized);
+      setTrayShowPhrase(normalized);
+      setTrayShowPhraseInput(normalized);
     } catch (err) {
       console.error("Failed to save the tray-show phrase:", err);
       setError("Не удалось сохранить фразу возврата.");
@@ -339,24 +329,6 @@ export function CustomCommandsPanel(): JSX.Element {
 
       <div className="custom-commands-panel__group">
         <span className="custom-commands-panel__subheading">Системные команды</span>
-
-        <div className="personality-panel__field">
-          <span className="personality-panel__label">Стоп-слово</span>
-          <div className="row">
-            <input
-              type="text"
-              value={stopWordInput}
-              onChange={(event) => setStopWordInput(event.target.value)}
-              placeholder="Слово для паузы и возобновления"
-            />
-            <button
-              onClick={() => void handleSaveStopWord()}
-              disabled={!stopWordInput.trim() || stopWordInput.trim() === stopWord}
-            >
-              Сохранить
-            </button>
-          </div>
-        </div>
 
         <div className="personality-panel__field">
           <span className="personality-panel__label">Активационная фраза</span>

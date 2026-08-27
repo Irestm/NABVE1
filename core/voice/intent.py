@@ -248,6 +248,80 @@ _MUSIC_QUALIFIER_WORDS: dict[str, set[str]] = {
 def _contains_any_word(normalized: str, words: set[str]) -> bool:
     return any(word in normalized for word in words)
 
+
+# Routed straight to modules/weather (a real forecast API, no LLM involved)
+# instead of falling through to AI-bridge classification — "какая погода в
+# Киеве" used to mean a 10+ second browser-automation round trip (or worse,
+# a made-up answer from a model with no live data access) for a question a
+# dedicated weather API answers in under a second. _WEATHER_WHEN_MARKERS is
+# checked as plain substrings (not word-scanned like the qualifier sets
+# above) since "послезавтра" must be checked before "завтра" - it contains
+# "завтра" as a substring, and dict iteration order is preserved in Python,
+# so listing the longer marker first here is what makes that work.
+_WEATHER_TRIGGER_WORDS: dict[str, set[str]] = {
+    "ru": {"погода", "погоду", "погоде", "погодка"},
+    "uk": {"погода", "погоду", "погоді"},
+    "en": {"weather"},
+}
+
+_WEATHER_WHEN_MARKERS: dict[str, dict[str, str]] = {
+    "ru": {
+        "послезавтра": "day_after_tomorrow", "завтра": "tomorrow",
+        "позавчера": "day_before_yesterday", "вчера": "yesterday", "сегодня": "today",
+    },
+    "uk": {
+        "післязавтра": "day_after_tomorrow", "завтра": "tomorrow",
+        "позавчора": "day_before_yesterday", "вчора": "yesterday", "сьогодні": "today",
+    },
+    "en": {
+        "day after tomorrow": "day_after_tomorrow", "tomorrow": "tomorrow",
+        "day before yesterday": "day_before_yesterday", "yesterday": "yesterday", "today": "today",
+    },
+}
+
+# Arbitrary-day range ("через 5 дней"/"5 дней назад"), on top of the fixed
+# named markers above — modules/weather/domain.py's resolve_day_offset also
+# accepts a plain signed-integer string ("5"/"-5") for exactly this case,
+# clamped to its [-7, 7] window. Checked only when no named marker matched
+# (see interpret() below) since a phrase like "через час" (an hour, not a
+# day) has no business being caught here, and named markers cover the
+# common cases without a number at all. Each pair is (forward, backward) —
+# "через" doesn't itself distinguish direction the way "назад"/"ago" does.
+_WEATHER_RELATIVE_DAYS_PATTERNS: dict[str, tuple[re.Pattern[str], re.Pattern[str]]] = {
+    "ru": (
+        re.compile(r"через\s+(\d+)\s+(?:день|дня|дней)\b"),
+        re.compile(r"(\d+)\s+(?:день|дня|дней)\s+назад\b"),
+    ),
+    "uk": (
+        re.compile(r"через\s+(\d+)\s+дн\w*\b"),
+        re.compile(r"(\d+)\s+дн\w*\s+тому\b"),
+    ),
+    "en": (
+        re.compile(r"\bin\s+(\d+)\s+days?\b"),
+        re.compile(r"(\d+)\s+days?\s+ago\b"),
+    ),
+}
+
+# The preposition that idiomatically precedes a when-marker in "погоду НА
+# завтра"/"weather FOR tomorrow" (as opposed to a bare "погода завтра" with
+# no preposition at all, already handled without this). Only used to strip
+# that whole two-word phrase before city extraction below — see its comment.
+_WEATHER_WHEN_PREPOSITIONS: dict[str, str] = {"ru": "на", "uk": "на", "en": "for"}
+
+# Captures a trailing "в/на <город>", tolerating a when-marker either
+# before or after it ("погода в Киеве завтра" and "погода завтра в Киеве"
+# both work) since the group is anchored to the city phrase itself, not to
+# the sentence's start/end.
+_WEATHER_CITY_PATTERNS: dict[str, re.Pattern[str]] = {
+    # "во" (not just "в") - found live: "погода во Львове" left city empty,
+    # since "во" is the standard Russian elision spelling of "в" before a
+    # word starting with certain consonant clusters (Львов, Владивосток,
+    # ...) and the pattern only ever recognized bare "в".
+    "ru": re.compile(r"(?:^|\s)(?:во|в|на)\s+([а-яё][а-яё\- ]*?)(?:\s+(?:сегодня|завтра|послезавтра))?$"),
+    "uk": re.compile(r"(?:^|\s)(?:в|у|на)\s+([а-яіїєґ][а-яіїєґ\- ]*?)(?:\s+(?:сьогодні|завтра|післязавтра))?$"),
+    "en": re.compile(r"(?:^|\s)in\s+([a-z][a-z\- ]*?)(?:\s+(?:today|tomorrow))?$"),
+}
+
 # The captured group is optional — a bare "перемотай вперёд" with no
 # explicit duration falls back to _YOUTUBE_DEFAULT_SEEK_SECONDS.
 _YOUTUBE_SEEK_FORWARD_PATTERNS: dict[str, re.Pattern[str]] = {
@@ -304,6 +378,232 @@ _SPOTIFY_VOLUME_PATTERNS: dict[str, re.Pattern[str]] = {
     "uk": re.compile(r"^гучність\s+музики(?:\s+на)?\s+(\d+)(?:\s*відсотк\w*)?$"),
     "en": re.compile(r"^(?:set\s+)?(?:the\s+)?music\s+volume(?:\s+to)?\s+(\d+)(?:\s*percent)?$"),
 }
+
+# System (OS-mixer) volume — found live: unlike video/music volume just
+# above, this had NO rule-based pattern at all despite the comment at the
+# top of this section already claiming bare "громче"/"тише"/"поставь
+# громкость N" "already mean system volume" — that was only ever true if
+# something else caught them, and nothing did. Every such phrase, even a
+# clean, common one, fell through interpret() entirely and depended on AI
+# classification (see core/dispatcher.py's set_volume/change_volume) —
+# unreliable for something that should be instant and deterministic, the
+# same reasoning core/voice/weather's rule-based interception was added
+# for earlier.
+#
+# "до N" always means absolute set_volume(N), regardless of which verb
+# comes before it — found live: "увеличь громкость до 100" is phrased with
+# an increase-flavored verb but means "set it to 100", not "raise it by
+# 100" the way "увеличь громкость НА 100" would. Checked first, with every
+# verb accepted, so it isn't shadowed by the narrower increase/decrease
+# patterns below (which only recognize "на N" as relative change).
+# Optional device filler ("на ноутбуке"/"на компьютере") tolerated right
+# after "громкость"/"гучність"/"volume" and before the amount — found live:
+# "поднять громкость на ноутбуке до 10%" fell through this regex entirely
+# (no filler tolerance at all) and landed on the AI fallback instead of the
+# deterministic rule-based path, purely because of three harmless extra
+# words naming the obvious device. Doesn't attempt every possible device
+# word, just the common ones actually heard live.
+_VOLUME_DEVICE_FILLER_RU = r"(?:\s+на\s+(?:ноутбуке|компьютере|ноуте|компе|телефоне))?"
+_VOLUME_DEVICE_FILLER_UK = r"(?:\s+на\s+(?:ноутбуці|комп'ютері|телефоні))?"
+_VOLUME_DEVICE_FILLER_EN = r"(?:\s+on\s+(?:the\s+)?(?:laptop|computer|pc|phone))?"
+
+_SYSTEM_VOLUME_SET_TO_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(
+        r"^(?:(?:поставь|сделай|установи|переключи|увеличь|увеличи|уменьши|убавь|прибавь|подними|повысь|"
+        rf"понизь|сбавь)\s+)?(?:мне\s+)?громкост[ьи]{_VOLUME_DEVICE_FILLER_RU}\s+до\s+(\d+)(?:\s*процент\w*)?$"
+    ),
+    "uk": re.compile(
+        rf"^(?:(?:постав|зроби|встанови|збільш\w*|підніми|зменш\w*|знизь)\s+)?гучність{_VOLUME_DEVICE_FILLER_UK}"
+        rf"\s+до\s+(\d+)(?:\s*відсотк\w*)?$"
+    ),
+    "en": re.compile(
+        rf"^(?:(?:set|increase|raise|decrease|lower)\s+)?(?:the\s+)?(?:system\s+)?volume{_VOLUME_DEVICE_FILLER_EN}"
+        rf"\s+to\s+(\d+)(?:\s*percent)?$"
+    ),
+}
+
+# "на N" (or bare "громкость N") with no increase/decrease verb — also
+# absolute, matching how the already-existing _YOUTUBE_VOLUME_PATTERNS/
+# _SPOTIFY_VOLUME_PATTERNS above treat their own "на N".
+_SYSTEM_VOLUME_SET_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(
+        rf"^(?:(?:поставь|сделай|установи|переключи)\s+)?(?:мне\s+)?громкост[ьи]{_VOLUME_DEVICE_FILLER_RU}"
+        rf"\s+(?:на\s+)?(\d+)(?:\s*процент\w*)?$"
+    ),
+    "uk": re.compile(
+        rf"^(?:(?:постав|зроби|встанови)\s+)?гучність{_VOLUME_DEVICE_FILLER_UK}\s+(?:на\s+)?(\d+)"
+        rf"(?:\s*відсотк\w*)?$"
+    ),
+    "en": re.compile(
+        rf"^(?:set\s+)?(?:the\s+)?(?:system\s+)?volume{_VOLUME_DEVICE_FILLER_EN}(?:\s+to)?\s+(\d+)(?:\s*percent)?$"
+    ),
+}
+
+_SYSTEM_VOLUME_INCREASE_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(
+        rf"^(?:увеличь|увеличи|прибавь|подними|повысь)\s+(?:мне\s+)?громкост[ьи]{_VOLUME_DEVICE_FILLER_RU}"
+        rf"\s+на\s+(\d+)(?:\s*процент\w*)?$"
+    ),
+    "uk": re.compile(
+        rf"^(?:збільш\w*|підніми)\s+гучність{_VOLUME_DEVICE_FILLER_UK}\s+на\s+(\d+)(?:\s*відсотк\w*)?$"
+    ),
+    "en": re.compile(
+        rf"^(?:increase|raise|turn\s+up)\s+(?:the\s+)?volume{_VOLUME_DEVICE_FILLER_EN}\s+by\s+(\d+)(?:\s*percent)?$"
+    ),
+}
+
+_SYSTEM_VOLUME_DECREASE_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(
+        rf"^(?:уменьши|убавь|сбавь|понизь)\s+(?:мне\s+)?громкост[ьи]{_VOLUME_DEVICE_FILLER_RU}"
+        rf"\s+на\s+(\d+)(?:\s*процент\w*)?$"
+    ),
+    "uk": re.compile(
+        rf"^(?:зменш\w*|знизь)\s+гучність{_VOLUME_DEVICE_FILLER_UK}\s+на\s+(\d+)(?:\s*відсотк\w*)?$"
+    ),
+    "en": re.compile(
+        rf"^(?:decrease|lower|turn\s+down)\s+volume{_VOLUME_DEVICE_FILLER_EN}\s+by\s+(\d+)(?:\s*percent)?$"
+    ),
+}
+
+# Screen brightness (core/dispatcher.py's set_brightness/change_brightness) —
+# mirrors the _SYSTEM_VOLUME_*_PATTERNS above one-for-one, just keyed on the
+# "яркость"/"яскравість"/"brightness" noun instead of "громкость". The two
+# families never overlap: the noun word alone disambiguates them. Same
+# device-filler tolerance (the _VOLUME_DEVICE_FILLER_* regexes are generic
+# "на ноутбуке"/"on the laptop" fragments, not volume-specific) and the same
+# "до N = absolute, на N = relative" split. A bare "сделай ярче"/"потемнее"
+# with no number deliberately isn't matched here — it falls through to the
+# embedding classifier's change_brightness with a default step, exactly as
+# "сделай погромче" does for volume.
+_SYSTEM_BRIGHTNESS_SET_TO_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(
+        r"^(?:(?:поставь|сделай|установи|переключи|увеличь|увеличи|уменьши|убавь|прибавь|подними|повысь|"
+        rf"понизь|сбавь)\s+)?(?:мне\s+)?яркост[ьи]{_VOLUME_DEVICE_FILLER_RU}\s+до\s+(\d+)(?:\s*процент\w*)?$"
+    ),
+    "uk": re.compile(
+        rf"^(?:(?:постав|зроби|встанови|збільш\w*|підніми|зменш\w*|знизь)\s+)?яскравіст[ьі]{_VOLUME_DEVICE_FILLER_UK}"
+        rf"\s+до\s+(\d+)(?:\s*відсотк\w*)?$"
+    ),
+    "en": re.compile(
+        rf"^(?:(?:set|increase|raise|decrease|lower|dim)\s+)?(?:the\s+)?(?:screen\s+|display\s+)?brightness"
+        rf"{_VOLUME_DEVICE_FILLER_EN}\s+to\s+(\d+)(?:\s*percent)?$"
+    ),
+}
+
+_SYSTEM_BRIGHTNESS_SET_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(
+        rf"^(?:(?:поставь|сделай|установи|переключи)\s+)?(?:мне\s+)?яркост[ьи]{_VOLUME_DEVICE_FILLER_RU}"
+        rf"\s+(?:на\s+)?(\d+)(?:\s*процент\w*)?$"
+    ),
+    "uk": re.compile(
+        rf"^(?:(?:постав|зроби|встанови)\s+)?яскравіст[ьі]{_VOLUME_DEVICE_FILLER_UK}\s+(?:на\s+)?(\d+)"
+        rf"(?:\s*відсотк\w*)?$"
+    ),
+    "en": re.compile(
+        rf"^(?:set\s+)?(?:the\s+)?(?:screen\s+|display\s+)?brightness{_VOLUME_DEVICE_FILLER_EN}"
+        rf"(?:\s+to)?\s+(\d+)(?:\s*percent)?$"
+    ),
+}
+
+_SYSTEM_BRIGHTNESS_INCREASE_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(
+        rf"^(?:увеличь|увеличи|прибавь|подними|повысь|добавь)\s+(?:мне\s+)?яркост[ьи]{_VOLUME_DEVICE_FILLER_RU}"
+        rf"\s+на\s+(\d+)(?:\s*процент\w*)?$"
+    ),
+    "uk": re.compile(
+        rf"^(?:збільш\w*|підніми|додай)\s+яскравіст[ьі]{_VOLUME_DEVICE_FILLER_UK}\s+на\s+(\d+)(?:\s*відсотк\w*)?$"
+    ),
+    "en": re.compile(
+        rf"^(?:increase|raise|turn\s+up)\s+(?:the\s+)?(?:screen\s+|display\s+)?brightness{_VOLUME_DEVICE_FILLER_EN}"
+        rf"\s+by\s+(\d+)(?:\s*percent)?$"
+    ),
+}
+
+_SYSTEM_BRIGHTNESS_DECREASE_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(
+        rf"^(?:уменьши|убавь|сбавь|понизь|снизь)\s+(?:мне\s+)?яркост[ьи]{_VOLUME_DEVICE_FILLER_RU}"
+        rf"\s+на\s+(\d+)(?:\s*процент\w*)?$"
+    ),
+    "uk": re.compile(
+        rf"^(?:зменш\w*|знизь)\s+яскравіст[ьі]{_VOLUME_DEVICE_FILLER_UK}\s+на\s+(\d+)(?:\s*відсотк\w*)?$"
+    ),
+    "en": re.compile(
+        rf"^(?:decrease|lower|dim|turn\s+down)\s+(?:the\s+)?(?:screen\s+|display\s+)?brightness"
+        rf"{_VOLUME_DEVICE_FILLER_EN}\s+by\s+(\d+)(?:\s*percent)?$"
+    ),
+}
+
+# The assistant's own voice (TTS output) volume, distinct from the
+# OS-mixer volume above — found live: a user asking for "свою"/"личную"
+# громкость had no rule-based path, no dispatcher command to even resolve
+# to (see core/dispatcher.py's set_assistant_volume/change_assistant_volume,
+# added alongside these patterns), and fell through to the AI free-text
+# fallback, which could return a plausible-sounding "sure, done!" answer
+# with nothing actually changed. Mirrors the system-volume patterns above
+# one-for-one, just with a personal-possessive marker word required
+# immediately before "громкость" so the two families never overlap
+# (_SYSTEM_VOLUME_*_PATTERNS only tolerate an optional "мне", never "свою"/
+# "личную"/"твою", so a phrase matching one of these never falls into the
+# other).
+_ASSISTANT_VOLUME_MARKER_RU = r"(?:свою|личную|твою|собственную)"
+_ASSISTANT_VOLUME_MARKER_UK = r"(?:власну|особисту)"
+
+_ASSISTANT_VOLUME_SET_TO_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(
+        rf"^(?:(?:поставь|сделай|установи|переключи|увеличь|увеличи|уменьши|убавь|прибавь|подними|повысь|"
+        rf"понизь|сбавь)\s+)?(?:мне\s+)?{_ASSISTANT_VOLUME_MARKER_RU}\s+громкост[ьи]\s+до\s+(\d+)"
+        rf"(?:\s*процент\w*)?$"
+    ),
+    "uk": re.compile(
+        rf"^(?:(?:постав|зроби|встанови|збільш\w*|підніми|зменш\w*|знизь)\s+)?{_ASSISTANT_VOLUME_MARKER_UK}"
+        rf"\s+гучність\s+до\s+(\d+)(?:\s*відсотк\w*)?$"
+    ),
+    "en": re.compile(
+        r"^(?:(?:set|increase|raise|decrease|lower)\s+)?your(?:\s+own)?\s+volume\s+to\s+(\d+)(?:\s*percent)?$"
+    ),
+}
+
+_ASSISTANT_VOLUME_SET_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(
+        rf"^(?:(?:поставь|сделай|установи|переключи)\s+)?(?:мне\s+)?{_ASSISTANT_VOLUME_MARKER_RU}"
+        rf"\s+громкост[ьи]\s+(?:на\s+)?(\d+)(?:\s*процент\w*)?$"
+    ),
+    "uk": re.compile(
+        rf"^(?:(?:постав|зроби|встанови)\s+)?{_ASSISTANT_VOLUME_MARKER_UK}\s+гучність\s+(?:на\s+)?(\d+)"
+        rf"(?:\s*відсотк\w*)?$"
+    ),
+    "en": re.compile(r"^(?:set\s+)?your(?:\s+own)?\s+volume(?:\s+to)?\s+(\d+)(?:\s*percent)?$"),
+}
+
+_ASSISTANT_VOLUME_INCREASE_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(
+        rf"^(?:увеличь|увеличи|прибавь|подними|повысь)\s+(?:мне\s+)?{_ASSISTANT_VOLUME_MARKER_RU}"
+        rf"\s+громкост[ьи]\s+на\s+(\d+)(?:\s*процент\w*)?$"
+    ),
+    "uk": re.compile(
+        rf"^(?:збільш\w*|підніми)\s+{_ASSISTANT_VOLUME_MARKER_UK}\s+гучність\s+на\s+(\d+)(?:\s*відсотк\w*)?$"
+    ),
+    "en": re.compile(r"^(?:increase|raise|turn\s+up)\s+your(?:\s+own)?\s+volume\s+by\s+(\d+)(?:\s*percent)?$"),
+}
+
+_ASSISTANT_VOLUME_DECREASE_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(
+        rf"^(?:уменьши|убавь|сбавь|понизь)\s+(?:мне\s+)?{_ASSISTANT_VOLUME_MARKER_RU}"
+        rf"\s+громкост[ьи]\s+на\s+(\d+)(?:\s*процент\w*)?$"
+    ),
+    "uk": re.compile(
+        rf"^(?:зменш\w*|знизь)\s+{_ASSISTANT_VOLUME_MARKER_UK}\s+гучність\s+на\s+(\d+)(?:\s*відсотк\w*)?$"
+    ),
+    "en": re.compile(r"^(?:decrease|lower|turn\s+down)\s+your(?:\s+own)?\s+volume\s+by\s+(\d+)(?:\s*percent)?$"),
+}
+
+# Deliberately no bare "громче"/"тише" pattern here (unlike the
+# parameterized patterns above) — those already have a working path via
+# modules/hardware_adaptive/command_classifier.py's embedding-based
+# matcher, checked later in core/voice/pipeline.py, and interpret() must
+# keep returning None for them so they actually reach it (see
+# test_bare_system_volume_phrase_is_not_claimed_by_youtube). Only phrases
+# with an explicit number were genuinely missing a fast path.
 
 # Checked before _OPEN_APP_PATTERNS for the same reason as _YOUTUBE_SEARCH_
 # PATTERNS above — "нарисуй"/"сгенерируй" aren't claimed by anything else,
@@ -588,6 +888,131 @@ def interpret(text: str, language: str) -> Command | None:
 
     if normalized in _CAPABILITIES_PHRASES.get(language, set()):
         return Command(name="list_capabilities", params={"language": language})
+
+    if _contains_any_word(normalized, _WEATHER_TRIGGER_WORDS.get(language, set())):
+        when = "today"
+        when_marker = ""
+        for marker, value in _WEATHER_WHEN_MARKERS.get(language, {}).items():
+            if marker in normalized:
+                when = value
+                when_marker = marker
+                break
+        if not when_marker:
+            forward_pattern, backward_pattern = _WEATHER_RELATIVE_DAYS_PATTERNS.get(language, (None, None))
+            forward_match = forward_pattern.search(normalized) if forward_pattern else None
+            backward_match = backward_pattern.search(normalized) if backward_pattern else None
+            if forward_match:
+                when = forward_match.group(1)
+                when_marker = forward_match.group(0)
+            elif backward_match:
+                when = f"-{backward_match.group(1)}"
+                when_marker = backward_match.group(0)
+        city = ""
+        city_pattern = _WEATHER_CITY_PATTERNS.get(language)
+        if city_pattern:
+            # Strip the when-marker (and an idiomatic preposition right
+            # before it, e.g. "на завтра"/"for tomorrow") before searching
+            # for the city — regression found live: "погоду на завтра в
+            # Киеве" was captured whole as the city ("завтра в киеве"),
+            # since the city pattern's capture group allows spaces and
+            # nothing stopped it from also swallowing "на завтра" once the
+            # search started there instead of at the real "в Киеве". A bare
+            # marker with no preceding preposition ("погода завтра в
+            # Киеве", already covered by existing tests) is unaffected —
+            # stripping it here just leaves the same clean text that case
+            # already produced.
+            text_for_city = normalized
+            if when_marker:
+                preposition = _WEATHER_WHEN_PREPOSITIONS.get(language, "")
+                optional_preposition = rf"(?:{re.escape(preposition)}\s+)?" if preposition else ""
+                text_for_city = re.sub(rf"{optional_preposition}{re.escape(when_marker)}\b", " ", text_for_city)
+                text_for_city = re.sub(r"\s+", " ", text_for_city).strip()
+            city_match = city_pattern.search(text_for_city)
+            if city_match:
+                city = city_match.group(1).strip()
+        return Command(name="weather_get", params={"city": city, "when": when})
+
+    assistant_set_to_pattern = _ASSISTANT_VOLUME_SET_TO_PATTERNS.get(language)
+    if assistant_set_to_pattern:
+        assistant_set_to_match = assistant_set_to_pattern.match(normalized)
+        if assistant_set_to_match:
+            return Command(name="set_assistant_volume", params={"percent": assistant_set_to_match.group(1)})
+
+    assistant_increase_pattern = _ASSISTANT_VOLUME_INCREASE_PATTERNS.get(language)
+    if assistant_increase_pattern:
+        assistant_increase_match = assistant_increase_pattern.match(normalized)
+        if assistant_increase_match:
+            return Command(
+                name="change_assistant_volume", params={"delta_percent": assistant_increase_match.group(1)}
+            )
+
+    assistant_decrease_pattern = _ASSISTANT_VOLUME_DECREASE_PATTERNS.get(language)
+    if assistant_decrease_pattern:
+        assistant_decrease_match = assistant_decrease_pattern.match(normalized)
+        if assistant_decrease_match:
+            return Command(
+                name="change_assistant_volume",
+                params={"delta_percent": f"-{assistant_decrease_match.group(1)}"},
+            )
+
+    assistant_set_pattern = _ASSISTANT_VOLUME_SET_PATTERNS.get(language)
+    if assistant_set_pattern:
+        assistant_set_match = assistant_set_pattern.match(normalized)
+        if assistant_set_match:
+            return Command(name="set_assistant_volume", params={"percent": assistant_set_match.group(1)})
+
+    set_to_pattern = _SYSTEM_VOLUME_SET_TO_PATTERNS.get(language)
+    if set_to_pattern:
+        set_to_match = set_to_pattern.match(normalized)
+        if set_to_match:
+            return Command(name="set_volume", params={"percent": set_to_match.group(1)})
+
+    increase_pattern = _SYSTEM_VOLUME_INCREASE_PATTERNS.get(language)
+    if increase_pattern:
+        increase_match = increase_pattern.match(normalized)
+        if increase_match:
+            return Command(name="change_volume", params={"delta_percent": increase_match.group(1)})
+
+    decrease_pattern = _SYSTEM_VOLUME_DECREASE_PATTERNS.get(language)
+    if decrease_pattern:
+        decrease_match = decrease_pattern.match(normalized)
+        if decrease_match:
+            return Command(name="change_volume", params={"delta_percent": f"-{decrease_match.group(1)}"})
+
+    set_volume_pattern = _SYSTEM_VOLUME_SET_PATTERNS.get(language)
+    if set_volume_pattern:
+        set_volume_match = set_volume_pattern.match(normalized)
+        if set_volume_match:
+            return Command(name="set_volume", params={"percent": set_volume_match.group(1)})
+
+    brightness_set_to_pattern = _SYSTEM_BRIGHTNESS_SET_TO_PATTERNS.get(language)
+    if brightness_set_to_pattern:
+        brightness_set_to_match = brightness_set_to_pattern.match(normalized)
+        if brightness_set_to_match:
+            return Command(name="set_brightness", params={"percent": brightness_set_to_match.group(1)})
+
+    brightness_increase_pattern = _SYSTEM_BRIGHTNESS_INCREASE_PATTERNS.get(language)
+    if brightness_increase_pattern:
+        brightness_increase_match = brightness_increase_pattern.match(normalized)
+        if brightness_increase_match:
+            return Command(
+                name="change_brightness", params={"delta_percent": brightness_increase_match.group(1)}
+            )
+
+    brightness_decrease_pattern = _SYSTEM_BRIGHTNESS_DECREASE_PATTERNS.get(language)
+    if brightness_decrease_pattern:
+        brightness_decrease_match = brightness_decrease_pattern.match(normalized)
+        if brightness_decrease_match:
+            return Command(
+                name="change_brightness",
+                params={"delta_percent": f"-{brightness_decrease_match.group(1)}"},
+            )
+
+    brightness_set_pattern = _SYSTEM_BRIGHTNESS_SET_PATTERNS.get(language)
+    if brightness_set_pattern:
+        brightness_set_match = brightness_set_pattern.match(normalized)
+        if brightness_set_match:
+            return Command(name="set_brightness", params={"percent": brightness_set_match.group(1)})
 
     if fuzzy_matches_any(normalized, _BOARD_GAME_PHRASES.get(language, set())):
         kind = ""

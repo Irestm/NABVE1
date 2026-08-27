@@ -21,6 +21,11 @@ _MID_TIER_MIN_RAM_GB = 16
 @dataclass(frozen=True)
 class ModelTierSpec:
     tier: str
+    # An Ollama model-library tag (e.g. "qwen2.5:3b") — pulled automatically
+    # by modules.hardware_adaptive.inference_engine.LocalInferenceEngine on
+    # first use via Ollama's own `/api/pull`, unlike the older raw
+    # llama-cpp-python backend this replaced, which needed a GGUF file
+    # downloaded by hand into data/models/.
     model_name: str
     quantization: str
     min_ram_gb: int
@@ -32,27 +37,26 @@ class ModelTierSpec:
 MODEL_TIERS: dict[str, ModelTierSpec] = {
     TIER_MID: ModelTierSpec(
         tier=TIER_MID,
-        model_name="Qwen2.5-3B-Instruct",
-        quantization="Q4_K_M GGUF",
+        model_name="qwen2.5:3b",
+        quantization="Q4_K_M (Ollama default)",
         min_ram_gb=_MID_TIER_MIN_RAM_GB,
         min_vram_gb=MIN_VRAM_GB_FOR_LOCAL,
         example_gpu="RTX 2050 (4GB VRAM)",
         description=(
             "Minimum supported tier: 16GB DDR4 RAM, an i5-10400-class CPU, and a "
-            "4GB+ CUDA GPU. Runs Qwen2.5-3B (or Phi-3-mini) as a Q4 GGUF model, "
-            "fully on GPU."
+            "4GB+ CUDA GPU. Runs Qwen2.5-3B via a local Ollama server, fully on GPU."
         ),
     ),
     TIER_HIGH: ModelTierSpec(
         tier=TIER_HIGH,
-        model_name="Qwen2.5-7B-Instruct",
-        quantization="Q4_K_M/Q5_K_M GGUF",
+        model_name="qwen2.5:7b",
+        quantization="Q4_K_M (Ollama default)",
         min_ram_gb=_HIGH_TIER_MIN_RAM_GB,
         min_vram_gb=_HIGH_TIER_MIN_VRAM_GB,
         example_gpu="RTX 4050 (6GB+ VRAM)",
         description=(
             "16GB+ DDR5 RAM, a current-generation CPU, and a 6GB+ CUDA GPU. Runs "
-            "Qwen2.5-7B/Llama-3-8B as a Q4/Q5 GGUF model, fully on GPU."
+            "Qwen2.5-7B via a local Ollama server, fully on GPU."
         ),
     ),
 }

@@ -12,24 +12,35 @@ from modules.hardware_adaptive.model_tiers import TIER_NONE, select_tier
 
 logger = get_logger(__name__)
 
-# The loaded GGUF model pins several GB of VRAM for as long as the process
-# lives, even during long stretches where every request goes through
-# ai_bridge instead (complex queries, or the local model simply not being
-# asked anything for a while) — on a laptop-class GPU that VRAM is often
-# wanted for other things. Unloading after a period of inactivity trades a
-# one-time reload cost (a few seconds) on the next local-model request for
-# giving that VRAM back in the meantime.
+# The loaded model pins several GB of VRAM in the local Ollama server (see
+# inference_engine.py) for as long as that server keeps it resident, even
+# during long stretches where every request goes through ai_bridge instead
+# (complex queries, or the local model simply not being asked anything for
+# a while) — on a laptop-class GPU that VRAM is often wanted for other
+# things. Unloading after a period of inactivity trades a one-time reload
+# cost (a few seconds) on the next local-model request for giving that
+# VRAM back in the meantime.
 _IDLE_UNLOAD_SECONDS = 300
 _IDLE_CHECK_INTERVAL_SECONDS = 30
 
 # Simple heuristic, intentionally not a full classifier (per spec): anything
-# that looks like it needs live/external information, or is long enough to
-# likely need deeper reasoning, skips the local model and goes straight to
-# ai_bridge's Gemini -> ChatGPT -> DeepSeek -> Grok chain. Grouped by category
-# (rather than one flat tuple) so each kind of "needs fresh data" query is
-# easy to audit/extend on its own — a quantized 3B/7B local model has no
-# access to live information and will happily hallucinate a plausible-looking
-# but wrong answer for any of these instead of admitting it doesn't know.
+# that looks like it needs live/external information skips the local model
+# and goes straight to ai_bridge's Gemini -> ChatGPT -> DeepSeek -> Grok
+# chain. Grouped by category (rather than one flat tuple) so each kind of
+# "needs fresh data" query is easy to audit/extend on its own — a quantized
+# 3B/7B local model has no access to live information and will happily
+# hallucinate a plausible-looking but wrong answer for any of these instead
+# of admitting it doesn't know.
+#
+# Deliberately marker-only, no length threshold: a long-but-ordinary
+# question (no live-data need) has no reason to lose access to the user's
+# own configured Gemini API key (see core/ai_adapter_chain.py::
+# candidate_chain — is_complex_query's only caller) and be routed to the
+# much slower browser-automation chain instead. A length cutoff used to be
+# here as a rough "probably needs deeper reasoning" proxy, but it was too
+# blunt — it caught plenty of ordinary long questions that the API key
+# would have answered fine, just to also (unreliably) catch some that
+# actually needed live data, which the marker list already covers directly.
 _WEB_SEARCH_MARKERS: tuple[str, ...] = (
     "загугли", "погугли", "нагугли",
     "найди в интернете", "поищи в интернете", "найди в гугле",
@@ -48,14 +59,11 @@ _LIVE_DATA_MARKERS: tuple[str, ...] = (
     "exchange rate", "weather today", "weather forecast", "stock price",
 )
 _COMPLEX_MARKERS: tuple[str, ...] = _WEB_SEARCH_MARKERS + _NEWS_MARKERS + _LIVE_DATA_MARKERS
-_COMPLEX_LENGTH_THRESHOLD = 240  # characters
 
 
 def is_complex_query(text: str) -> bool:
     normalized = text.lower()
-    if any(marker in normalized for marker in _COMPLEX_MARKERS):
-        return True
-    return len(text) > _COMPLEX_LENGTH_THRESHOLD
+    return any(marker in normalized for marker in _COMPLEX_MARKERS)
 
 
 class LocalEngineAdapter:
@@ -100,7 +108,7 @@ class LocalEngineAdapter:
             return self._engine.generate(text)
 
     async def stream_prompt(self, text: str) -> AsyncIterator[str]:
-        """Yields the reply as it's generated. Bridges llama-cpp-python's
+        """Yields the reply as it's generated. Bridges the local engine's
         blocking/synchronous token stream onto the asyncio world via a
         background thread and a queue, since the generator can't be driven
         from the event loop directly without blocking it token by token."""
@@ -184,9 +192,9 @@ def _start_idle_watcher() -> None:
 
 def _initialize() -> None:
     """Detects hardware and loads the local model on first use. Never raises:
-    any failure (no CUDA GPU, missing llama-cpp-python, missing model file)
-    just leaves the local model unavailable so callers fall back to
-    ai_bridge."""
+    any failure (no CUDA GPU, Ollama not installed/reachable, or the model
+    failing to pull) just leaves the local model unavailable so callers
+    fall back to ai_bridge."""
     global _engine, _adapter, _unavailable_reason, _initialized
     if _initialized:
         return

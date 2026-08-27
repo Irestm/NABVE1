@@ -75,6 +75,23 @@ _CATALOG: tuple[_CommandSpec, ...] = (
         "какая сейчас громкость", "сколько сейчас громкости", "какой уровень громкости стоит",
         "яка зараз гучність", "what's the volume level", "what is the current volume",
     )),
+    _CommandSpec("set_brightness", (
+        "поставь яркость 50 процентов", "яркость на 50", "установи яркость на 30 процентов",
+        "сделай яркость 70 процентов", "выставь яркость экрана 20",
+        "постав яскравість на 50 відсотків", "встанови яскравість екрана 40",
+        "set the screen brightness to 50 percent", "set brightness to 30",
+    )),
+    _CommandSpec("change_brightness", (
+        "убавь яркость на 20 процентов", "сделай ярче на 20", "прибавь яркость на 10",
+        "сделай экран ярче", "сделай экран темнее", "сделай поярче", "сделай потемнее",
+        "увеличь яркость", "уменьши яркость", "ярче", "темнее сделай",
+        "зменш яскравість на 20", "збільш яскравість", "зроби темніше", "зроби яскравіше",
+        "turn the brightness down by 20", "make the screen brighter", "make it dimmer", "dim the screen",
+    )),
+    _CommandSpec("get_brightness", (
+        "какая сейчас яркость", "какой уровень яркости стоит", "насколько яркий экран сейчас",
+        "яка зараз яскравість", "what's the screen brightness", "what is the current brightness",
+    )),
     _CommandSpec("mute", (
         "выключи звук", "заглуши звук", "убери звук совсем", "отключи звук",
         "вимкни звук зовсім", "mute the sound", "mute the audio",
@@ -147,6 +164,25 @@ _CATALOG: tuple[_CommandSpec, ...] = (
         "перевір оновлення", "чи є оновлення системи",
         "check for system updates", "are there any updates available",
     )),
+    # Found missing entirely (no rule-based regex either) while auditing
+    # every button in core/command_ui_metadata.py's "Системные команды"
+    # panel for voice coverage - unlike the commands above, these had no
+    # fast path of any kind and depended wholly on the AI classifier chain,
+    # which is slower and (before this same audit's other fix) could
+    # hallucinate a fake "done" for a command that was never dispatched.
+    _CommandSpec("toggle_timer", (
+        "поставь таймер на 10 минут", "поставь таймер на 5 минут", "засеки 15 минут",
+        "поставь таймер на полчаса", "включи таймер на 20 минут", "отмени таймер", "останови таймер",
+        "убери таймер", "выключи таймер",
+        "постав таймер на 10 хвилин", "постав таймер на 5 хвилин", "скасуй таймер", "зупини таймер",
+        "set a timer for 10 minutes", "set a timer for 5 minutes", "cancel the timer", "stop the timer",
+    )),
+    _CommandSpec("toggle_stopwatch", (
+        "запусти секундомер", "включи секундомер", "останови секундомер", "выключи секундомер",
+        "старт секундомера", "стоп секундомер",
+        "запусти секундомір", "увімкни секундомір", "зупини секундомір", "вимкни секундомір",
+        "start the stopwatch", "stop the stopwatch", "start stopwatch", "stop stopwatch",
+    )),
 )
 
 
@@ -191,6 +227,42 @@ def _extract_change_volume(text: str) -> dict[str, str]:
         # anyway, so change_volume only ever gets picked when SOME direction
         # is implied; defaulting the ambiguous remainder to "up" is safer
         # than silently doing nothing.
+        sign = 1
+    return {"delta_percent": str(sign * magnitude)}
+
+
+def _extract_set_brightness(text: str) -> dict[str, str] | None:
+    match = _NUMBER_RE.search(text)
+    if not match:
+        return None
+    percent = max(0, min(100, int(match.group(0))))
+    return {"percent": str(percent)}
+
+
+_BRIGHTEN_WORDS = (
+    "прибав", "увелич", "ярче", "яскравіше", "світліше", "додай", "збільш",
+    "brighter", "brighten", "increase", "raise",
+)
+_DIM_WORDS = (
+    "убав", "уменьш", "темнее", "потемнее", "тусклее", "приглуши", "зменш",
+    "темніше", "знизь", "dimmer", "darker", "decrease", "lower", "dim",
+)
+_DEFAULT_BRIGHTNESS_STEP = 10
+
+
+def _extract_change_brightness(text: str) -> dict[str, str]:
+    normalized = text.lower()
+    number_match = _NUMBER_RE.search(normalized)
+    if number_match:
+        magnitude = abs(int(number_match.group(0)))
+        explicit_negative = number_match.group(0).startswith("-")
+    else:
+        magnitude = _DEFAULT_BRIGHTNESS_STEP
+        explicit_negative = False
+
+    if any(word in normalized for word in _DIM_WORDS) or explicit_negative:
+        sign = -1
+    else:
         sign = 1
     return {"delta_percent": str(sign * magnitude)}
 
@@ -315,6 +387,24 @@ def _extract_language_code(text: str) -> dict[str, str] | None:
     return None
 
 
+_TIMER_MINUTES_RE = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*(?:минут\w*|мин\b|хвилин\w*|хв\b|min(?:ute)?s?)\b", re.IGNORECASE
+)
+
+
+def _extract_toggle_timer(text: str) -> dict[str, str]:
+    # No number found (e.g. "отмени таймер"/"cancel the timer") isn't a
+    # failed extraction here - unlike the other extractors that return None
+    # to decline the fast path entirely, an empty dict is toggle_timer's own
+    # valid "cancel every active timer" call (see
+    # modules/timer/handlers.py's _handle_toggle_timer), so it must reach
+    # the dispatcher as {} rather than bailing out.
+    match = _TIMER_MINUTES_RE.search(text.lower())
+    if not match:
+        return {}
+    return {"minutes": match.group(1).replace(",", ".")}
+
+
 # Declining to extract (returning None) makes match_system_command() as a
 # whole return None for that utterance — the fast path backs off and lets
 # the normal interpret() -> plugin match -> AI classifier chain handle it,
@@ -324,6 +414,9 @@ _PARAM_EXTRACTORS: dict[str, Callable[[str], dict[str, str] | None]] = {
     "set_volume": _extract_set_volume,
     "change_volume": _extract_change_volume,
     "get_volume": _no_params,
+    "set_brightness": _extract_set_brightness,
+    "change_brightness": _extract_change_brightness,
+    "get_brightness": _no_params,
     "mute": _no_params,
     "unmute": _no_params,
     "toggle_mute": _no_params,
@@ -337,6 +430,8 @@ _PARAM_EXTRACTORS: dict[str, Callable[[str], dict[str, str] | None]] = {
     "change_system_locale": _extract_language_code,
     "get_battery_status": _no_params,
     "check_system_updates": _no_params,
+    "toggle_timer": _extract_toggle_timer,
+    "toggle_stopwatch": _no_params,
 }
 
 

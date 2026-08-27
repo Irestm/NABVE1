@@ -47,7 +47,7 @@ def test_confirmation_prompt_barge_in_still_reaches_the_confirm_step(monkeypatch
 
     monkeypatch.setattr(pipeline_module, "interpret", lambda text, language: Command(name="shutdown", params={}))
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
     monkeypatch.setattr(loop, "_learn_facts", lambda text, language: None)
 
@@ -76,7 +76,7 @@ def test_confirmation_declined_still_resolves_the_token_instead_of_leaking_it(mo
 
     monkeypatch.setattr(pipeline_module, "interpret", lambda text, language: Command(name="shutdown", params={}))
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
     monkeypatch.setattr(loop, "_learn_facts", lambda text, language: None)
     monkeypatch.setattr(loop, "_speak_safely", lambda tts, text, language: False)

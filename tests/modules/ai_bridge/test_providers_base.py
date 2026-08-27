@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import modules.ai_bridge.providers.base as base_module
 from modules.ai_bridge.providers.base import BrowserProviderAdapter
 
 
@@ -122,3 +124,54 @@ async def test_close_is_a_noop_when_nothing_was_ever_opened() -> None:
     adapter = _FakeAdapter()
 
     await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_ensure_page_times_out_instead_of_hanging_forever(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression: a browser process that crashes right after
+    # launch_persistent_context succeeds (confirmed live: a stale Xvfb
+    # display collision did exactly this) used to leave _ensure_page
+    # awaiting a connection that would never respond, with nothing to ever
+    # time that out - resolve_free_text's per-adapter loop never got an
+    # exception to catch and move to the next adapter with, so the whole
+    # free-text answer just hung indefinitely instead of failing over.
+    monkeypatch.setattr(base_module, "PAGE_READY_TIMEOUT_SECONDS", 0.05)
+    adapter = _FakeAdapter()
+
+    async def hangs_forever(async_playwright, *, force_headed):
+        await asyncio.sleep(10)
+
+    adapter._ensure_page_uncapped = hangs_forever
+
+    with pytest.raises(RuntimeError, match="Timed out preparing"):
+        await adapter._ensure_page()
+
+
+@pytest.mark.asyncio
+async def test_ensure_page_timeout_closes_a_context_that_got_launched_before_it_hung(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: cancelling the timed-out coroutine doesn't retroactively
+    # un-launch a browser subprocess that had already started - confirmed
+    # live (see virtual_display.py's own lock-reuse fix) that this exact
+    # sequence (context launches fine, then something after it hangs) can
+    # happen. Without cleanup, that browser process leaks forever.
+    monkeypatch.setattr(base_module, "PAGE_READY_TIMEOUT_SECONDS", 0.05)
+    adapter = _FakeAdapter()
+    fake_context = MagicMock(close=AsyncMock())
+    fake_playwright = MagicMock(stop=AsyncMock())
+
+    async def launches_then_hangs(async_playwright, *, force_headed):
+        adapter._context = fake_context
+        adapter._playwright = fake_playwright
+        await asyncio.sleep(10)
+
+    adapter._ensure_page_uncapped = launches_then_hangs
+
+    with pytest.raises(RuntimeError, match="Timed out preparing"):
+        await adapter._ensure_page()
+
+    fake_context.close.assert_awaited_once()
+    fake_playwright.stop.assert_awaited_once()
+    assert adapter._context is None
+    assert adapter._playwright is None

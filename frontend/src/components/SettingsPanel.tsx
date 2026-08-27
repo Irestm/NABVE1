@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { getProfileFact, runCommand, saveAboutMe, setProfileFact } from "../api/client";
 import { DESIGNS } from "../design/registry";
+import { CustomCommandsPanel } from "./CustomCommandsPanel";
 import { PersonalityPanel } from "./PersonalityPanel";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 import type { DesignId } from "../design/types";
@@ -13,6 +14,12 @@ const ASSISTANT_NAME_KEY = "assistant_name";
 const ABOUT_ME_KEY = "about_me";
 // Matches modules/user_profile/domain.py's GENDER_KEY/DEFAULT_GENDER exactly.
 const GENDER_KEY = "gender";
+// Matches modules/user_profile/domain.py's STOP_WORD_KEY exactly — read by
+// core/voice/pipeline.py to pause/resume the voice loop. Used to be voice-
+// only (set once during onboarding, modules/user_profile/onboarding.py's
+// _ask_stop_word) — this field lets it be viewed/changed afterward too,
+// through the same generic profile_get/profile_set commands.
+const STOP_WORD_KEY = "stop_word";
 type Gender = "male" | "female";
 const DEFAULT_GENDER: Gender = "male";
 const CLAUDE_LOGIN_POLL_MS = 3000;
@@ -49,6 +56,10 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
   const [gender, setGender] = useState<Gender>(DEFAULT_GENDER);
   const [savingGender, setSavingGender] = useState(false);
 
+  const [stopWordInput, setStopWordInput] = useState("");
+  const [savedStopWord, setSavedStopWord] = useState("");
+  const [stopWordStatus, setStopWordStatus] = useState("");
+
   const [claudeStatus, setClaudeStatus] = useState<ClaudeAuthStatus | null>(null);
   const [claudeChecking, setClaudeChecking] = useState(false);
   const [claudeLoggingIn, setClaudeLoggingIn] = useState(false);
@@ -62,10 +73,11 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
 
     async function load(): Promise<void> {
       try {
-        const [name, about, genderFact] = await Promise.all([
+        const [name, about, genderFact, stopWord] = await Promise.all([
           getProfileFact(ASSISTANT_NAME_KEY),
           getProfileFact(ABOUT_ME_KEY),
           getProfileFact(GENDER_KEY),
+          getProfileFact(STOP_WORD_KEY),
         ]);
         if (cancelled) {
           return;
@@ -75,6 +87,8 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
         setAboutInput(about ?? "");
         setSavedAbout(about ?? "");
         setGender(genderFact === "female" ? "female" : DEFAULT_GENDER);
+        setStopWordInput(stopWord ?? "");
+        setSavedStopWord(stopWord ?? "");
         setLoaded(true);
       } catch (error) {
         if (!cancelled) {
@@ -165,6 +179,31 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
     } catch (error) {
       console.error("Failed to save the assistant name:", error);
       setNameStatus("Не удалось сохранить имя.");
+    }
+  }
+
+  async function handleSaveStopWord(): Promise<void> {
+    // The input field itself keeps exactly what the user typed (raw, as
+    // entered — that's what stopWordInput already is) right up until save;
+    // only the persisted value is normalized. core/voice/phrase_matching.py's
+    // fuzzy_contains_phrase already lowercases both sides before comparing,
+    // so this doesn't change whether "СТОП"/"СтОп"/"стоп" gets recognized —
+    // it's purely so the stored value (and what's shown here afterward) is
+    // consistent regardless of how it was typed (caps lock, alternating
+    // case, etc).
+    const normalized = stopWordInput.trim().toLowerCase();
+    if (!normalized) {
+      return;
+    }
+    setStopWordStatus("");
+    try {
+      await setProfileFact(STOP_WORD_KEY, normalized);
+      setSavedStopWord(normalized);
+      setStopWordInput(normalized);
+      setStopWordStatus("Сохранено.");
+    } catch (error) {
+      console.error("Failed to save the stop word:", error);
+      setStopWordStatus("Не удалось сохранить стоп-слово.");
     }
   }
 
@@ -381,6 +420,35 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
                     </label>
                   </div>
                 </div>
+
+                <div className="settings-panel__field">
+                  <span className="settings-panel__label">Стоп-слово</span>
+                  <p className="status-detail">
+                    Скажите его в любой момент, чтобы ассистент перестал реагировать на что-либо, и повторите то же
+                    слово ещё раз, чтобы он снова начал вас слушать.
+                  </p>
+                  <div className="row">
+                    <input
+                      type="text"
+                      value={stopWordInput}
+                      onChange={(event) => setStopWordInput(event.target.value)}
+                      placeholder="Например: стоп"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveStopWord()}
+                      disabled={!stopWordInput.trim() || stopWordInput.trim() === savedStopWord}
+                    >
+                      Сохранить
+                    </button>
+                  </div>
+                  {stopWordStatus && <p className="status-detail">{stopWordStatus}</p>}
+                </div>
+
+                {/* Мои команды (системные команды + пользовательские
+                    голосовые команды) — раньше отдельная страница сайдбара,
+                    перенесена сюда целиком. */}
+                <CustomCommandsPanel />
               </div>
             ) : tab === "voice" ? (
               <VoiceSettingsPanel />

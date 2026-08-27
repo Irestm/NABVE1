@@ -19,6 +19,13 @@ class CommunicationStyle:
     # simple resample-based approximation (see tts.py:_apply_prosody_rate),
     # not independent tempo/pitch control — Silero's synthesize() doesn't
     # expose real prosody parameters, so tempo and pitch move together here.
+    #
+    # Every style's value here was shifted down by 0.1 from its original
+    # (relative ordering unchanged — "aggressive" is still the fastest,
+    # "calm"/"philosophical" still the slowest) after live feedback that
+    # 1.0 (the old neutral/default baseline) read as too fast and rushed
+    # — Silero's own native pace at 1.0, unmodified, isn't itself
+    # unhurried the way a person speaking "normally" is.
     prosody_rate: float
 
 
@@ -30,49 +37,49 @@ COMMUNICATION_STYLES: tuple[CommunicationStyle, ...] = (
         key="polite",
         label="Вежливо",
         prompt_fragment='Общайся вежливо и уважительно, обращайся на "вы".',
-        prosody_rate=1.0,
+        prosody_rate=0.9,
     ),
     CommunicationStyle(
         key="grounded",
         label="Приземлённо",
         prompt_fragment="Общайся просто и по-свойски, без канцелярита, как обычный человек.",
-        prosody_rate=1.0,
+        prosody_rate=0.9,
     ),
     CommunicationStyle(
         key="aggressive",
         label="Агрессивно",
         prompt_fragment="Общайся резко и напористо, без сантиментов, можно грубовато подкалывать.",
-        prosody_rate=1.15,
+        prosody_rate=1.05,
     ),
     CommunicationStyle(
         key="calm",
         label="Спокойно",
         prompt_fragment="Общайся размеренно, спокойно и невозмутимо, не суетись.",
-        prosody_rate=0.9,
+        prosody_rate=0.8,
     ),
     CommunicationStyle(
         key="rude",
         label="С матами",
         prompt_fragment="Общайся неформально, с использованием ненормативной лексики там, где это уместно.",
-        prosody_rate=1.1,
+        prosody_rate=1.0,
     ),
     CommunicationStyle(
         key="friendly",
         label="Дружелюбно",
         prompt_fragment="Общайся тепло и дружелюбно, как с хорошим приятелем.",
-        prosody_rate=1.05,
+        prosody_rate=0.95,
     ),
     CommunicationStyle(
         key="formal",
         label="Официально",
         prompt_fragment="Общайся сухо и официально, строго по делу, минимум эмоций.",
-        prosody_rate=0.95,
+        prosody_rate=0.85,
     ),
     CommunicationStyle(
         key="humorous",
         label="С юмором",
         prompt_fragment="Общайся с лёгким юмором и иронией, где это уместно.",
-        prosody_rate=1.05,
+        prosody_rate=0.95,
     ),
     CommunicationStyle(
         key="philosophical",
@@ -81,7 +88,7 @@ COMMUNICATION_STYLES: tuple[CommunicationStyle, ...] = (
             "Общайся вдумчиво и рассудительно: прежде чем ответить по существу, можешь коротко "
             "поразмышлять о более широком смысле или контексте вопроса."
         ),
-        prosody_rate=0.9,
+        prosody_rate=0.8,
     ),
 )
 

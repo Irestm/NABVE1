@@ -15,6 +15,20 @@ logger = get_logger(__name__)
 _ACTIVE_KEY = "active_provider"
 _LAST_RESET_KEY = "last_reset_date"
 
+# Every individual Playwright wait inside a provider adapter already has its
+# own timeout (see modules/ai_bridge/providers/base.py's
+# RESPONSE_WAIT_TIMEOUT_SECONDS etc.) - those bound *that* call, but a truly
+# wedged browser process (observed in practice under Xvfb with no GPU
+# acceleration - Firefox's software renderer can lock up outright) can leave
+# the underlying Playwright protocol round-trip itself never returning,
+# which no in-page timeout can catch. This is the outer ceiling: past it,
+# the whole assistant used to sit on "Локально не получилось, открываю
+# браузер" forever, with every later request piling up behind the same
+# still-held self._lock. Comfortably above the sum of every inner timeout a
+# healthy attempt could legitimately need (cold-start prompt box 45s +
+# response wait 60s + slack), so it never fires on a merely slow page.
+_PROVIDER_ATTEMPT_TIMEOUT_SECONDS = 90
+
 
 class AllProvidersExhaustedError(RuntimeError):
     pass
@@ -107,15 +121,17 @@ class ProviderManager:
                 adapter = self._adapters[name]
 
                 try:
-                    await adapter.open()
-                    if await adapter.is_limit_reached():
+                    await asyncio.wait_for(adapter.open(), timeout=_PROVIDER_ATTEMPT_TIMEOUT_SECONDS)
+                    if await asyncio.wait_for(adapter.is_limit_reached(), timeout=_PROVIDER_ATTEMPT_TIMEOUT_SECONDS):
                         self._limit_hit[name] = True
                         logger.warning("Provider '%s' has hit its daily limit; switching", name)
                         self._advance_to_next_provider()
                         switched = True
                         continue
 
-                    reply = await adapter.send_prompt(prompt, fast_mode=fast_mode)
+                    reply = await asyncio.wait_for(
+                        adapter.send_prompt(prompt, fast_mode=fast_mode), timeout=_PROVIDER_ATTEMPT_TIMEOUT_SECONDS
+                    )
                     self._limit_hit[name] = False
                     if switched:
                         reply = (
@@ -125,17 +141,39 @@ class ProviderManager:
                     return reply
                 except Exception as exc:
                     last_error = exc
-                    try:
-                        limited = await adapter.is_limit_reached()
-                    except Exception:
-                        # last_error (the send_prompt failure above) is
-                        # already logged via logger.exception a few lines
-                        # below when this probe says "not limited" — but if
-                        # THIS probe is what's actually broken, that
-                        # specific failure would otherwise leave no trace
-                        # anywhere.
-                        logger.debug("Could not confirm limit status for '%s'", name, exc_info=True)
+                    timed_out = isinstance(exc, asyncio.TimeoutError)
+                    if timed_out:
+                        # The page (or the whole browser process, under
+                        # Xvfb's software rendering - see this module's own
+                        # timeout constant docstring) is wedged badly enough
+                        # that nothing inside got a chance to raise its own,
+                        # smaller timeout. Force-close so the NEXT attempt on
+                        # this provider launches a fresh context instead of
+                        # reusing the same stuck one and hanging identically
+                        # every time from here on - this is what used to
+                        # leave every later request piling up behind
+                        # "Локально не получилось, открываю браузер" forever.
+                        logger.error(
+                            "Provider '%s' timed out after %ss; resetting its browser context",
+                            name, _PROVIDER_ATTEMPT_TIMEOUT_SECONDS,
+                        )
+                        try:
+                            await asyncio.wait_for(adapter.close(), timeout=10)
+                        except Exception:
+                            logger.debug("Could not cleanly close wedged provider '%s'", name, exc_info=True)
                         limited = False
+                    else:
+                        try:
+                            limited = await asyncio.wait_for(adapter.is_limit_reached(), timeout=10)
+                        except Exception:
+                            # last_error (the send_prompt failure above) is
+                            # already logged via logger.exception a few lines
+                            # below when this probe says "not limited" — but if
+                            # THIS probe is what's actually broken, that
+                            # specific failure would otherwise leave no trace
+                            # anywhere.
+                            logger.debug("Could not confirm limit status for '%s'", name, exc_info=True)
+                            limited = False
                     self._limit_hit[name] = limited
 
                     if not limited:

@@ -19,7 +19,7 @@ A local, single-user voice assistant ("Jarvis"): a FastAPI backend + an Electron
 4. The reply is spoken aloud (Silero/Piper), shaped by the **communication style** chosen during onboarding (affects both the wording and the voice's tempo/pitch).
 
 ### Local model + cloud
-If the machine has an NVIDIA GPU (4GB+ VRAM), a **local model** (Qwen2.5, GGUF, via llama.cpp) is loaded and used for simple requests — fast, private, no internet required. It's unloaded from VRAM after 5 minutes of idling and reloaded on demand.
+If the machine has an NVIDIA GPU (4GB+ VRAM), a **local model** (Qwen2.5, via a local [Ollama](https://ollama.com) server) is loaded and used for simple requests — fast, private, no internet required. It's unloaded from VRAM after 5 minutes of idling and reloaded on demand.
 
 For complex requests (needing fresh/live information) or when the local model is unavailable or unsure, a chain of cloud providers is used instead, driven through a real, automated browser: **Gemini → ChatGPT → DeepSeek → Grok**, switching automatically when one hits its daily limit.
 
@@ -72,8 +72,9 @@ developers/contributors.
 - Python 3.12, Node.js 18+
 - A microphone and speakers/headphones for speech I/O
 - Optional: an NVIDIA GPU (4GB+ VRAM) for the local model
-- System packages (Linux): `python3-tk python3-dev wmctrl xdotool libnotify-bin libreoffice ffmpeg tesseract-ocr tesseract-ocr-rus stockfish`
+- System packages (Linux): `python3-tk python3-dev wmctrl xdotool brightnessctl libnotify-bin libreoffice ffmpeg tesseract-ocr tesseract-ocr-rus stockfish`
 - `stockfish` is only needed for voice chess games (`modules/board_games`, "let's play a game of chess"); Russian draughts works with no system packages — py-draughts's engine is pure Python.
+- `brightnessctl` powers voice screen-brightness control with real backlight adjustment. Its apt package ships a udev rule granting the `video` group write access to `/sys/class/backlight`, but you still have to add yourself to that group: `sudo usermod -aG video $USER`, then log out and back in. Without `brightnessctl` (or without that group) the adapter falls back to `xrandr --brightness`, a software gamma dim only (backlight power unchanged).
 - Optional, for voice-driven UI actions (`modules/ui_automation` — "click X"/"type Y" in whatever app currently has focus):
   - Desktop apps: `sudo apt-get install python3-gi gir1.2-atspi-2.0`, then enable your desktop's accessibility bus (GNOME: Settings → Accessibility) and, for JetBrains IDEs specifically, that IDE's own **Settings → Appearance & Behavior → Accessibility → Support screen readers** — a separate toggle from the DE-wide one. See `scripts/atspi_smoke_test.py` to check whether a given app's UI is actually visible to AT-SPI before relying on this.
   - Chrome/Chromium tabs: launch the browser with `--remote-debugging-port=9222` (a dedicated shortcut/alias — this can't be attached to an already-running browser afterward). Override the port with `ASSISTANT_CHROME_CDP_PORT` if 9222 is taken.

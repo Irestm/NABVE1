@@ -18,7 +18,6 @@ import { BoardGamesPanel } from "./components/BoardGamesPanel";
 import { CodeAnalysisPanel } from "./components/CodeAnalysisPanel";
 import { CollapsibleCard } from "./components/CollapsibleCard";
 import { CommandPanel } from "./components/CommandPanel";
-import { CustomCommandsPanel } from "./components/CustomCommandsPanel";
 import { FitnessChatWidget } from "./components/FitnessChatWidget";
 import { FitnessGoalsSection } from "./components/FitnessGoalsSection";
 import { FitnessMealDiary } from "./components/FitnessMealDiary";
@@ -71,6 +70,7 @@ const STATE_LABELS: Record<AssistantState, string> = {
   speaking: "Говорю",
   error: "Ошибка",
   paused: "На паузе",
+  onboarding: "Знакомимся",
 };
 
 // Labels for core/voice/module_context.py's active_module_context, shown as
@@ -198,7 +198,12 @@ export function App(): JSX.Element {
             <div key="assistant" className="app-page">
               <MessagingPanel />
 
-              <VoiceRecorder onRecordingChange={setVoiceRecording} onSpeakingChange={setVoiceSpeaking} />
+              <VoiceRecorder
+                onRecordingChange={setVoiceRecording}
+                onSpeakingChange={setVoiceSpeaking}
+                assistantState={assistantState}
+                detail={detail}
+              />
 
               <CollapsibleCard title="Текстовый ввод" icon={<MessageCircle size={16} />} accent="blue" defaultOpen>
                 <TextChat />
@@ -254,10 +259,6 @@ export function App(): JSX.Element {
                   setTimeout(() => setGamesOpenSignal((n) => n + 1), 0);
                 }}
               />
-            </div>
-          ) : activePage === "my_commands" ? (
-            <div key="my_commands" className="app-page">
-              <CustomCommandsPanel />
             </div>
           ) : activePage === "fitness" ? (
             <div key="fitness" className="app-page">

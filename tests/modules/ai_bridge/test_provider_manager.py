@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -24,6 +25,7 @@ def _manager(tmp_path: Path) -> ProviderManager:
             open=AsyncMock(),
             is_limit_reached=AsyncMock(return_value=False),
             send_prompt=AsyncMock(return_value=f"reply from {name}"),
+            close=AsyncMock(),
         )
         for name in PROVIDER_ORDER
     }
@@ -71,6 +73,27 @@ async def test_send_prompt_fails_fast_on_non_limit_exception(tmp_path: Path) -> 
     with pytest.raises(RuntimeError):
         await manager.send_prompt("hello")
 
+    assert manager.active_name == first
+    manager._adapters[first].close.assert_not_awaited()  # only a timeout resets the browser context
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_closes_and_fails_fast_when_provider_times_out(tmp_path: Path) -> None:
+    # Regression: a wedged browser process (observed in practice under Xvfb
+    # with no GPU acceleration) used to leave send_prompt awaiting forever,
+    # holding self._lock, so every later call piled up behind it too. A
+    # timeout must (a) fail this call fast rather than switching providers
+    # (it's not a limit issue, same as any other non-limit failure) and (b)
+    # force-close the wedged adapter so its NEXT attempt gets a fresh
+    # browser context instead of reusing the same stuck one.
+    manager = _manager(tmp_path)
+    first = manager.active_name
+    manager._adapters[first].send_prompt = AsyncMock(side_effect=asyncio.TimeoutError())
+
+    with pytest.raises(asyncio.TimeoutError):
+        await manager.send_prompt("hello")
+
+    manager._adapters[first].close.assert_awaited_once()
     assert manager.active_name == first
 
 

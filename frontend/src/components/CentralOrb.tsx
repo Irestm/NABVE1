@@ -15,6 +15,7 @@ const SPIN_DURATION_SECONDS: Record<AssistantState, number> = {
   speaking: 2.4,
   error: 12,
   paused: 30,
+  onboarding: 9,
 };
 
 export function CentralOrb({ state }: CentralOrbProps): JSX.Element {
