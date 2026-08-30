@@ -27,6 +27,7 @@ import {
 import { confirmCommand, listCommandButtons, runCommand } from "../api/client";
 import type { CommandButtonDescriptor, CommandParamField } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { DiscussionEndButton } from "./DiscussionEndButton";
 import { GestureModeControl } from "./GestureModeControl";
 import "./CommandPanel.css";
 
@@ -304,7 +305,10 @@ export function CommandPanel({ onNavigateToGames }: CommandPanelProps): JSX.Elem
           </span>
           <div className="command-panel__grid">
             {group === "modes" && (
-              <GestureModeControl accent={GROUP_ACCENT[group] ?? DEFAULT_GROUP_ACCENT} />
+              <>
+                <GestureModeControl accent={GROUP_ACCENT[group] ?? DEFAULT_GROUP_ACCENT} />
+                <DiscussionEndButton accent={GROUP_ACCENT[group] ?? DEFAULT_GROUP_ACCENT} />
+              </>
             )}
             {groupCommands.map((command) => {
               const Icon = ICONS[command.icon];

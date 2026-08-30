@@ -128,6 +128,45 @@ def test_discussion_mode_exits_on_the_stop_word(monkeypatch) -> None:
     assert discussion_session.is_active() is False
 
 
+def test_discussion_mode_exits_on_the_end_button(monkeypatch) -> None:
+    # request_end_discussion() sets _end_discussion; the sub-loop must leave
+    # the mode without any spoken exit phrase.
+    dispatcher = CommandDispatcher()
+    loop, spoken, stt = _loop(
+        monkeypatch, dispatcher, ["давай подискутируем", "первый говорит", "второй отвечает"]
+    )
+
+    calls = {"n": 0}
+
+    def _rec(settings, stop_event, **kwargs):
+        calls["n"] += 1
+        if calls["n"] >= 3:  # command turn + one discussion line, then the button
+            loop._end_discussion.set()
+        return np.ones(1600, dtype=np.float32)
+
+    monkeypatch.setattr(pipeline_module.audio_io, "record_until_silence", _rec)
+
+    result = loop._handle_command(stt, _FakeTTS())
+
+    assert result is False
+    assert discussion_session.is_active() is False
+    assert "Заканчиваю дискуссию." in spoken
+
+
+def test_request_end_discussion_only_when_active(monkeypatch) -> None:
+    dispatcher = CommandDispatcher()
+    loop, _spoken, _stt = _loop(monkeypatch, dispatcher, [])
+    monkeypatch.setattr(
+        pipeline_module.VoiceAssistantLoop, "is_running", property(lambda self: True)
+    )
+
+    discussion_session.deactivate()
+    assert loop.request_end_discussion() is False
+    discussion_session.activate()
+    assert loop.request_end_discussion() is True
+    assert loop._end_discussion.is_set()
+
+
 def test_pending_discussion_flag_enters_mode_without_recording_a_command(monkeypatch) -> None:
     # The "Режим дискуссии" button path: request_discussion_mode() sets the
     # flag, and _handle_command must go straight into discussion mode — no

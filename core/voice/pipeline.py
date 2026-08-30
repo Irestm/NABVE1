@@ -229,6 +229,11 @@ class VoiceAssistantLoop:
         # button) so the next command turn enters discussion mode directly
         # instead of recording a command — see _handle_command's top.
         self._pending_discussion = False
+        # Set by request_end_discussion() (the "Закончить дискуссию" button)
+        # to leave modules/discussion_mode without the spoken exit phrase —
+        # doubles as the record_until_silence barge-in event so it cuts the
+        # current listen short rather than only landing on the next boundary.
+        self._end_discussion = threading.Event()
         self._thread: threading.Thread | None = None
         self._barge_in = BargeInMonitor(settings)
         # One-line summary of the previous exchange within the current
@@ -300,6 +305,19 @@ class VoiceAssistantLoop:
         self._pending_discussion = True
         self._paused_event.clear()
         self._manual_trigger_event.set()
+        return True
+
+    def request_end_discussion(self) -> bool:
+        """Leaves modules/discussion_mode for the "Закончить дискуссию"
+        button (equivalent to saying the exit phrase). The discussion
+        sub-loop checks this before each utterance and passes it into
+        record_until_silence as the barge-in event, so a press between
+        utterances ends the mode at once and a press mid-utterance ends it
+        as soon as that line finishes. Returns False if discussion mode
+        isn't currently running."""
+        if not self.is_running or not discussion_session.is_active():
+            return False
+        self._end_discussion.set()
         return True
 
     def request_pause(self) -> bool:
@@ -1421,19 +1439,30 @@ class VoiceAssistantLoop:
         assistant_name = profile_service_layer.get_fact(ProfileUnitOfWork(), ASSISTANT_NAME_KEY)
         sample_rate = self._settings.sample_rate
 
+        self._end_discussion.clear()
         discussion_session.activate()
         state_manager.set_state(AssistantState.DISCUSSION, "Слушаю беседу")
         opener = (
             "Слушаю вашу беседу. Скажите «что думаешь» с моим именем, чтобы спросить моё мнение, "
-            "и «выйди из режима дискуссии», чтобы закончить."
+            "и «выйди из режима дискуссии» или кнопку «Закончить дискуссию», чтобы закончить."
         )
         try:
             if self._speak_safely(tts, opener, language):
                 return True
 
             while not self._stop_event.is_set():
+                if self._end_discussion.is_set():
+                    self._end_discussion.clear()
+                    state_manager.set_state(AssistantState.SPEAKING)
+                    return self._speak_safely(tts, "Заканчиваю дискуссию.", language)
                 state_manager.set_state(AssistantState.DISCUSSION, "Слушаю беседу")
-                audio = audio_io.record_until_silence(self._settings, self._stop_event)
+                audio = audio_io.record_until_silence(
+                    self._settings, self._stop_event, barge_in_stop_event=self._end_discussion
+                )
+                if self._end_discussion.is_set():
+                    self._end_discussion.clear()
+                    state_manager.set_state(AssistantState.SPEAKING)
+                    return self._speak_safely(tts, "Заканчиваю дискуссию.", language)
                 if getattr(audio, "size", 0) == 0:
                     continue
                 text = command_stt.transcribe(audio).text.strip()
