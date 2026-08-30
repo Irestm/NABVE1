@@ -19,6 +19,9 @@ from modules.gesture_control.config import (
     HAND_WARMUP_FRAMES,
     PHYSICAL_MOUSE_OVERRIDE_SECONDS,
     PHYSICAL_MOUSE_THRESHOLD_PX,
+    FIST_CURSOR_LOCK_MULT,
+    FIST_CURSOR_UNLOCK_MULT,
+    FIST_DRAG_DEADZONE_PX,
     FIST_ENGAGE_DEBOUNCE_FRAMES,
     FIST_LOST_GRACE_FRAMES,
     FIST_RATIO_MEDIAN,
@@ -211,13 +214,19 @@ class GestureController:
         prev_tip: tuple[float, float] | None = None
         dwell_anchor: tuple[float, float] | None = None
         dwell_frames = 0
+        cursor_locked = False
+        drag_anchor_hand: tuple[float, float] | None = None
+        drag_anchor_cursor: tuple[int, int] = (0, 0)
+        py_per_norm = cursor.screen_size[1] / max(bounds[3] - bounds[2], 1e-6)
 
         def _release_grab() -> None:
-            nonlocal fist_state, fist_streak
+            nonlocal fist_state, fist_streak, cursor_locked, drag_anchor_hand
             if fist_state:
                 cursor.click_up()
             fist_state = False
             fist_streak = 0
+            cursor_locked = False
+            drag_anchor_hand = None
 
         try:
             while not self._stop_event.is_set():
@@ -346,31 +355,61 @@ class GestureController:
                         if abs(ix - px) >= deadzone_px or abs(iy - py) >= deadzone_px:
                             cursor.move_cursor(ix, iy)
 
-                # No new camera frame — keep gliding the cursor toward the
-                # last known point (smooth motion between sparse frames), but
-                # don't advance any gesture state machine off a stale frame.
+                def _position_cursor(hand: list) -> None:
+                    # A held fist drags from the click point using the stable
+                    # palm centre (the curled fingertip is useless for this);
+                    # a closing hand freezes the pointer so the curl doesn't
+                    # drag it off target; otherwise track the fingertip.
+                    if fist_state and drag_anchor_hand is not None:
+                        hc = hand_centre(hand)
+                        w, h = cursor.screen_size
+                        tx = drag_anchor_cursor[0] + (hc[0] - drag_anchor_hand[0]) * px_per_norm
+                        ty = drag_anchor_cursor[1] + (hc[1] - drag_anchor_hand[1]) * py_per_norm
+                        tx = max(0.0, min(w - 1.0, tx))
+                        ty = max(0.0, min(h - 1.0, ty))
+                        cx, cy = cursor.current_pos()
+                        if abs(tx - cx) >= FIST_DRAG_DEADZONE_PX or abs(ty - cy) >= FIST_DRAG_DEADZONE_PX:
+                            cursor.move_cursor(int(round(tx)), int(round(ty)))
+                    elif cursor_locked:
+                        cursor.sync_last_set()
+                    else:
+                        _move_toward(hand[8])
+
+                # Fist score + cursor lock. The fresh buffer feeds a median so
+                # one noisy frame can't fake a fist; the lock latches with
+                # hysteresis the moment the hand begins to close.
+                if result.fresh:
+                    fist_buf.append(fist_raw)
+                    if len(fist_buf) > FIST_RATIO_MEDIAN:
+                        fist_buf.pop(0)
+                fist_med = median(fist_buf) if fist_buf else fist_raw
+                if fist_state:
+                    cursor_locked = False
+                elif not cursor_locked and fist_med <= threshold * FIST_CURSOR_LOCK_MULT:
+                    cursor_locked = True
+                elif cursor_locked and fist_med > threshold * FIST_CURSOR_UNLOCK_MULT:
+                    cursor_locked = False
+
+                # No new camera frame — position the cursor with the current
+                # latched state, but don't advance any gesture state machine.
                 if not result.fresh:
                     if swipe_cooldown > 0 or open_palm_streak >= SWIPE_OPEN_STREAK_FRAMES:
-                        cursor.sync_last_set()  # swipe mode freezes the pointer
+                        cursor.sync_last_set()
                     else:
-                        _move_toward(tip)  # keeps a drag following too
+                        _position_cursor(primary)
                     self._pace(loop_start, frame_interval)
                     continue
 
-                # Fist = click/drag. "Catch fast, release slow": engage on the
-                # best (min) of the last few raw scores, release only once the
-                # median has clearly climbed back (hand opened).
-                fist_buf.append(fist_raw)
-                if len(fist_buf) > FIST_RATIO_MEDIAN:
-                    fist_buf.pop(0)
                 release_threshold = threshold * FIST_RELEASE_MULT
-                if fist_state:
-                    fisting_now = median(fist_buf) <= release_threshold
-                else:
-                    fisting_now = min(fist_buf) <= threshold
+                fisting_now = fist_med <= (release_threshold if fist_state else threshold)
 
-                # --- swipe mode: a whole open palm, not a fist ---
-                if not fisting_now and not fist_state and is_open_palm(primary, open_palm_ratio):
+                # --- swipe mode: a whole open palm, not a fist / closing hand ---
+                if (
+                    not fisting_now
+                    and not fist_state
+                    and not cursor_locked
+                    and is_open_palm(primary, open_palm_ratio)
+                ):
                     open_palm_streak += 1
                 else:
                     open_palm_streak = 0
@@ -405,11 +444,9 @@ class GestureController:
                     self._pace(loop_start, frame_interval)
                     continue
 
-                # --- pointing mode: cursor + fist-click + two-hand zoom ---
-                _move_toward(tip)
+                # --- pointing / drag: move cursor, then run the fist state ---
+                _position_cursor(primary)
 
-                # Fist: near-instant engage, debounced + hysteresis release
-                # so a drag never drops on one bad frame.
                 if fisting_now != fist_state:
                     fist_streak += 1
                     need = (
@@ -420,7 +457,16 @@ class GestureController:
                     if fist_streak >= need:
                         fist_state = fisting_now
                         fist_streak = 0
-                        cursor.click_down() if fist_state else cursor.click_up()
+                        if fist_state:
+                            # Click lands where the cursor was frozen; the
+                            # drag from here follows the palm centre.
+                            cursor.click_down()
+                            drag_anchor_hand = hand_centre(primary)
+                            drag_anchor_cursor = cursor.current_pos()
+                            cursor_locked = False
+                        else:
+                            cursor.click_up()
+                            drag_anchor_hand = None
                 else:
                     fist_streak = 0
 

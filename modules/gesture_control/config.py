@@ -30,10 +30,11 @@ GESTURE_TRACKING_ZONE_KEY = "gesture_tracking_zone"
 GESTURE_ZONE_KEY = "gesture_zone_bounds"
 
 # Fist = click/drag. gesture_recognizer.fist_score is the largest of the
-# four finger tip/PIP ratios (scale-invariant) — a tight fist is ~0.8 or
-# below, a relaxed/pointing hand ~1.4+. fist_score <= threshold means
-# "closed". Calibration personalises it; this default works without.
-DEFAULT_FIST_RATIO = 1.0
+# four finger tip/PIP ratios (scale-invariant) — a tight fist is ~0.7-0.8,
+# a relaxed/pointing hand ~1.4+. fist_score <= threshold means "closed".
+# Kept low so only a real, deliberate fist counts (a pointing/relaxed hand
+# was tripping it). Calibration personalises it.
+DEFAULT_FIST_RATIO = 0.82
 DEFAULT_TRACKING_ZONE = 0.70  # central fraction of the camera frame that maps to the whole screen
 
 # Ignore final on-screen cursor moves smaller than this — kills the last of
@@ -117,10 +118,21 @@ CORNER_ZONE_MIN_SPAN = 0.18
 # FIST_RELEASE_DEBOUNCE_FRAMES. If MediaPipe drops the hand for a frame or
 # two, FIST_LOST_GRACE_FRAMES keeps the click held through the gap.
 FIST_RATIO_MEDIAN = 3
-FIST_RELEASE_MULT = 1.4
-FIST_ENGAGE_DEBOUNCE_FRAMES = 2
+FIST_RELEASE_MULT = 1.5
+FIST_ENGAGE_DEBOUNCE_FRAMES = 1
 FIST_RELEASE_DEBOUNCE_FRAMES = 3
 FIST_LOST_GRACE_FRAMES = 4
+
+# The tracked point (index fingertip) sweeps a long way as the hand closes,
+# which used to drag the cursor off-target right before a click. So the
+# instant the hand starts closing (fist_score drops below threshold x
+# FIST_CURSOR_LOCK_MULT) the cursor freezes in place, and only unfreezes
+# once the hand is clearly open again (above threshold x FIST_CURSOR_UNLOCK_
+# MULT). While a fist is *held*, dragging follows the stable palm centre,
+# not the curled fingertip.
+FIST_CURSOR_LOCK_MULT = 1.5
+FIST_CURSOR_UNLOCK_MULT = 2.0
+FIST_DRAG_DEADZONE_PX = 3
 
 # Precision hover: the cursor eases toward the mapped hand position with a
 # gain that scales with hand speed. Fast hand -> gain 1.0 (1:1, cross the
