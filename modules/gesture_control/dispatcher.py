@@ -20,6 +20,7 @@ from modules.gesture_control.config import (
     PHYSICAL_MOUSE_OVERRIDE_SECONDS,
     PHYSICAL_MOUSE_THRESHOLD_PX,
     PINCH_ENGAGE_DEBOUNCE_FRAMES,
+    PINCH_LOST_GRACE_FRAMES,
     PINCH_RATIO_MEDIAN,
     PINCH_RELEASE_DEBOUNCE_FRAMES,
     PINCH_RELEASE_MULT,
@@ -30,7 +31,6 @@ from modules.gesture_control.config import (
     SWIPE_COOLDOWN_FRAMES,
     SWIPE_HISTORY_FRAMES,
     SWIPE_MAX_DY_RATIO,
-    SWIPE_MIN_DX,
     SWIPE_OPEN_STREAK_FRAMES,
     ZOOM_COOLDOWN_FRAMES,
     ZOOM_DELTA_THRESHOLD,
@@ -42,6 +42,7 @@ from modules.gesture_control.gesture_recognizer import (
     hand_centre,
     is_open_palm,
     median,
+    open_palm_score,
     pinch_ratio,
     swipe_direction,
     two_hand_spread_delta,
@@ -134,6 +135,8 @@ class GestureController:
         zone = _load_float(GESTURE_TRACKING_ZONE_KEY, DEFAULT_TRACKING_ZONE)
         min_alpha = calibration.load_min_alpha()
         deadzone_px = calibration.load_deadzone_px()
+        open_palm_ratio = calibration.load_open_palm_ratio()
+        swipe_min_dx = calibration.load_swipe_min_dx()
 
         try:
             tracker = HandTracker(min_alpha=min_alpha)
@@ -167,6 +170,7 @@ class GestureController:
         zoom_cooldown = 0
         pinch_state = False
         pinch_streak = 0
+        pinch_lost_grace = 0
         ratio_buf: list[float] = []
         override_until = 0.0
         announced_ready = False
@@ -214,6 +218,14 @@ class GestureController:
                     continue
 
                 if not result.hands:
+                    # A pinch often makes MediaPipe drop the hand for a frame
+                    # or two (thumb and index tips occlude) — hold the click
+                    # through a short gap instead of releasing it.
+                    if pinch_state and pinch_lost_grace < PINCH_LOST_GRACE_FRAMES:
+                        pinch_lost_grace += 1
+                        prev_spread = None
+                        self._pace(loop_start, frame_interval)
+                        continue
                     _release_pinch()
                     prev_spread = None
                     # decay, don't reset — a one-frame tracking gap shouldn't
@@ -229,20 +241,30 @@ class GestureController:
                     self._pace(loop_start, frame_interval)
                     continue
 
+                pinch_lost_grace = 0
+
                 primary = result.hands[0]
                 tip = primary[8]
                 raw_tip = result.raw_primary_tip or tip
                 ratio_raw = pinch_ratio(primary)
 
                 if session is not None and not session.done:
-                    # Steady-phase tremor is measured on the *raw* fingertip —
-                    # the smoothed one would understate the very shake we're
-                    # trying to size the deadzone against.
-                    session.observe(ratio_raw, raw_tip)
+                    session.observe(
+                        calibration.CalibrationFrame(
+                            pinch_ratio=ratio_raw,
+                            open_palm_score=open_palm_score(primary),
+                            raw_tip=raw_tip,
+                            palm_centre=hand_centre(primary),
+                        )
+                    )
                     self._drain_calibration_prompt(session)
                     if session.done:
-                        threshold, deadzone_px, applied_alpha = session.persist()
-                        tracker.set_min_alpha(applied_alpha)
+                        applied = session.persist()
+                        threshold = applied.pinch_threshold
+                        deadzone_px = applied.deadzone_px
+                        open_palm_ratio = applied.open_palm_ratio
+                        swipe_min_dx = applied.swipe_min_dx
+                        tracker.set_min_alpha(applied.min_alpha)
                         session = None
                     self._pace(loop_start, frame_interval)
                     continue
@@ -256,22 +278,23 @@ class GestureController:
 
                 if not announced_ready:
                     announced_ready = True
-                    self._announce(
-                        "Режим жестов включён. Щипок — клик и перетаскивание, две руки — масштаб, "
-                        "взмах открытой ладонью — переключение окон. Возьмётесь за мышь — жесты уступают."
-                    )
+                    self._announce("Режим жестов включён.")
 
-                # Median-filtered pinch ratio: raw landmark noise made the
-                # ratio flicker past the debounce so a pinch never engaged.
+                # "Catch fast, release slow": engage on the best (min) of the
+                # last few raw ratios, release only when the median has
+                # clearly climbed back. Landmark noise + the tip occlusion of
+                # a real pinch made a stricter test miss most clicks.
                 ratio_buf.append(ratio_raw)
                 if len(ratio_buf) > PINCH_RATIO_MEDIAN:
                     ratio_buf.pop(0)
-                ratio = median(ratio_buf)
                 release_threshold = threshold * PINCH_RELEASE_MULT
-                pinching_now = ratio <= (release_threshold if pinch_state else threshold)
+                if pinch_state:
+                    pinching_now = median(ratio_buf) <= release_threshold
+                else:
+                    pinching_now = min(ratio_buf) <= threshold
 
                 # --- swipe mode: a whole open palm, not pinching ---
-                if not pinching_now and not pinch_state and is_open_palm(primary):
+                if not pinching_now and not pinch_state and is_open_palm(primary, open_palm_ratio):
                     open_palm_streak += 1
                 else:
                     open_palm_streak = 0
@@ -292,7 +315,7 @@ class GestureController:
                     if len(swipe_x) > SWIPE_HISTORY_FRAMES:
                         swipe_x.pop(0)
                         swipe_y.pop(0)
-                    direction = swipe_direction(swipe_x, swipe_y, SWIPE_MIN_DX, SWIPE_MAX_DY_RATIO)
+                    direction = swipe_direction(swipe_x, swipe_y, swipe_min_dx, SWIPE_MAX_DY_RATIO)
                     if direction != 0:
                         cursor.trigger_window_switch("next" if direction > 0 else "prev")
                         swipe_cooldown = SWIPE_COOLDOWN_FRAMES
@@ -408,7 +431,7 @@ async def _handle_gesture_stop(_params: dict[str, Any]) -> dict[str, Any]:
 async def _handle_gesture_calibrate(_params: dict[str, Any]) -> dict[str, Any]:
     if not gesture_controller.request_recalibration():
         raise RuntimeError("Сначала включите режим жестов — калибровка идёт при активной камере.")
-    return {"message": "Начинаю калибровку жестов."}
+    return {"message": "Начинаю калибровку. Голос проведёт по каждому жесту — повторите каждый три раза."}
 
 
 def register_commands(dispatcher: CommandDispatcher) -> None:
@@ -428,5 +451,5 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         "gesture_calibrate",
         _handle_gesture_calibrate,
         dangerous=False,
-        description="Перекалибровать порог 'щипка' под текущего пользователя (режим жестов должен быть активен).",
+        description="Пошаговый мастер калибровки жестов под текущего пользователя (режим жестов должен быть активен).",
     )

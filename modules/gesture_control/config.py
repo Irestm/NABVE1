@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from core.config import DATA_DIR
 
-# Per-user profile facts written by calibration.CalibrationSession: the
-# pinch threshold, plus the jitter-derived deadzone and resting smoothing.
-# The tracking-zone override is optional and set by hand, not calibrated.
+# Per-user profile facts written by the calibration wizard
+# (calibration.CalibrationSession): one phase per gesture, each done 3x, each
+# deriving its own threshold. The tracking-zone override is optional and set
+# by hand, not calibrated.
 GESTURE_PINCH_THRESHOLD_KEY = "gesture_pinch_threshold"
 GESTURE_DEADZONE_PX_KEY = "gesture_deadzone_px"
 GESTURE_MIN_ALPHA_KEY = "gesture_min_alpha"
+GESTURE_OPEN_PALM_RATIO_KEY = "gesture_open_palm_ratio"
+GESTURE_SWIPE_MIN_DX_KEY = "gesture_swipe_min_dx"
 GESTURE_TRACKING_ZONE_KEY = "gesture_tracking_zone"
 
 # Pinch detection is scale-invariant: dist(thumb_tip, index_tip) divided by
@@ -55,15 +58,18 @@ STEADY_CALIBRATION_SAMPLES = 45
 JITTER_LOW_PX = 1.5
 JITTER_HIGH_PX = 9.0
 
-# Pinch = click. The pinch ratio is median-filtered over PINCH_RATIO_MEDIAN
-# frames first (landmark noise made a raw ratio flicker past the debounce and
-# never engage — "щипок вообще не работает"). Engage is near-instant;
-# release is debounced and uses hysteresis (ratio must climb to
-# PINCH_RELEASE_MULT x the threshold) so a drag never drops on one bad frame.
+# Pinch = click. "Catch fast, release slow": engage when the *best* (min) of
+# the last PINCH_RATIO_MEDIAN raw ratios dips under the threshold for
+# PINCH_ENGAGE_DEBOUNCE_FRAMES frames; release only when the *median* climbs
+# past PINCH_RELEASE_MULT x threshold and holds for PINCH_RELEASE_DEBOUNCE_
+# FRAMES. And when the thumb and index tips touch, MediaPipe often loses the
+# whole hand for a frame or two — PINCH_LOST_GRACE_FRAMES keeps the click
+# held through that gap instead of dropping it ("щипок на раз пятый").
 PINCH_RATIO_MEDIAN = 3
 PINCH_RELEASE_MULT = 1.6
-PINCH_ENGAGE_DEBOUNCE_FRAMES = 1
+PINCH_ENGAGE_DEBOUNCE_FRAMES = 2
 PINCH_RELEASE_DEBOUNCE_FRAMES = 3
+PINCH_LOST_GRACE_FRAMES = 4
 
 # Precision hover: the cursor eases toward the mapped hand position with a
 # gain that scales with hand speed. Fast hand -> gain 1.0 (1:1, cross the
@@ -92,17 +98,29 @@ ZOOM_DELTA_THRESHOLD = 0.04
 ZOOM_COOLDOWN_FRAMES = 8
 
 # Open-palm horizontal swipe = switch windows (Alt+Tab / Alt+Shift+Tab).
-# A whole open palm (gesture_recognizer.is_open_palm — 3+ fingers extended,
-# not pinching) held for SWIPE_OPEN_STREAK_FRAMES puts the worker in "swipe
-# mode": the cursor is frozen and only a horizontal palm-centre travel of at
-# least SWIPE_MIN_DX across SWIPE_HISTORY_FRAMES (mostly horizontal) fires a
-# switch. A pointing hand never enters this mode, so it can't swipe by
-# accident. Cooldown blocks everything briefly after a switch.
+# A whole open palm (gesture_recognizer.is_open_palm) held for
+# SWIPE_OPEN_STREAK_FRAMES puts the worker in "swipe mode": the cursor is
+# frozen and only a horizontal palm-centre travel of at least the swipe
+# distance across SWIPE_HISTORY_FRAMES (mostly horizontal) fires a switch. A
+# pointing hand never enters this mode. SWIPE_MIN_DX is the fallback travel;
+# the wizard measures the user's actual swing (theirs was shorter than this,
+# which is why "ладонь так и не сработала") into GESTURE_SWIPE_MIN_DX_KEY.
 SWIPE_HISTORY_FRAMES = 5
-SWIPE_MIN_DX = 0.26
-SWIPE_MAX_DY_RATIO = 0.55
+SWIPE_MIN_DX = 0.20
+SWIPE_MIN_DX_FLOOR = 0.10
+SWIPE_MIN_DX_CEIL = 0.40
+SWIPE_MAX_DY_RATIO = 0.6
 SWIPE_OPEN_STREAK_FRAMES = 3
 SWIPE_COOLDOWN_FRAMES = 12
+
+# Open-palm detection: is_open_palm compares each non-thumb fingertip's
+# distance-from-wrist to that finger's PIP joint's; open_palm_score is the
+# 3rd-largest of those ratios ("at least 3 fingers this extended"). The
+# fallback threshold; the wizard stores a personal one in
+# GESTURE_OPEN_PALM_RATIO_KEY between these bounds.
+DEFAULT_OPEN_PALM_RATIO = 1.12
+OPEN_PALM_RATIO_MIN = 1.04
+OPEN_PALM_RATIO_MAX = 1.7
 
 # Rejecting false hands ("воспринимает любой объект, даже голову") WITHOUT
 # starving real recognition (over-tight thresholds broke tracking): keep

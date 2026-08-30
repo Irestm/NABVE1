@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 
+from modules.gesture_control.config import DEFAULT_OPEN_PALM_RATIO
 from modules.gesture_control.hand_tracker import Landmarks
 
 # MediaPipe hand landmark indices.
@@ -42,17 +43,25 @@ def is_pinching(ratio: float, threshold: float) -> bool:
     return ratio <= threshold
 
 
-def is_open_palm(hand: Landmarks) -> bool:
-    """A whole open hand: at least three non-thumb fingers extended (tip
-    noticeably farther from the wrist than that finger's PIP joint). A
-    pointing hand (only the index out) fails this, so it can't be mistaken
-    for a swipe while the user is just aiming the cursor."""
+def open_palm_score(hand: Landmarks) -> float:
+    """How open the hand is: for each non-thumb finger, tip-distance-from-
+    wrist over PIP-distance-from-wrist (>1 = extended). Returns the 3rd
+    largest ratio — i.e. the value at/above which at least three fingers
+    are extended. A fist is ~1.0 or below, a spread palm ~1.3+."""
     wrist = hand[_WRIST]
-    extended = 0
-    for tip, pip in _FINGERS:
-        if _distance(hand[tip], wrist) > _distance(hand[pip], wrist) * 1.15:
-            extended += 1
-    return extended >= 3
+    ratios = sorted(
+        _distance(hand[tip], wrist) / max(_distance(hand[pip], wrist), 1e-4)
+        for tip, pip in _FINGERS
+    )
+    return ratios[1]  # 4 fingers -> index 1 is the 3rd largest
+
+
+def is_open_palm(hand: Landmarks, ratio_threshold: float = DEFAULT_OPEN_PALM_RATIO) -> bool:
+    """A whole open hand (3+ non-thumb fingers extended). A pointing hand
+    (only the index out) fails this, so it can't be mistaken for a swipe
+    while the user is just aiming the cursor. The threshold is personalised
+    by the calibration wizard."""
+    return open_palm_score(hand) >= ratio_threshold
 
 
 def hand_centre(hand: Landmarks) -> tuple[float, float]:

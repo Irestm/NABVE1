@@ -114,3 +114,14 @@ def test_is_open_palm_false_for_a_fist() -> None:
         hand[pip] = (0.5, 0.7)
         hand[tip] = (0.5, 0.75)  # tip closer to wrist than pip -> curled
     assert gr.is_open_palm(hand) is False
+
+
+def test_open_palm_score_is_third_largest_extension_ratio() -> None:
+    hand = _open_hand()  # all four fingers ratio 2.0
+    assert gr.open_palm_score(hand) == pytest.approx(2.0)
+
+
+def test_is_open_palm_threshold_is_configurable() -> None:
+    hand = _open_hand()  # score 2.0
+    assert gr.is_open_palm(hand, ratio_threshold=1.5) is True
+    assert gr.is_open_palm(hand, ratio_threshold=2.5) is False
