@@ -92,6 +92,18 @@ class CommandResponse(BaseModel):
     result: dict[str, Any] | None = None
 
 
+class GestureCalibrationState(BaseModel):
+    # modules/gesture_control calibration wizard — one step per gesture, each
+    # demonstrated `reps_target` times. Drives the on-screen "5 dots".
+    phase_index: int
+    total_phases: int
+    label: str
+    instruction: str
+    reps_done: int
+    reps_target: int
+    done: bool
+
+
 class StatusResponse(BaseModel):
     state: AssistantState
     detail: str = ""
@@ -104,6 +116,8 @@ class StatusResponse(BaseModel):
     # frontend uses it only for a small on-screen indicator — the enlarged
     # cursor is the OS's own (gesture_control/cursor_zoom.py), not an overlay.
     gesture_mode_active: bool = False
+    # Present only while the gesture calibration wizard is running.
+    gesture_calibration: GestureCalibrationState | None = None
 
 
 class DelayedTaskResponse(BaseModel):

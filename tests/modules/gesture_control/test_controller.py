@@ -21,7 +21,7 @@ class _FakeTracker:
     def read(self):
         return None  # no frames -> worker just idles until stopped
 
-    def set_min_alpha(self, _value: float) -> None:
+    def set_min_cutoff(self, _value: float) -> None:
         pass
 
     def close(self) -> None:
@@ -67,7 +67,7 @@ def _no_profile_db(monkeypatch):
     monkeypatch.setattr(gd.profile_service_layer, "set_fact", lambda *a, **k: None)
     monkeypatch.setattr(gd.calibration, "load_threshold", lambda: 0.05)
     monkeypatch.setattr(gd.calibration, "load_deadzone_px", lambda: 3)
-    monkeypatch.setattr(gd.calibration, "load_min_alpha", lambda: 0.06)
+    monkeypatch.setattr(gd.calibration, "load_min_cutoff", lambda: 1.2)
     monkeypatch.setattr(gd.calibration, "load_open_palm_ratio", lambda: 1.12)
     monkeypatch.setattr(gd.calibration, "load_swipe_min_dx", lambda: 0.2)
     monkeypatch.setattr(gd.calibration.profile_service_layer, "set_fact", lambda *a, **k: None)

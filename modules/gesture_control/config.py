@@ -8,7 +8,7 @@ from core.config import DATA_DIR
 # by hand, not calibrated.
 GESTURE_PINCH_THRESHOLD_KEY = "gesture_pinch_threshold"
 GESTURE_DEADZONE_PX_KEY = "gesture_deadzone_px"
-GESTURE_MIN_ALPHA_KEY = "gesture_min_alpha"
+GESTURE_MIN_CUTOFF_KEY = "gesture_min_cutoff"
 GESTURE_OPEN_PALM_RATIO_KEY = "gesture_open_palm_ratio"
 GESTURE_SWIPE_MIN_DX_KEY = "gesture_swipe_min_dx"
 GESTURE_TRACKING_ZONE_KEY = "gesture_tracking_zone"
@@ -38,23 +38,27 @@ CAMERA_INDEX = 0
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 
-# Adaptive (one-euro-style) smoothing: alpha rises with hand speed, so a
-# fast move barely lags while a still hand is heavily smoothed. A median-of-3
-# prefilter (_AdaptiveSmoother) drops single-frame spikes before this runs.
-# EMA_MIN_ALPHA is the fallback resting blend; "калибровка дрожания" replaces
-# it with a personal value between MIN_ALPHA_FLOOR (heavy tremor) and
-# MIN_ALPHA_CEIL (steady hand), stored under GESTURE_MIN_ALPHA_KEY. Values
-# kept deliberately low — repeated request for "меньше трясётся".
-EMA_MIN_ALPHA = 0.045
-EMA_MAX_ALPHA = 0.90
-EMA_SPEED_FULL = 0.07  # normalized units/frame at which smoothing is fully "off"
-MIN_ALPHA_FLOOR = 0.025
-MIN_ALPHA_CEIL = 0.10
+# Cursor smoothing: a genuine 1€ (One-Euro) filter on the tracked point,
+# fed by a median-of-3 prefilter that drops single-frame spikes. ONE_EURO_
+# MIN_CUTOFF is the low-pass cutoff (Hz) when the hand is still — lower =
+# steadier, more lag; ONE_EURO_BETA raises the cutoff with hand speed so a
+# deliberate move barely lags. The correct MediaPipe timestamp (fixed) is
+# what makes a real 1€ filter possible now.
+ONE_EURO_MIN_CUTOFF = 1.2
+ONE_EURO_BETA = 2.5
+ONE_EURO_D_CUTOFF = 1.0
+
+# "Калибровка дрожания" personalises the resting cutoff: it measures the
+# fingertip tremor (px) and maps it across [JITTER_LOW_PX, JITTER_HIGH_PX]
+# to a min-cutoff between MIN_CUTOFF_CEIL (steady hand, lighter) and
+# MIN_CUTOFF_FLOOR (shaky hand, heavier), stored under GESTURE_MIN_CUTOFF_KEY.
+MIN_CUTOFF_FLOOR = 0.45
+MIN_CUTOFF_CEIL = 1.6
 
 # "Калибровка дрожания": hold the hand still for this many frames, measure
 # the RMS tremor of the fingertip, and map it (in screen px) across this
-# band to a personal deadzone + resting alpha.
-STEADY_CALIBRATION_SAMPLES = 45
+# band to a personal deadzone + resting cutoff.
+STEADY_CALIBRATION_SAMPLES = 60
 JITTER_LOW_PX = 1.5
 JITTER_HIGH_PX = 9.0
 

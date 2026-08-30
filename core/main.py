@@ -49,6 +49,7 @@ from core.models import (
     FitnessWeightHistoryEntryResponse,
     GeminiKeyStatusResponse,
     GeneratedImageResponse,
+    GestureCalibrationState,
     GithubPatRequest,
     GithubStatusResponse,
     ImageRequest,
@@ -265,11 +266,15 @@ async def require_api_token(request: Request, call_next):  # type: ignore[no-unt
 
 @app.get("/api/status", response_model=StatusResponse)
 async def get_status() -> StatusResponse:
+    calibration = gesture_overlay_state.calibration
     return StatusResponse(
         state=state_manager.state,
         detail=state_manager.detail,
         active_module_context=voice_module_context.current(),
         gesture_mode_active=gesture_overlay_state.active,
+        gesture_calibration=(
+            GestureCalibrationState(**vars(calibration)) if calibration is not None else None
+        ),
     )
 
 

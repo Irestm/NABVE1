@@ -51,6 +51,50 @@
   font-weight: 600;
 }
 
+.gesture-cal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--item-accent, var(--accent-green)) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--item-accent, var(--accent-green)) 30%, transparent);
+}
+
+.gesture-cal__step {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.gesture-cal__instruction {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.gesture-cal__dots {
+  display: flex;
+  gap: 8px;
+}
+
+.gesture-cal__dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--border);
+  color: #fff;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.gesture-cal__dot--on {
+  background: var(--accent-green);
+  border-color: var(--accent-green);
+}
+
 .gesture-mode__badge {
   font-size: 10px;
   font-weight: 700;

@@ -8,10 +8,12 @@ from modules.gesture_control.config import (
     CURSOR_DEADZONE_PX,
     DEFAULT_OPEN_PALM_RATIO,
     DEFAULT_PINCH_RATIO,
-    EMA_MIN_ALPHA,
+    ONE_EURO_MIN_CUTOFF,
     STEADY_CALIBRATION_SAMPLES,
     SWIPE_MIN_DX,
 )
+
+_REPS = calibration._REQUIRED_REPS  # 5
 
 
 def _frame(pinch=1.0, palm=1.0, tip=(0.5, 0.5), centre=(0.5, 0.5)) -> CalibrationFrame:
@@ -24,21 +26,21 @@ def _do_steady(session: calibration.CalibrationSession, jitter: float = 0.002) -
         session.observe(_frame(tip=(0.5 + offset, 0.5)))
 
 
-def _do_pinch(session: calibration.CalibrationSession, reps: int = 3) -> None:
-    for _ in range(reps + 1):
+def _do_pinch(session: calibration.CalibrationSession) -> None:
+    for _ in range(_REPS + 1):
         session.observe(_frame(pinch=1.2))  # open
         session.observe(_frame(pinch=0.30))  # squeezed
 
 
-def _do_open_palm(session: calibration.CalibrationSession, reps: int = 3) -> None:
-    for _ in range(reps + 1):
+def _do_open_palm(session: calibration.CalibrationSession) -> None:
+    for _ in range(_REPS + 1):
         session.observe(_frame(palm=1.0))  # fist
         session.observe(_frame(palm=1.5))  # spread
 
 
-def _do_swipe(session: calibration.CalibrationSession, cycles: int = 4) -> None:
+def _do_swipe(session: calibration.CalibrationSession) -> None:
     xs: list[float] = []
-    for _ in range(cycles):
+    for _ in range(_REPS + 2):
         xs += [0.2, 0.35, 0.5, 0.65, 0.5, 0.35, 0.2]
     for x in xs:
         session.observe(_frame(centre=(x, 0.5)))
@@ -58,11 +60,35 @@ def test_phase_order_and_prompts() -> None:
     assert s.done is True
 
 
-def test_steady_phase_sets_deadzone_and_min_alpha() -> None:
+def test_progress_reports_phase_and_dots() -> None:
+    s = calibration.CalibrationSession(px_per_norm=1000.0)
+    p0 = s.progress()
+    assert p0.phase_index == 1 and p0.total_phases == 4 and p0.reps_target == _REPS
+    assert p0.reps_done == 0 and p0.done is False
+
+    _do_steady(s)
+    p1 = s.progress()
+    assert p1.phase_index == 2 and "Щипок" in p1.label and p1.reps_done == 0
+
+    # squeeze cycles fill dots one at a time (a rep completes on release)
+    for _ in range(3):
+        s.observe(_frame(pinch=1.2))
+        s.observe(_frame(pinch=0.30))
+        s.observe(_frame(pinch=1.2))
+    assert 1 <= s.progress().reps_done <= 3
+
+    _do_pinch(s)
+    _do_open_palm(s)
+    _do_swipe(s)
+    done = s.progress()
+    assert done.done is True and done.reps_done == _REPS
+
+
+def test_steady_phase_sets_deadzone_and_min_cutoff() -> None:
     s = calibration.CalibrationSession(px_per_norm=1000.0)
     _do_steady(s, jitter=0.002)
     assert s.deadzone_px is not None and s.deadzone_px >= 2
-    assert s.min_alpha is not None
+    assert s.min_cutoff is not None
 
 
 def test_pinch_phase_threshold_between_squeezed_and_open() -> None:
@@ -89,7 +115,6 @@ def test_swipe_phase_learns_a_travel_below_the_users_swing() -> None:
     _do_open_palm(s)
     _do_swipe(s)
     assert s.swipe_min_dx is not None
-    # user's swing was ~0.45; the learned trigger is a fraction of it
     assert 0.10 <= s.swipe_min_dx < 0.45
 
 
@@ -110,7 +135,7 @@ def test_persist_writes_all_five_facts(monkeypatch) -> None:
     assert set(written) == {
         "gesture_pinch_threshold",
         "gesture_deadzone_px",
-        "gesture_min_alpha",
+        "gesture_min_cutoff",
         "gesture_open_palm_ratio",
         "gesture_swipe_min_dx",
     }
@@ -124,7 +149,7 @@ def test_persist_falls_back_to_defaults_when_unfinished(monkeypatch) -> None:
     applied = s.persist()
     assert applied.pinch_threshold == DEFAULT_PINCH_RATIO
     assert applied.deadzone_px == CURSOR_DEADZONE_PX
-    assert applied.min_alpha == EMA_MIN_ALPHA
+    assert applied.min_cutoff == ONE_EURO_MIN_CUTOFF
     assert applied.open_palm_ratio == DEFAULT_OPEN_PALM_RATIO
     assert applied.swipe_min_dx == SWIPE_MIN_DX
 
@@ -133,7 +158,7 @@ def test_loaders_fall_back_to_defaults(monkeypatch) -> None:
     monkeypatch.setattr(calibration.profile_service_layer, "get_fact", lambda uow, key: None)
     assert calibration.load_threshold() == DEFAULT_PINCH_RATIO
     assert calibration.load_deadzone_px() == CURSOR_DEADZONE_PX
-    assert calibration.load_min_alpha() == EMA_MIN_ALPHA
+    assert calibration.load_min_cutoff() == ONE_EURO_MIN_CUTOFF
     assert calibration.load_open_palm_ratio() == DEFAULT_OPEN_PALM_RATIO
     assert calibration.load_swipe_min_dx() == SWIPE_MIN_DX
 
@@ -142,7 +167,7 @@ def test_loaders_read_stored_values(monkeypatch) -> None:
     stored = {
         "gesture_pinch_threshold": "0.41",
         "gesture_deadzone_px": "12",
-        "gesture_min_alpha": "0.05",
+        "gesture_min_cutoff": "0.9",
         "gesture_open_palm_ratio": "1.28",
         "gesture_swipe_min_dx": "0.19",
     }
@@ -151,6 +176,6 @@ def test_loaders_read_stored_values(monkeypatch) -> None:
     )
     assert calibration.load_threshold() == pytest.approx(0.41)
     assert calibration.load_deadzone_px() == 12
-    assert calibration.load_min_alpha() == pytest.approx(0.05)
+    assert calibration.load_min_cutoff() == pytest.approx(0.9)
     assert calibration.load_open_palm_ratio() == pytest.approx(1.28)
     assert calibration.load_swipe_min_dx() == pytest.approx(0.19)

@@ -11,9 +11,6 @@ from modules.gesture_control.config import (
     CAMERA_HEIGHT,
     CAMERA_INDEX,
     CAMERA_WIDTH,
-    EMA_MAX_ALPHA,
-    EMA_MIN_ALPHA,
-    EMA_SPEED_FULL,
     HAND_BBOX_MAX,
     HAND_BBOX_MIN,
     HAND_DETECTION_CONFIDENCE,
@@ -24,6 +21,9 @@ from modules.gesture_control.config import (
     HAND_PRESENCE_CONFIDENCE,
     HAND_TRACKING_CONFIDENCE,
     MODELS_DIR,
+    ONE_EURO_BETA,
+    ONE_EURO_D_CUTOFF,
+    ONE_EURO_MIN_CUTOFF,
 )
 
 logger = get_logger(__name__)
@@ -48,23 +48,37 @@ def _median(values: list[float]) -> float:
     return sorted(values)[len(values) // 2]
 
 
-class _AdaptiveSmoother:
-    """Per-point cursor filter: a median-of-3 on the raw landmark drops
-    single-frame spikes, then a one-euro-lite EMA whose blend factor scales
-    with hand speed — a quick motion barely lags (alpha -> EMA_MAX_ALPHA)
-    while a still hand barely trembles (alpha -> min_alpha, which
-    "калибровка дрожания" tunes per user)."""
+def _euro_alpha(cutoff: float, dt: float) -> float:
+    tau = 1.0 / (2.0 * math.pi * cutoff)
+    return 1.0 / (1.0 + tau / dt)
 
-    def __init__(self, min_alpha: float = EMA_MIN_ALPHA) -> None:
-        self._min_alpha = max(0.01, min(EMA_MAX_ALPHA, min_alpha))
-        self._value: tuple[float, float] | None = None
-        self._prev_raw: tuple[float, float] | None = None
+
+class _OneEuroFilter:
+    """The 1€ (One-Euro) filter on a single (x, y) point, fed by a median-of-3
+    prefilter that drops single-frame landmark spikes. `min_cutoff` (Hz) sets
+    the low-pass when the hand is still — lower = steadier + more lag; `beta`
+    raises the cutoff with hand speed so a deliberate move barely lags.
+    Needs a real timestamp (seconds) each update. `min_cutoff` is tuned per
+    user by "калибровка дрожания"."""
+
+    def __init__(
+        self,
+        min_cutoff: float = ONE_EURO_MIN_CUTOFF,
+        beta: float = ONE_EURO_BETA,
+        d_cutoff: float = ONE_EURO_D_CUTOFF,
+    ) -> None:
+        self._min_cutoff = max(0.05, min_cutoff)
+        self._beta = beta
+        self._d_cutoff = d_cutoff
         self._window: list[tuple[float, float]] = []
+        self._x_prev: tuple[float, float] | None = None
+        self._dx_prev = (0.0, 0.0)
+        self._t_prev: float | None = None
 
-    def set_min_alpha(self, min_alpha: float) -> None:
-        self._min_alpha = max(0.01, min(EMA_MAX_ALPHA, min_alpha))
+    def set_min_cutoff(self, min_cutoff: float) -> None:
+        self._min_cutoff = max(0.05, min_cutoff)
 
-    def update(self, point: tuple[float, float]) -> tuple[float, float]:
+    def update(self, point: tuple[float, float], timestamp: float) -> tuple[float, float]:
         self._window.append(point)
         if len(self._window) > 3:
             self._window.pop(0)
@@ -73,26 +87,35 @@ class _AdaptiveSmoother:
             _median([p[1] for p in self._window]),
         )
 
-        if self._value is None or self._prev_raw is None:
-            self._value = point
-            self._prev_raw = point
+        if self._x_prev is None or self._t_prev is None:
+            self._x_prev = point
+            self._t_prev = timestamp
             return point
 
-        speed = math.hypot(point[0] - self._prev_raw[0], point[1] - self._prev_raw[1])
-        self._prev_raw = point
-        ratio = min(1.0, speed / EMA_SPEED_FULL) if EMA_SPEED_FULL > 0 else 1.0
-        alpha = self._min_alpha + (EMA_MAX_ALPHA - self._min_alpha) * ratio
+        dt = timestamp - self._t_prev
+        if dt <= 0:
+            dt = 1.0 / 30.0
+        self._t_prev = timestamp
 
-        self._value = (
-            alpha * point[0] + (1 - alpha) * self._value[0],
-            alpha * point[1] + (1 - alpha) * self._value[1],
-        )
-        return self._value
+        a_d = _euro_alpha(self._d_cutoff, dt)
+        out: list[float] = []
+        dx_new: list[float] = []
+        for axis in (0, 1):
+            raw_dx = (point[axis] - self._x_prev[axis]) / dt
+            edx = self._dx_prev[axis] + a_d * (raw_dx - self._dx_prev[axis])
+            dx_new.append(edx)
+            cutoff = self._min_cutoff + self._beta * abs(edx)
+            a = _euro_alpha(cutoff, dt)
+            out.append(self._x_prev[axis] + a * (point[axis] - self._x_prev[axis]))
+        self._dx_prev = (dx_new[0], dx_new[1])
+        self._x_prev = (out[0], out[1])
+        return self._x_prev
 
     def reset(self) -> None:
-        self._value = None
-        self._prev_raw = None
         self._window.clear()
+        self._x_prev = None
+        self._dx_prev = (0.0, 0.0)
+        self._t_prev = None
 
 
 def _looks_like_hand(landmarks: Landmarks) -> bool:
@@ -157,15 +180,15 @@ class HandTracker:
     smoothed per hand."""
 
     def __init__(
-        self, camera_index: int = CAMERA_INDEX, min_alpha: float = EMA_MIN_ALPHA
+        self, camera_index: int = CAMERA_INDEX, min_cutoff: float = ONE_EURO_MIN_CUTOFF
     ) -> None:
         self._camera_index = camera_index
         self._cv2 = _require_cv2()
         self._capture = None
         self._landmarker = None
-        self._smoothers: list[_AdaptiveSmoother] = [
-            _AdaptiveSmoother(min_alpha),
-            _AdaptiveSmoother(min_alpha),
+        self._smoothers: list[_OneEuroFilter] = [
+            _OneEuroFilter(min_cutoff),
+            _OneEuroFilter(min_cutoff),
         ]
 
     def open(self) -> None:
@@ -207,9 +230,9 @@ class HandTracker:
         self._epoch = time.monotonic()
         self._last_timestamp_ms = -1
 
-    def set_min_alpha(self, min_alpha: float) -> None:
+    def set_min_cutoff(self, min_cutoff: float) -> None:
         for smoother in self._smoothers:
-            smoother.set_min_alpha(min_alpha)
+            smoother.set_min_cutoff(min_cutoff)
 
     def read(self) -> FrameResult | None:
         if self._capture is None or self._landmarker is None:
@@ -249,9 +272,10 @@ class HandTracker:
             hands.append(points)
         hands.sort(key=lambda h: h[0][0])
 
+        timestamp_s = timestamp_ms / 1000.0
         raw_index_tips = [hand[8] for hand in hands[:2]]
         for i, hand in enumerate(hands[:2]):
-            hand[8] = self._smoothers[i].update(hand[8])
+            hand[8] = self._smoothers[i].update(hand[8], timestamp_s)
         for i in range(len(hands), 2):
             self._smoothers[i].reset()
 

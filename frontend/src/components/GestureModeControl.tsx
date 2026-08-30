@@ -1,27 +1,33 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { Crosshair, Hand, X } from "lucide-react";
+import { Check, Crosshair, Hand, X } from "lucide-react";
 import { getStatus, runCommand } from "../api/client";
+import type { GestureCalibration } from "../types";
 import "./GestureModeControl.css";
 
 const POLL_INTERVAL_MS = 2000;
+const POLL_INTERVAL_CALIBRATING_MS = 500;
 
 interface GestureModeControlProps {
   accent: string;
 }
 
-// One entry in the "Режимы" group that stands in for what used to be three
-// separate buttons. Collapsed while the mode is off (a plain "Режим жестов"
-// activator); once active it expands to reveal "Выключить" and "Калибровка".
+// One entry in the "Режимы" group. Collapsed while the mode is off; once
+// active it expands to the gesture legend + "Калибровка"/"Выключить", and
+// while the calibration wizard runs it shows the step-by-step progress.
 export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Element {
   const [active, setActive] = useState(false);
+  const [calibration, setCalibration] = useState<GestureCalibration | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const calibratingRef = useRef(false);
 
   async function refresh(): Promise<void> {
     try {
       const status = await getStatus();
       setActive(status.gesture_mode_active);
+      setCalibration(status.gesture_calibration ?? null);
+      calibratingRef.current = Boolean(status.gesture_calibration);
     } catch (err) {
       console.error("GestureModeControl status poll failed:", err);
     }
@@ -29,10 +35,16 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
 
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => {
+    let timer = 0;
+    const tick = () => {
       if (!busyRef.current) void refresh();
-    }, POLL_INTERVAL_MS);
-    return () => window.clearInterval(timer);
+      timer = window.setTimeout(
+        tick,
+        calibratingRef.current ? POLL_INTERVAL_CALIBRATING_MS : POLL_INTERVAL_MS,
+      );
+    };
+    timer = window.setTimeout(tick, POLL_INTERVAL_MS);
+    return () => window.clearTimeout(timer);
   }, []);
 
   async function run(command: string): Promise<void> {
@@ -74,40 +86,69 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
         <span className="gesture-mode__title">Режим жестов</span>
         <span className="gesture-mode__badge">активен</span>
       </div>
-      <ul className="gesture-mode__legend">
-        <li>
-          <b>Рука перед камерой</b> — курсор (увеличен в 1,5×) идёт за указательным пальцем;
-          работает по всему компьютеру. Активна центральная часть кадра.
-        </li>
-        <li>
-          <b>Замедли руку у цели</b> — курсор переходит на точное наведение и замирает при
-          наведении, чтобы попасть в мелкую кнопку.
-        </li>
-        <li>
-          <b>Щипок</b> (большой + указательный, «ОК» / держишь монетку) — клик.
-        </li>
-        <li>
-          <b>Щипок и веди</b> — выделение / перетаскивание. Разжал — отпустил.
-        </li>
-        <li>
-          <b>Две руки в стороны / вместе</b> — масштаб (Ctrl + колесо).
-        </li>
-        <li>
-          <b>Взмах открытой ладонью влево / вправо</b> — переключение окон (Alt+Tab).
-        </li>
-        <li>
-          <b>Тронул физическую мышь</b> — жесты уступают на пару секунд, убрал руку — снова активны.
-        </li>
-      </ul>
+
+      {calibration ? (
+        <div className="gesture-cal">
+          <div className="gesture-cal__step">
+            Калибровка {Math.min(calibration.phase_index, calibration.total_phases)} из{" "}
+            {calibration.total_phases}: <b>{calibration.label}</b>
+          </div>
+          <p className="gesture-cal__instruction">
+            {calibration.done
+              ? "Калибровка завершена — жесты подстроены под вас."
+              : `${calibration.instruction}. Повторите ${calibration.reps_target} раз — следите за кружками.`}
+          </p>
+          <div className="gesture-cal__dots">
+            {Array.from({ length: calibration.reps_target }).map((_, i) => (
+              <span
+                key={i}
+                className={
+                  "gesture-cal__dot" + (i < calibration.reps_done ? " gesture-cal__dot--on" : "")
+                }
+              >
+                {i < calibration.reps_done ? <Check size={12} strokeWidth={3} /> : null}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <ul className="gesture-mode__legend">
+          <li>
+            <b>Рука перед камерой</b> — курсор (увеличен в 1,5×) идёт за указательным пальцем;
+            работает по всему компьютеру. Активна центральная часть кадра.
+          </li>
+          <li>
+            <b>Замедли руку у цели</b> — курсор переходит на точное наведение и замирает при
+            наведении, чтобы попасть в мелкую кнопку.
+          </li>
+          <li>
+            <b>Щипок</b> (большой + указательный, «ОК» / держишь монетку) — клик.
+          </li>
+          <li>
+            <b>Щипок и веди</b> — выделение / перетаскивание. Разжал — отпустил.
+          </li>
+          <li>
+            <b>Две руки в стороны / вместе</b> — масштаб (Ctrl + колесо).
+          </li>
+          <li>
+            <b>Взмах открытой ладонью влево / вправо</b> — переключение окон (Alt+Tab).
+          </li>
+          <li>
+            <b>Тронул физическую мышь</b> — жесты уступают на пару секунд, убрал руку — снова
+            активны.
+          </li>
+        </ul>
+      )}
+
       <div className="gesture-mode__actions">
         <button
           type="button"
           className="gesture-mode__action"
-          disabled={busy}
+          disabled={busy || Boolean(calibration && !calibration.done)}
           onClick={() => void run("gesture_calibrate")}
         >
           <Crosshair size={15} />
-          Калибровка
+          {calibration && !calibration.done ? "Калибровка…" : "Калибровка"}
         </button>
         <button
           type="button"

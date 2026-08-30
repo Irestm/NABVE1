@@ -133,13 +133,13 @@ class GestureController:
 
     def _run(self) -> None:
         zone = _load_float(GESTURE_TRACKING_ZONE_KEY, DEFAULT_TRACKING_ZONE)
-        min_alpha = calibration.load_min_alpha()
+        min_cutoff = calibration.load_min_cutoff()
         deadzone_px = calibration.load_deadzone_px()
         open_palm_ratio = calibration.load_open_palm_ratio()
         swipe_min_dx = calibration.load_swipe_min_dx()
 
         try:
-            tracker = HandTracker(min_alpha=min_alpha)
+            tracker = HandTracker(min_cutoff=min_cutoff)
             tracker.open()
             cursor = CursorController()
         except Exception as exc:
@@ -163,6 +163,7 @@ class GestureController:
             self._recalibrate = False
             session = calibration.CalibrationSession(px_per_norm=px_per_norm)
             self._drain_calibration_prompt(session)
+            overlay_state.set_calibration(session.progress())
 
         frame_interval = 1.0 / PROCESSING_FPS
         warmup_cap = HAND_WARMUP_FRAMES + 2
@@ -197,6 +198,7 @@ class GestureController:
                     self._recalibrate = False
                     session = calibration.CalibrationSession(px_per_norm=px_per_norm)
                     self._drain_calibration_prompt(session)
+                    overlay_state.set_calibration(session.progress())
 
                 result = tracker.read()
                 if result is None:
@@ -258,14 +260,16 @@ class GestureController:
                         )
                     )
                     self._drain_calibration_prompt(session)
+                    overlay_state.set_calibration(session.progress())
                     if session.done:
                         applied = session.persist()
                         threshold = applied.pinch_threshold
                         deadzone_px = applied.deadzone_px
                         open_palm_ratio = applied.open_palm_ratio
                         swipe_min_dx = applied.swipe_min_dx
-                        tracker.set_min_alpha(applied.min_alpha)
+                        tracker.set_min_cutoff(applied.min_cutoff)
                         session = None
+                        overlay_state.set_calibration(None)
                     self._pace(loop_start, frame_interval)
                     continue
 
@@ -431,7 +435,7 @@ async def _handle_gesture_stop(_params: dict[str, Any]) -> dict[str, Any]:
 async def _handle_gesture_calibrate(_params: dict[str, Any]) -> dict[str, Any]:
     if not gesture_controller.request_recalibration():
         raise RuntimeError("Сначала включите режим жестов — калибровка идёт при активной камере.")
-    return {"message": "Начинаю калибровку. Голос проведёт по каждому жесту — повторите каждый три раза."}
+    return {"message": "Начинаю калибровку. Голос и экран проведут по каждому жесту — повторите каждый пять раз."}
 
 
 def register_commands(dispatcher: CommandDispatcher) -> None:

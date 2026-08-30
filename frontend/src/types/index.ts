@@ -11,11 +11,22 @@ export type AssistantState =
   | "critical_reminder"
   | "discussion";
 
+export interface GestureCalibration {
+  phase_index: number;
+  total_phases: number;
+  label: string;
+  instruction: string;
+  reps_done: number;
+  reps_target: number;
+  done: boolean;
+}
+
 export interface StatusResponse {
   state: AssistantState;
   detail: string;
   active_module_context: string | null;
   gesture_mode_active: boolean;
+  gesture_calibration?: GestureCalibration | null;
 }
 
 // Response of both POST /api/voice/trigger and POST /api/voice/pause —

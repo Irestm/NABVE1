@@ -10,16 +10,16 @@ from modules.gesture_control.config import (
     DEADZONE_PX_MIN,
     DEFAULT_OPEN_PALM_RATIO,
     DEFAULT_PINCH_RATIO,
-    EMA_MIN_ALPHA,
     GESTURE_DEADZONE_PX_KEY,
-    GESTURE_MIN_ALPHA_KEY,
+    GESTURE_MIN_CUTOFF_KEY,
     GESTURE_OPEN_PALM_RATIO_KEY,
     GESTURE_PINCH_THRESHOLD_KEY,
     GESTURE_SWIPE_MIN_DX_KEY,
     JITTER_HIGH_PX,
     JITTER_LOW_PX,
-    MIN_ALPHA_CEIL,
-    MIN_ALPHA_FLOOR,
+    MIN_CUTOFF_CEIL,
+    MIN_CUTOFF_FLOOR,
+    ONE_EURO_MIN_CUTOFF,
     OPEN_PALM_RATIO_MAX,
     OPEN_PALM_RATIO_MIN,
     STEADY_CALIBRATION_SAMPLES,
@@ -33,7 +33,9 @@ from modules.user_profile.uow import ProfileUnitOfWork
 
 logger = get_logger(__name__)
 
-_REQUIRED_REPS = 3
+# Each gesture is demonstrated this many times; the wizard learns the
+# threshold from the spread of those reps.
+_REQUIRED_REPS = 5
 
 _PHASE_STEADY = "steady"
 _PHASE_PINCH = "pinch"
@@ -41,12 +43,22 @@ _PHASE_OPEN_PALM = "open_palm"
 _PHASE_SWIPE = "swipe"
 _PHASE_DONE = "done"
 
+_TOTAL_PHASES = 4
+
 _PROMPTS = {
     _PHASE_STEADY: "Калибровка. Держите руку неподвижно перед камерой пару секунд.",
-    _PHASE_PINCH: "Теперь три раза медленно сожмите и разожмите большой и указательный пальцы.",
-    _PHASE_OPEN_PALM: "Теперь три раза раскройте всю ладонь и снова сожмите в кулак.",
-    _PHASE_SWIPE: "Теперь три раза проведите открытой ладонью влево и вправо.",
+    _PHASE_PINCH: "Теперь пять раз медленно сожмите и разожмите большой и указательный пальцы.",
+    _PHASE_OPEN_PALM: "Теперь пять раз раскройте всю ладонь и снова сожмите в кулак.",
+    _PHASE_SWIPE: "Теперь пять раз проведите открытой ладонью влево и вправо.",
     _PHASE_DONE: "Калибровка завершена.",
+}
+
+# (phase_index, short label, short on-screen instruction)
+_PHASE_META = {
+    _PHASE_STEADY: (1, "Неподвижная рука", "Держите руку неподвижно перед камерой"),
+    _PHASE_PINCH: (2, "Щипок", "Сожмите и разожмите большой и указательный пальцы"),
+    _PHASE_OPEN_PALM: (3, "Ладонь", "Раскройте всю ладонь и снова сожмите в кулак"),
+    _PHASE_SWIPE: (4, "Взмах ладонью", "Проведите открытой ладонью влево и вправо"),
 }
 
 
@@ -59,10 +71,21 @@ class CalibrationFrame:
 
 
 @dataclass(frozen=True)
+class CalibrationProgress:
+    phase_index: int
+    total_phases: int
+    label: str
+    instruction: str
+    reps_done: int
+    reps_target: int
+    done: bool
+
+
+@dataclass(frozen=True)
 class AppliedCalibration:
     pinch_threshold: float
     deadzone_px: int
-    min_alpha: float
+    min_cutoff: float
     open_palm_ratio: float
     swipe_min_dx: float
 
@@ -71,10 +94,12 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def _lerp_min_alpha(jitter_px: float) -> float:
+def _lerp_min_cutoff(jitter_px: float) -> float:
+    """Steady hand (low jitter) -> MIN_CUTOFF_CEIL (lighter smoothing);
+    shaky hand (high jitter) -> MIN_CUTOFF_FLOOR (heavier)."""
     span = max(JITTER_HIGH_PX - JITTER_LOW_PX, 1e-6)
     t = _clamp((jitter_px - JITTER_LOW_PX) / span, 0.0, 1.0)
-    return round(MIN_ALPHA_CEIL + (MIN_ALPHA_FLOOR - MIN_ALPHA_CEIL) * t, 3)
+    return round(MIN_CUTOFF_CEIL + (MIN_CUTOFF_FLOOR - MIN_CUTOFF_CEIL) * t, 3)
 
 
 class _RepCounter:
@@ -95,7 +120,7 @@ class _RepCounter:
         self._samples.append(value)
         low, high = min(self._samples), max(self._samples)
         span = high - low
-        if span < self._min_span:  # not enough range seen to know the two states apart
+        if span < self._min_span:  # not enough range seen to tell the two states apart
             return
         band = span * 0.15
         mid = (low + high) / 2
@@ -116,9 +141,10 @@ class _RepCounter:
 @dataclass
 class CalibrationSession:
     """The gesture wizard: STEADY (jitter) -> PINCH -> OPEN_PALM -> SWIPE,
-    each gesture done three times, each deriving its own personal threshold.
-    Feed it a CalibrationFrame every frame; drain take_announcement() for
-    the spoken step prompts; call persist() once done."""
+    each gesture demonstrated five times, each deriving its own personal
+    threshold. Feed it a CalibrationFrame every frame; drain
+    take_announcement() for the spoken prompts and progress() for the
+    on-screen wizard; call persist() once done."""
 
     px_per_norm: float = 1000.0
 
@@ -139,7 +165,7 @@ class CalibrationSession:
 
     done: bool = False
     deadzone_px: int | None = None
-    min_alpha: float | None = None
+    min_cutoff: float | None = None
     pinch_threshold: float | None = None
     open_palm_ratio: float | None = None
     swipe_min_dx: float | None = None
@@ -147,6 +173,26 @@ class CalibrationSession:
     def take_announcement(self) -> str | None:
         message, self._pending = self._pending, None
         return message
+
+    def progress(self) -> CalibrationProgress:
+        if self._phase == _PHASE_DONE:
+            return CalibrationProgress(
+                _TOTAL_PHASES, _TOTAL_PHASES, "Готово", "Калибровка завершена",
+                _REQUIRED_REPS, _REQUIRED_REPS, True,
+            )
+        index, label, instruction = _PHASE_META[self._phase]
+        if self._phase == _PHASE_STEADY:
+            done = len(self._steady_points) * _REQUIRED_REPS // max(STEADY_CALIBRATION_SAMPLES, 1)
+        elif self._phase == _PHASE_PINCH:
+            done = self._pinch.reps
+        elif self._phase == _PHASE_OPEN_PALM:
+            done = self._open_palm.reps
+        else:
+            done = len(self._swipe_travels)
+        return CalibrationProgress(
+            index, _TOTAL_PHASES, label, instruction,
+            min(_REQUIRED_REPS, done), _REQUIRED_REPS, False,
+        )
 
     def _advance(self, phase: str) -> None:
         self._phase = phase
@@ -182,12 +228,12 @@ class CalibrationSession:
         )
         jitter_px = rms * self.px_per_norm
         self.deadzone_px = int(_clamp(round(jitter_px * 3 + 2), DEADZONE_PX_MIN, DEADZONE_PX_MAX))
-        self.min_alpha = _lerp_min_alpha(jitter_px)
+        self.min_cutoff = _lerp_min_cutoff(jitter_px)
         logger.info(
-            "Calibration STEADY: jitter=%.1fpx deadzone=%dpx min_alpha=%.3f",
+            "Calibration STEADY: jitter=%.1fpx deadzone=%dpx min_cutoff=%.2f",
             jitter_px,
             self.deadzone_px,
-            self.min_alpha,
+            self.min_cutoff,
         )
         self._advance(_PHASE_PINCH)
 
@@ -241,7 +287,7 @@ class CalibrationSession:
             self._finish_swipe()
 
     def _finish_swipe(self) -> None:
-        value = median(sorted(self._swipe_travels)) * 0.6
+        value = median(self._swipe_travels) * 0.6
         self.swipe_min_dx = round(_clamp(value, SWIPE_MIN_DX_FLOOR, SWIPE_MIN_DX_CEIL), 3)
         logger.info(
             "Calibration SWIPE: travels=%s swipe_min_dx=%.3f",
@@ -256,7 +302,7 @@ class CalibrationSession:
             if self.pinch_threshold is not None
             else DEFAULT_PINCH_RATIO,
             deadzone_px=self.deadzone_px if self.deadzone_px is not None else CURSOR_DEADZONE_PX,
-            min_alpha=self.min_alpha if self.min_alpha is not None else EMA_MIN_ALPHA,
+            min_cutoff=self.min_cutoff if self.min_cutoff is not None else ONE_EURO_MIN_CUTOFF,
             open_palm_ratio=self.open_palm_ratio
             if self.open_palm_ratio is not None
             else DEFAULT_OPEN_PALM_RATIO,
@@ -264,7 +310,7 @@ class CalibrationSession:
         )
         _set_fact(GESTURE_PINCH_THRESHOLD_KEY, f"{applied.pinch_threshold:.4f}")
         _set_fact(GESTURE_DEADZONE_PX_KEY, str(applied.deadzone_px))
-        _set_fact(GESTURE_MIN_ALPHA_KEY, f"{applied.min_alpha:.3f}")
+        _set_fact(GESTURE_MIN_CUTOFF_KEY, f"{applied.min_cutoff:.3f}")
         _set_fact(GESTURE_OPEN_PALM_RATIO_KEY, f"{applied.open_palm_ratio:.3f}")
         _set_fact(GESTURE_SWIPE_MIN_DX_KEY, f"{applied.swipe_min_dx:.3f}")
         return applied
@@ -290,8 +336,8 @@ def load_deadzone_px() -> int:
     return int(round(_load_fact_float(GESTURE_DEADZONE_PX_KEY, float(CURSOR_DEADZONE_PX))))
 
 
-def load_min_alpha() -> float:
-    return _load_fact_float(GESTURE_MIN_ALPHA_KEY, EMA_MIN_ALPHA)
+def load_min_cutoff() -> float:
+    return _load_fact_float(GESTURE_MIN_CUTOFF_KEY, ONE_EURO_MIN_CUTOFF)
 
 
 def load_open_palm_ratio() -> float:

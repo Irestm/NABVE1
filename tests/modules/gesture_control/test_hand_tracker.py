@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import pytest
 
-from modules.gesture_control.config import (
-    EMA_MAX_ALPHA,
-    EMA_MIN_ALPHA,
-    HAND_BBOX_MAX,
-)
-from modules.gesture_control.hand_tracker import _AdaptiveSmoother, _looks_like_hand
+from modules.gesture_control.config import HAND_BBOX_MAX
+from modules.gesture_control.hand_tracker import _OneEuroFilter, _looks_like_hand
 
 _WRIST = (0.5, 0.72)
+
+
+def _feed(f: _OneEuroFilter, points, dt: float = 1 / 30):
+    out = None
+    t = 0.0
+    for p in points:
+        out = f.update(p, t)
+        t += dt
+    return out
 
 
 def _hand(knuckle_radii: tuple[float, float, float, float] = (0.15, 0.15, 0.15, 0.15)):
@@ -26,60 +31,53 @@ def _hand(knuckle_radii: tuple[float, float, float, float] = (0.15, 0.15, 0.15, 
 
 
 def test_first_value_passes_through() -> None:
-    s = _AdaptiveSmoother()
-    assert s.update((10.0, 20.0)) == (10.0, 20.0)
+    f = _OneEuroFilter()
+    assert f.update((10.0, 20.0), 0.0) == (10.0, 20.0)
 
 
-def test_fast_move_barely_lags() -> None:
-    # A jump far larger than EMA_SPEED_FULL drives alpha to EMA_MAX_ALPHA.
-    s = _AdaptiveSmoother()
-    s.update((0.0, 0.0))
-    x, _ = s.update((1.0, 0.0))
-    assert x == pytest.approx(EMA_MAX_ALPHA, abs=1e-9)
+def test_still_hand_is_heavily_damped() -> None:
+    # A tiny tremra around a point: the filtered output stays far closer to
+    # the mean than the raw jitter amplitude.
+    f = _OneEuroFilter(min_cutoff=1.0)
+    out = _feed(f, [(0.0, 0.0)] * 3 + [(0.01, 0.0), (-0.01, 0.0)] * 6)
+    assert abs(out[0]) < 0.006
 
 
-def test_tiny_move_is_heavily_smoothed() -> None:
-    # A sub-threshold twitch is blended with an alpha near EMA_MIN_ALPHA, so
-    # the resting cursor barely moves ("очень дерганый" fix).
-    s = _AdaptiveSmoother()
-    s.update((0.0, 0.0))
-    x, _ = s.update((0.001, 0.0))
-    assert x < 0.001 * (EMA_MIN_ALPHA + 0.05)
+def test_deliberate_move_tracks_close() -> None:
+    # A steady ramp: beta raises the cutoff with speed so the filter keeps
+    # up to within ~a couple of frames of travel (median prefilter costs one).
+    f = _OneEuroFilter(min_cutoff=1.2, beta=2.5)
+    ramp = [(i * 0.05, 0.0) for i in range(14)]
+    out = _feed(f, ramp)
+    assert out[0] > ramp[-1][0] - 0.15
+
+
+def test_lower_min_cutoff_smooths_more() -> None:
+    calm = _OneEuroFilter(min_cutoff=0.3)
+    lively = _OneEuroFilter(min_cutoff=2.0)
+    jitter = [(0.0, 0.0)] * 2 + [(0.02, 0.0), (-0.02, 0.0)] * 5
+    assert abs(_feed(calm, jitter)[0]) <= abs(_feed(lively, jitter)[0]) + 1e-9
+
+
+def test_set_min_cutoff_takes_effect_live() -> None:
+    f = _OneEuroFilter(min_cutoff=2.0)
+    f.set_min_cutoff(0.3)
+    ref = _OneEuroFilter(min_cutoff=0.3)
+    jitter = [(0.0, 0.0)] * 2 + [(0.02, 0.0), (-0.02, 0.0)] * 5
+    assert _feed(f, jitter)[0] == pytest.approx(_feed(ref, jitter)[0])
 
 
 def test_reset_clears_state() -> None:
-    s = _AdaptiveSmoother()
-    s.update((100.0, 100.0))
-    s.reset()
-    assert s.update((1.0, 2.0)) == (1.0, 2.0)
+    f = _OneEuroFilter()
+    _feed(f, [(100.0, 100.0)] * 4)
+    f.reset()
+    assert f.update((1.0, 2.0), 0.0) == (1.0, 2.0)
 
 
 def test_median_prefilter_rejects_a_single_frame_spike() -> None:
-    s = _AdaptiveSmoother()
-    s.update((0.0, 0.0))
-    s.update((0.0, 0.0))
-    # One wild frame between two good ones: median of the 3-window ignores it.
-    spiked = s.update((9.0, 9.0))
-    assert spiked[0] < 0.5 and spiked[1] < 0.5
-
-
-def test_lower_min_alpha_smooths_a_resting_hand_more() -> None:
-    # Same sub-threshold twitch, calmer filter moves the point less.
-    calm = _AdaptiveSmoother(min_alpha=0.03)
-    twitchy = _AdaptiveSmoother(min_alpha=0.12)
-    calm.update((0.0, 0.0))
-    twitchy.update((0.0, 0.0))
-    assert calm.update((0.001, 0.0))[0] < twitchy.update((0.001, 0.0))[0]
-
-
-def test_set_min_alpha_takes_effect_live() -> None:
-    s = _AdaptiveSmoother(min_alpha=0.12)
-    s.update((0.0, 0.0))
-    s.set_min_alpha(0.03)
-    # Now behaves like a min_alpha=0.03 filter for a tiny move.
-    ref = _AdaptiveSmoother(min_alpha=0.03)
-    ref.update((0.0, 0.0))
-    assert s.update((0.001, 0.0))[0] == pytest.approx(ref.update((0.001, 0.0))[0])
+    f = _OneEuroFilter()
+    out = _feed(f, [(0.0, 0.0), (0.0, 0.0), (9.0, 9.0)])
+    assert out[0] < 0.5 and out[1] < 0.5
 
 
 def test_looks_like_hand_accepts_a_real_hand() -> None:
