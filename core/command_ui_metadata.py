@@ -52,6 +52,7 @@ GROUP_ORDER: tuple[str, ...] = ("power", "sound", "windows", "files", "time_lang
 COMMAND_UI_METADATA: dict[str, CommandUIMeta] = {
     "shutdown": CommandUIMeta("Выключить ПК", "Power", None, group="power"),
     "restart": CommandUIMeta("Перезагрузить ПК", "RefreshCw", None, group="power"),
+    "lock_screen": CommandUIMeta("Заблокировать экран", "Lock", None, group="power"),
     "get_battery_status": CommandUIMeta("Проверить заряд батареи", "Battery", None, group="power"),
     "check_system_updates": CommandUIMeta("Проверить обновления", "DownloadCloud", None, group="power"),
     "set_volume": CommandUIMeta(

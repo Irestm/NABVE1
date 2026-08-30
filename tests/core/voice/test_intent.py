@@ -396,6 +396,33 @@ def test_restart_trigger_tolerates_stt_noise() -> None:
     assert command == Command(name="restart", params={})
 
 
+# --- lock_screen trigger (distinct from shutdown) -------------------------
+
+
+def test_lock_screen_trigger_ru() -> None:
+    assert interpret("заблокируй экран", "ru") == Command(name="lock_screen", params={})
+
+
+def test_lock_screen_trigger_uk() -> None:
+    assert interpret("заблокуй комп'ютер", "uk") == Command(name="lock_screen", params={})
+
+
+def test_lock_screen_trigger_en() -> None:
+    assert interpret("lock my screen", "en") == Command(name="lock_screen", params={})
+
+
+def test_lock_computer_is_not_misread_as_shutdown_ru() -> None:
+    assert interpret("заблокируй компьютер", "ru") == Command(name="lock_screen", params={})
+
+
+def test_lock_computer_is_not_misread_as_shutdown_en() -> None:
+    assert interpret("lock the computer", "en") == Command(name="lock_screen", params={})
+
+
+def test_shutdown_still_wins_for_its_own_phrasing() -> None:
+    assert interpret("выключи компьютер", "ru") == Command(name="shutdown", params={})
+
+
 # --- Weather (modules/weather) -----------------------------------------------
 
 

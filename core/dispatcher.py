@@ -192,6 +192,12 @@ async def _handle_restart(_params: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+async def _handle_lock_screen(_params: dict[str, Any]) -> dict[str, Any]:
+    adapter = get_os_adapter()
+    await asyncio.to_thread(adapter.lock_screen)
+    return {"message": "Экран заблокирован."}
+
+
 async def _handle_click(params: dict[str, Any]) -> dict[str, Any]:
     x, y = params.get("x"), params.get("y")
     if x is None or y is None:
@@ -498,6 +504,12 @@ def build_dispatcher(confirmation_ttl_seconds: int = 60) -> CommandDispatcher:
         _handle_restart,
         dangerous=True,
         description="Restart the computer.",
+    )
+    dispatcher.register(
+        "lock_screen",
+        _handle_lock_screen,
+        dangerous=True,
+        description="Lock the desktop session (password required to return) — nothing is closed.",
     )
     dispatcher.register(
         "click",

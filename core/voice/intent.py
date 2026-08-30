@@ -641,6 +641,31 @@ _SHUTDOWN_PHRASES: dict[str, set[str]] = {
     "en": {"shut down", "shutdown", "shut down the computer", "turn off the computer"},
 }
 
+# Checked before _SHUTDOWN_PHRASES in interpret(): "заблокируй компьютер"
+# and "lock the computer" both fuzzily match a shutdown trigger ("выключи
+# компьютер" / "shut down the computer") and must be claimed as a lock
+# first. Locking is trivially reversible but still routed through the
+# dispatcher's spoken-confirmation flow (dangerous=True), same as
+# shutdown/restart, per the task spec. Phrases here are kept deliberately
+# clear of the volume/brightness device-filler shapes checked later in
+# interpret() ("...громкость на компьютере...", "...the screen brightness...")
+# — a bare "lock the screen"/"залочь ..." collided with those at the 0.75
+# sliding-window threshold, so it's left to the semantic classifier / AI
+# fallback instead of this fast path.
+_LOCK_SCREEN_PHRASES: dict[str, set[str]] = {
+    "ru": {
+        "заблокируй компьютер", "заблокируй пк", "заблокируй систему",
+        "заблокируй экран", "блокировка экрана", "поставь блокировку экрана",
+    },
+    "uk": {
+        "заблокуй комп'ютер", "заблокуй пк", "заблокуй екран", "блокування екрана",
+    },
+    "en": {
+        "lock screen", "lock my screen", "lock the computer", "lock the pc",
+        "lock the workstation",
+    },
+}
+
 _RESTART_PHRASES: dict[str, set[str]] = {
     "ru": {
         "перезагрузи компьютер", "перезагрузи пк", "перезапусти компьютер",
@@ -874,6 +899,9 @@ def interpret(text: str, language: str) -> Command | None:
     # match against the fixed set ("выключи ноутбук" vs the exact phrase
     # "выключи компьютер") still gets a chance to ask for confirmation
     # instead of falling through to be misread as something else entirely.
+    if fuzzy_matches_any(normalized, _LOCK_SCREEN_PHRASES.get(language, set())):
+        return Command(name="lock_screen", params={})
+
     if fuzzy_matches_any(normalized, _SHUTDOWN_PHRASES.get(language, set())):
         return Command(name="shutdown", params={})
 

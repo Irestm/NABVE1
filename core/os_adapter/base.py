@@ -149,6 +149,16 @@ class OSAdapter(ABC):
     def get_brightness(self) -> int:
         raise NotImplementedError
 
+    # --- session ---
+
+    @abstractmethod
+    def lock_screen(self) -> None:
+        """Locks the desktop session (requires the user's password to return),
+        distinct from shutdown()/restart() — nothing is closed and no running
+        work is lost. Raises RuntimeError when no supported locking mechanism
+        is available on this platform/desktop environment."""
+        raise NotImplementedError
+
     # --- windows / tabs ---
 
     @abstractmethod

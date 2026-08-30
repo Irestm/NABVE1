@@ -45,6 +45,19 @@ _BRIGHTNESS_TOOL_INSTALL_HINT = (
 _MIN_BRIGHTNESS_PERCENT = 5
 _XRANDR_BRIGHTNESS_RE = re.compile(r"Brightness:\s*([\d.]+)")
 
+# Ordered most-portable-first: loginctl (systemd-logind) locks the seat on
+# nearly every modern desktop regardless of DE or X11/Wayland; the rest are
+# narrower fallbacks for setups without a working logind lock.
+_SCREEN_LOCK_COMMANDS: tuple[tuple[str, ...], ...] = (
+    ("loginctl", "lock-session"),
+    ("gnome-screensaver-command", "-l"),
+    ("xdg-screensaver", "lock"),
+)
+_SCREEN_LOCK_INSTALL_HINT = (
+    "Screen locking needs one of: loginctl (systemd), gnome-screensaver-command, "
+    "or xdg-screensaver. None is available on this system."
+)
+
 _KEYBOARD_LAYOUT_CODES: dict[str, str] = {"ru": "ru", "uk": "ua", "en": "us"}
 _LOCALE_CODES: dict[str, str] = {"ru": "ru_RU.UTF-8", "uk": "uk_UA.UTF-8", "en": "en_US.UTF-8"}
 
@@ -407,6 +420,21 @@ class LinuxAdapter(OSAdapter):
         if not match:
             raise RuntimeError("Could not parse brightness from xrandr output")
         return round(float(match.group(1)) * 100)
+
+    # --- session ---
+
+    def lock_screen(self) -> None:
+        for command in _SCREEN_LOCK_COMMANDS:
+            if not shutil.which(command[0]):
+                continue
+            result = subprocess.run(list(command), capture_output=True, text=True)
+            if result.returncode == 0:
+                return
+            logger.warning(
+                "Screen lock via '%s' failed (code %s): %s — trying next backend",
+                command[0], result.returncode, result.stderr.strip() or result.stdout.strip(),
+            )
+        raise RuntimeError(_SCREEN_LOCK_INSTALL_HINT)
 
     # --- windows / tabs ---
 

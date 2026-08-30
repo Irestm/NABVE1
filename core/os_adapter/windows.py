@@ -201,6 +201,13 @@ class WindowsAdapter(OSAdapter):
             raise RuntimeError("This display does not report WMI brightness.")
         return int(readings[0].CurrentBrightness)
 
+    # --- session ---
+
+    def lock_screen(self) -> None:
+        # Returns nonzero on success, 0 on failure (unlike most Win32 calls).
+        if not ctypes.windll.user32.LockWorkStation():
+            raise RuntimeError("LockWorkStation failed to lock the session.")
+
     # --- windows / tabs ---
 
     @staticmethod

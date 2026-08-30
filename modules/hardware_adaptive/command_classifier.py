@@ -164,6 +164,11 @@ _CATALOG: tuple[_CommandSpec, ...] = (
         "перевір оновлення", "чи є оновлення системи",
         "check for system updates", "are there any updates available",
     )),
+    _CommandSpec("lock_screen", (
+        "заблокируй экран", "заблокируй компьютер", "заблокируй систему", "залочь экран",
+        "поставь блокировку экрана", "заблокуй екран", "заблокуй комп'ютер",
+        "lock the screen", "lock the computer", "lock my pc",
+    )),
     # Found missing entirely (no rule-based regex either) while auditing
     # every button in core/command_ui_metadata.py's "Системные команды"
     # panel for voice coverage - unlike the commands above, these had no
@@ -430,6 +435,7 @@ _PARAM_EXTRACTORS: dict[str, Callable[[str], dict[str, str] | None]] = {
     "change_system_locale": _extract_language_code,
     "get_battery_status": _no_params,
     "check_system_updates": _no_params,
+    "lock_screen": _no_params,
     "toggle_timer": _extract_toggle_timer,
     "toggle_stopwatch": _no_params,
 }

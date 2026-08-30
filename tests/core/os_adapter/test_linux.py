@@ -336,3 +336,55 @@ def test_get_brightness_parses_xrandr_verbose_output(monkeypatch) -> None:
     )
 
     assert LinuxAdapter().get_brightness() == 75
+
+
+def test_lock_screen_prefers_loginctl(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: f"/usr/bin/{name}")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "core.os_adapter.linux.subprocess.run",
+        lambda args, **k: calls.append(args) or MagicMock(returncode=0, stdout="", stderr=""),
+    )
+
+    LinuxAdapter().lock_screen()
+
+    assert calls == [["loginctl", "lock-session"]]
+
+
+def test_lock_screen_falls_back_to_xdg_screensaver(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.os_adapter.linux.shutil.which",
+        lambda name: f"/usr/bin/{name}" if name == "xdg-screensaver" else None,
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "core.os_adapter.linux.subprocess.run",
+        lambda args, **k: calls.append(args) or MagicMock(returncode=0, stdout="", stderr=""),
+    )
+
+    LinuxAdapter().lock_screen()
+
+    assert calls == [["xdg-screensaver", "lock"]]
+
+
+def test_lock_screen_tries_next_backend_when_one_fails(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: f"/usr/bin/{name}")
+    calls: list[list[str]] = []
+
+    def _run(args, **_kwargs):
+        calls.append(args)
+        ok = args[0] != "loginctl"
+        return MagicMock(returncode=0 if ok else 1, stdout="", stderr="no session")
+
+    monkeypatch.setattr("core.os_adapter.linux.subprocess.run", _run)
+
+    LinuxAdapter().lock_screen()
+
+    assert calls == [["loginctl", "lock-session"], ["gnome-screensaver-command", "-l"]]
+
+
+def test_lock_screen_raises_without_any_backend(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: None)
+
+    with pytest.raises(RuntimeError):
+        LinuxAdapter().lock_screen()
