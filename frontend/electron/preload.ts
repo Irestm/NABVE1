@@ -41,4 +41,10 @@ contextBridge.exposeInMainWorld("assistantAPI", {
   // returning (invoke, not send) since the renderer needs the chosen path
   // back, unlike setRecordingActive above.
   pickExecutablePath: () => ipcRenderer.invoke("pick-executable") as Promise<string | null>,
+  // frontend/src/App.tsx calls this on every /api/status poll so main.ts
+  // can show/size the transparent enlarged-cursor overlay while
+  // modules/gesture_control is active.
+  setGestureOverlay: (active: boolean, scale: number) => {
+    ipcRenderer.send("gesture-overlay-changed", { active, scale });
+  },
 });

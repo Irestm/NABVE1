@@ -38,9 +38,9 @@ GROUP_LABELS: dict[str, str] = {
     "windows": "Окна и вкладки",
     "files": "Файлы",
     "time_lang": "Время и язык",
-    "modes": "Режимы",
+    "games": "Игры",
 }
-GROUP_ORDER: tuple[str, ...] = ("power", "sound", "windows", "files", "time_lang", "modes")
+GROUP_ORDER: tuple[str, ...] = ("power", "sound", "windows", "files", "time_lang", "games")
 
 
 # UI-facing subset of core/dispatcher.py's registered commands — the ones
@@ -127,13 +127,13 @@ COMMAND_UI_METADATA: dict[str, CommandUIMeta] = {
     # multi-choice command already uses (see switch_keyboard_layout above),
     # instead of a dedicated button per game.
     "start_board_game": CommandUIMeta(
-        "Режим игры",
+        "Игры",
         "Gamepad2",
         (ParamField("game", "select", "Игра", options=("Шахматы", "Шашки")),),
-        group="modes",
+        group="games",
     ),
-    # Signals the running mic loop into modules/discussion_mode — no params;
-    # exit is by voice ("выйди из режима дискуссии"). See
-    # modules/discussion_mode/handlers.py.
-    "discussion_start": CommandUIMeta("Режим дискуссии", "MessagesSquare", None, group="modes"),
 }
+# discussion_start / gesture_start|stop|calibrate deliberately have no
+# button here — they live on the dedicated "Режимы" tab
+# (frontend/src/components/ModesPanel.tsx), not scattered through the
+# command panel.

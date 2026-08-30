@@ -1,11 +1,11 @@
-import { Dumbbell, MessageCircle, Plug, Terminal } from "lucide-react";
+import { Dumbbell, Hand, MessageCircle, Plug, Terminal } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import type { CollapsibleCardAccent } from "./CollapsibleCard";
 import { SettingsPanel } from "./SettingsPanel";
 import type { DesignId } from "../design/types";
 import "./Sidebar.css";
 
-export type Page = "assistant" | "commands" | "fitness" | "integrations";
+export type Page = "assistant" | "commands" | "modes" | "fitness" | "integrations";
 
 const ACCENT_VARS: Record<CollapsibleCardAccent, string> = {
   blue: "var(--accent-blue)",
@@ -30,7 +30,8 @@ interface SidebarItem {
 const ITEMS: SidebarItem[] = [
   { id: "assistant", label: "Ассистент", icon: <MessageCircle size={26} />, accent: "blue" },
   { id: "commands", label: "Системные команды", icon: <Terminal size={26} />, accent: "purple" },
-  { id: "fitness", label: "Фитнес", icon: <Dumbbell size={26} />, accent: "green" },
+  { id: "modes", label: "Режимы", icon: <Hand size={26} />, accent: "green" },
+  { id: "fitness", label: "Фитнес", icon: <Dumbbell size={26} />, accent: "amber" },
   { id: "integrations", label: "Интеграции", icon: <Plug size={26} />, accent: "red" },
 ];
 

@@ -15,6 +15,8 @@ export interface StatusResponse {
   state: AssistantState;
   detail: string;
   active_module_context: string | null;
+  gesture_mode_active: boolean;
+  gesture_cursor_scale: number;
 }
 
 // Response of both POST /api/voice/trigger and POST /api/voice/pause —
@@ -260,6 +262,10 @@ export interface AssistantWindowAPI {
   // when this is absent. Used only for the launch_app custom-command
   // form's "Обзор…" button.
   pickExecutablePath?: () => Promise<string | null>;
+  // Tells the Electron main process to show/hide/size the transparent
+  // enlarged-cursor overlay for modules/gesture_control. Called from
+  // App.tsx on every /api/status poll. No-op outside Electron.
+  setGestureOverlay?: (active: boolean, scale: number) => void;
 }
 
 export type MeetingRecordingStatus = "uploading" | "processing" | "ready" | "error";

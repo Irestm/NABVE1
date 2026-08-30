@@ -26,6 +26,7 @@ import { FitnessPanel } from "./components/FitnessPanel";
 import { FitnessProgressPhotoGallery } from "./components/FitnessProgressPhotoGallery";
 import { ImageGenerationPanel } from "./components/ImageGenerationPanel";
 import { IntegrationsPanel } from "./components/IntegrationsPanel";
+import { ModesPanel } from "./components/ModesPanel";
 import { LanQrPanel } from "./components/LanQrPanel";
 import { MessagingPanel } from "./components/MessagingPanel";
 import { PlannerView } from "./components/PlannerView";
@@ -90,6 +91,7 @@ export function App(): JSX.Element {
   const [assistantState, setAssistantState] = useState<AssistantState>("idle");
   const [detail, setDetail] = useState<string>("");
   const [activeModuleContext, setActiveModuleContext] = useState<string | null>(null);
+  const [gestureModeActive, setGestureModeActive] = useState(false);
   const [connectionError, setConnectionError] = useState<string>("");
   const [voiceRecording, setVoiceRecording] = useState(false);
   const [voiceSpeaking, setVoiceSpeaking] = useState(false);
@@ -145,6 +147,13 @@ export function App(): JSX.Element {
           setAssistantState(status.state);
           setDetail(status.detail);
           setActiveModuleContext(status.active_module_context);
+          setGestureModeActive(status.gesture_mode_active);
+          // Show/size the Electron enlarged-cursor overlay (no-op in a
+          // plain browser / LAN thin client).
+          window.assistantAPI?.setGestureOverlay?.(
+            status.gesture_mode_active,
+            status.gesture_cursor_scale,
+          );
           setConnectionError("");
         }
       } catch (error) {
@@ -191,6 +200,9 @@ export function App(): JSX.Element {
             <div className="app-shell__state-label">{STATE_LABELS[displayState]}</div>
             {activeModuleContext && MODULE_CONTEXT_LABELS[activeModuleContext] && (
               <div className="app-shell__module-context">{MODULE_CONTEXT_LABELS[activeModuleContext]}</div>
+            )}
+            {gestureModeActive && (
+              <div className="app-shell__module-context">✋ Режим жестов</div>
             )}
             {detail && <p className="status-detail">{detail}</p>}
             {connectionError && <p className="status-error">{connectionError}</p>}
@@ -261,6 +273,10 @@ export function App(): JSX.Element {
                   setTimeout(() => setGamesOpenSignal((n) => n + 1), 0);
                 }}
               />
+            </div>
+          ) : activePage === "modes" ? (
+            <div key="modes" className="app-page">
+              <ModesPanel />
             </div>
           ) : activePage === "fitness" ? (
             <div key="fitness" className="app-page">

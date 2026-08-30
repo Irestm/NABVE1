@@ -506,6 +506,30 @@ def test_discussion_mode_enter_phrase(text: str) -> None:
     assert interpret(text, "ru") == Command(name="start_discussion", params={})
 
 
+# --- gesture control (modules/gesture_control) --------------------------
+
+
+@pytest.mark.parametrize(
+    "text", ["включи управление жестами", "жестовый режим", "включи режим жестов"]
+)
+def test_gesture_start_phrases(text: str) -> None:
+    assert interpret(text, "ru") == Command(name="gesture_start", params={})
+
+
+@pytest.mark.parametrize("text", ["выключи режим жестов", "хватит жестов", "отключи жесты"])
+def test_gesture_stop_phrases(text: str) -> None:
+    assert interpret(text, "ru") == Command(name="gesture_stop", params={})
+
+
+def test_gesture_calibrate_phrase() -> None:
+    assert interpret("откалибруй жесты заново", "ru") == Command(name="gesture_calibrate", params={})
+
+
+def test_gesture_does_not_shadow_os_agent_or_discussion() -> None:
+    assert interpret("включи режим агента", "ru") == Command(name="start_os_agent", params={})
+    assert interpret("режим дискуссии", "ru") == Command(name="start_discussion", params={})
+
+
 # --- Weather (modules/weather) -----------------------------------------------
 
 

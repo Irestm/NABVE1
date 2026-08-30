@@ -893,6 +893,28 @@ _DISCUSSION_START_PHRASES: dict[str, set[str]] = {
     "en": {"let's have a discussion", "discussion mode", "enable discussion mode"},
 }
 
+# modules/gesture_control — opt-in webcam cursor control. Unlike discussion
+# mode these are ordinary commands (no pipeline sub-loop), so voice keeps
+# working while gesture mode is on. Start vs stop vs calibrate differ by
+# only a prefix ("включи" / "выключи" / "откалибруй") that fuzzy matching
+# can't tell apart — so instead of three phrase sets we detect the word
+# "жест"/"gesture" and then read the intent off a marker-word scan.
+_GESTURE_TRIGGER_WORDS: dict[str, tuple[str, ...]] = {
+    "ru": ("жест", "жестам", "жестов", "жесты"),
+    "uk": ("жест",),
+    "en": ("gesture", "hand control"),
+}
+_GESTURE_STOP_MARKERS: dict[str, tuple[str, ...]] = {
+    "ru": ("выключ", "отключ", "хватит", "прекрат", "убери"),
+    "uk": ("вимкни", "досить", "прибери"),
+    "en": ("disable", "turn off", "stop", "quit"),
+}
+_GESTURE_CALIBRATE_MARKERS: dict[str, tuple[str, ...]] = {
+    "ru": ("калибр",),
+    "uk": ("калібр",),
+    "en": ("calibrat",),
+}
+
 # Trigger phrases for modules.fitness_tracker's voice context (see
 # core/voice/pipeline.py::_resolve_active_fitness_context_utterance) — same
 # shape as _OS_AGENT_START_PHRASES: only the *entry* into the context is
@@ -1168,6 +1190,16 @@ def interpret(text: str, language: str) -> Command | None:
                 kind = game
                 break
         return Command(name="start_board_game", params={"game": kind})
+
+    # Gesture control is checked before the os-agent / discussion triggers:
+    # "выключи режим жестов" fuzzy-collides with "включи режим агента", and
+    # the word-scan here is unambiguous.
+    if any(word in normalized for word in _GESTURE_TRIGGER_WORDS.get(language, ())):
+        if any(m in normalized for m in _GESTURE_CALIBRATE_MARKERS.get(language, ())):
+            return Command(name="gesture_calibrate", params={})
+        if any(m in normalized for m in _GESTURE_STOP_MARKERS.get(language, ())):
+            return Command(name="gesture_stop", params={})
+        return Command(name="gesture_start", params={})
 
     if fuzzy_matches_any(normalized, _OS_AGENT_START_PHRASES.get(language, set())):
         return Command(name="start_os_agent", params={})

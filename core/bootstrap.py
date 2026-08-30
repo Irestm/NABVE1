@@ -24,6 +24,8 @@ from modules.custom_commands import register_commands as register_custom_command
 from modules.delayed_execution import register_commands as register_delayed_execution_commands
 from modules.delayed_execution.scheduler import DelayedCommandRunner
 from modules.discussion_mode import register_commands as register_discussion_commands
+from modules.gesture_control import register_commands as register_gesture_control_commands
+from modules.gesture_control.events import GestureAnnouncement
 from modules.figma_control import register_commands as register_figma_control_commands
 from modules.files import register_commands as register_files_commands
 from modules.gmail import gmail_poller, register_commands as register_gmail_commands
@@ -167,6 +169,7 @@ def compose(bus: MessageBus = message_bus) -> Composed:
     register_software_installer_commands(dispatcher)
     register_delayed_execution_commands(dispatcher)
     register_discussion_commands(dispatcher, voice_loop)
+    register_gesture_control_commands(dispatcher)
     delayed_command_runner = DelayedCommandRunner(dispatcher)
 
     # Cross-module wiring: a due reminder is also spoken aloud while the
@@ -196,6 +199,9 @@ def compose(bus: MessageBus = message_bus) -> Composed:
     # A finished background install (modules/software_installer/installer.py)
     # carries its own pre-built message, same as TimerFired above.
     bus.subscribe(SoftwareInstallFinished, proactive_announcer.handle)
+    # modules/gesture_control speaks calibration prompts / mode on-off /
+    # errors the same way — a pre-built message it just wants voiced.
+    bus.subscribe(GestureAnnouncement, proactive_announcer.handle)
 
     # Outbound Telegram notifications (see core/telegram_notifier.py) — a
     # separate delivery channel from the two spoken subscribers above, for

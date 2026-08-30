@@ -146,6 +146,29 @@ export function clearConversation(): Promise<CommandResponse> {
   return requestJson<CommandResponse>("/api/conversation/clear", { method: "POST" });
 }
 
+export function startGestureMode(): Promise<CommandResponse> {
+  return runCommand("gesture_start");
+}
+
+export function stopGestureMode(): Promise<CommandResponse> {
+  return runCommand("gesture_stop");
+}
+
+export function calibrateGestures(): Promise<CommandResponse> {
+  return runCommand("gesture_calibrate");
+}
+
+export function setGestureCursorScale(scale: number): Promise<CommandResponse> {
+  return requestJson<CommandResponse>(
+    `/api/gesture/cursor_scale?scale=${encodeURIComponent(scale)}`,
+    { method: "POST" },
+  );
+}
+
+export function gesturePreviewUrl(): string {
+  return `${BASE_URL}/api/gesture/preview?token=${encodeURIComponent(resolveApiToken())}`;
+}
+
 // Both drive the same always-on backend voice loop VoiceRecorder.tsx's
 // Electron branch uses instead of a second, browser-side microphone — see
 // core/main.py's /api/voice/trigger and /api/voice/pause docstrings.

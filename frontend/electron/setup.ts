@@ -9,7 +9,7 @@ import path from "node:path";
 // gain a new entry — an existing install's persisted setup_state.json will
 // then be considered stale and runSetup() runs again, instead of the app
 // silently starting with dependencies missing forever.
-const SETUP_SCHEMA_VERSION = 5;
+const SETUP_SCHEMA_VERSION = 6;
 
 const PYTHON_MIN_MAJOR = 3;
 const PYTHON_MIN_MINOR = 12;

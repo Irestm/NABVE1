@@ -169,6 +169,16 @@ _CATALOG: tuple[_CommandSpec, ...] = (
         "поставь блокировку экрана", "заблокуй екран", "заблокуй комп'ютер",
         "lock the screen", "lock the computer", "lock my pc",
     )),
+    _CommandSpec("gesture_start", (
+        "включи управление жестами", "включи режим жестов", "жестовый режим",
+        "управление курсором жестами", "увімкни керування жестами",
+        "enable gesture control", "turn on hand gesture mode",
+    )),
+    _CommandSpec("gesture_stop", (
+        "выключи управление жестами", "выключи режим жестов", "хватит жестов",
+        "отключи жесты", "вимкни керування жестами",
+        "disable gesture control", "turn off gesture mode",
+    )),
     _CommandSpec("suspend", (
         "переведи компьютер в спящий режим", "усыпи компьютер", "уйди в сон", "режим сна",
         "отправь компьютер в сон", "присипи комп'ютер",
@@ -487,6 +497,8 @@ _PARAM_EXTRACTORS: dict[str, Callable[[str], dict[str, str] | None]] = {
     "get_battery_status": _no_params,
     "check_system_updates": _no_params,
     "lock_screen": _no_params,
+    "gesture_start": _no_params,
+    "gesture_stop": _no_params,
     "suspend": _no_params,
     "set_power_profile": _extract_set_power_profile,
     "software_install": _extract_software_install,
