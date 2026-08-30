@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import threading
 
-from modules.gesture_control.config import CURSOR_SCALE
-
-# The enlarged cursor itself is drawn by a transparent, click-through
-# Electron BrowserWindow (frontend/electron/gestureOverlay.ts) that follows
-# the real OS cursor. The backend only publishes "is gesture mode on" (and
-# the fixed magnification, so the overlay window sizes itself) — the
-# frontend reads this off /api/status and toggles the overlay window.
+# Process-wide "is gesture mode on" flag. core/main.py exposes it on
+# /api/status so the frontend can show a small indicator; the enlarged
+# cursor itself is the OS's own pointer, resized by cursor_zoom.py — there
+# is no overlay window any more.
 
 
 class _OverlayState:
@@ -24,10 +21,6 @@ class _OverlayState:
     def active(self) -> bool:
         with self._lock:
             return self._active
-
-    @property
-    def scale(self) -> float:
-        return CURSOR_SCALE
 
 
 overlay_state = _OverlayState()

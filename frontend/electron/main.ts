@@ -2,7 +2,6 @@ import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, shell } 
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { startBackend, stopBackend } from "./backend";
-import { applyGestureOverlay, destroyGestureOverlay } from "./gestureOverlay";
 import { getSetupLogPath, needsSetup, runSetup } from "./setup";
 import { createSetupWindow, sendSetupError, sendSetupProgress } from "./setupWindow";
 import { createTray, TrayHandle } from "./tray";
@@ -65,13 +64,6 @@ if (!app.requestSingleInstanceLock()) {
 
   ipcMain.on("meeting-recording-active-changed", (_event, active: boolean) => {
     meetingRecordingActive = Boolean(active);
-  });
-
-  // The renderer polls /api/status; when it sees gesture_mode_active it
-  // asks main to show/size the transparent enlarged-cursor overlay — see
-  // preload.ts's setGestureOverlay and frontend/src/App.tsx.
-  ipcMain.on("gesture-overlay-changed", (_event, payload: { active?: boolean; scale?: number }) => {
-    applyGestureOverlay(Boolean(payload?.active), Number(payload?.scale) || 1.3);
   });
 
   // components/CustomCommandsPanel.tsx's launch_app "Обзор…" button (see
@@ -387,7 +379,6 @@ if (!app.requestSingleInstanceLock()) {
       visibilityPollTimer = null;
     }
     trayHandle?.tray.destroy();
-    destroyGestureOverlay();
     stopBackend();
   });
 

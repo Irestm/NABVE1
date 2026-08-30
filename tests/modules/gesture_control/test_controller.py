@@ -21,6 +21,9 @@ class _FakeTracker:
     def read(self):
         return None  # no frames -> worker just idles until stopped
 
+    def set_min_alpha(self, _value: float) -> None:
+        pass
+
     def close(self) -> None:
         self.closed = True
 
@@ -33,6 +36,18 @@ class _FakeCursor:
     def click_up(self) -> None:
         pass
 
+    def current_pos(self) -> tuple[int, int]:
+        return (0, 0)
+
+    def physical_mouse_moved(self, _threshold_px: int) -> bool:
+        return False
+
+    def sync_last_set(self) -> None:
+        pass
+
+    def move_cursor(self, _x: int, _y: int) -> None:
+        pass
+
     def release(self) -> None:
         self.released = True
 
@@ -42,7 +57,12 @@ def _no_profile_db(monkeypatch):
     monkeypatch.setattr(gd.profile_service_layer, "get_fact", lambda uow, key: None)
     monkeypatch.setattr(gd.profile_service_layer, "set_fact", lambda *a, **k: None)
     monkeypatch.setattr(gd.calibration, "load_threshold", lambda: 0.05)
+    monkeypatch.setattr(gd.calibration, "load_deadzone_px", lambda: 3)
+    monkeypatch.setattr(gd.calibration, "load_min_alpha", lambda: 0.06)
     monkeypatch.setattr(gd.calibration.profile_service_layer, "set_fact", lambda *a, **k: None)
+    # Never touch the real desktop cursor size from a test run.
+    monkeypatch.setattr(gd.cursor_zoom, "enlarge", lambda: None)
+    monkeypatch.setattr(gd.cursor_zoom, "restore", lambda: None)
 
 
 def _make_controller(monkeypatch) -> tuple[gd.GestureController, _FakeTracker]:

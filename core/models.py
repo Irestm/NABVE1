@@ -100,11 +100,10 @@ class StatusResponse(BaseModel):
     # core/voice/module_context.py. CentralOrb.tsx uses this to show a small
     # indicator of which focused mode Jarvis is currently listening in.
     active_module_context: str | None = None
-    # modules/gesture_control: whether the webcam gesture mode is on. Cursor
-    # magnification is a locked +10% (gesture_control/config.CURSOR_SCALE),
-    # sent so the Electron overlay window can size itself.
+    # modules/gesture_control: whether the webcam gesture mode is on. The
+    # frontend uses it only for a small on-screen indicator — the enlarged
+    # cursor is the OS's own (gesture_control/cursor_zoom.py), not an overlay.
     gesture_mode_active: bool = False
-    gesture_cursor_scale: float = 1.1
 
 
 class DelayedTaskResponse(BaseModel):

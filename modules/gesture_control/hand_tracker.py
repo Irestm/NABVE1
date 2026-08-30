@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+import math
 import urllib.request
 from dataclasses import dataclass
 from types import ModuleType
 
 from core.logger import get_logger
 from modules.gesture_control.config import (
+    CAMERA_HEIGHT,
     CAMERA_INDEX,
+    CAMERA_WIDTH,
+    EMA_MAX_ALPHA,
+    EMA_MIN_ALPHA,
+    EMA_SPEED_FULL,
+    HAND_BBOX_MAX,
+    HAND_BBOX_MIN,
+    HAND_DETECTION_CONFIDENCE,
     HAND_LANDMARKER_TASK_PATH,
     HAND_LANDMARKER_TASK_URL,
+    HAND_MIN_HANDEDNESS_SCORE,
+    HAND_PRESENCE_CONFIDENCE,
+    HAND_TRACKING_CONFIDENCE,
     MODELS_DIR,
 )
 
@@ -21,34 +33,65 @@ Landmarks = list[tuple[float, float]]
 
 @dataclass(frozen=True)
 class FrameResult:
-    # BGR frame as returned by cv2 (for the optional preview stream).
-    frame: object
-    # 0-2 hands, each a full 21-landmark list, left-to-right by wrist x.
-    hands: list[Landmarks]
+    frame: object  # BGR frame from cv2 (unused now that the preview is gone; kept for shape)
+    hands: list[Landmarks]  # 0-2 hands, left-to-right by wrist x; index tip is smoothed
+    raw_index_tips: list[tuple[float, float]]  # unsmoothed landmark 8 per hand, same order
+
+    @property
+    def raw_primary_tip(self) -> tuple[float, float] | None:
+        return self.raw_index_tips[0] if self.raw_index_tips else None
 
 
-class _EmaSmoother:
-    """Exponential moving average on a single (x, y) point. Without this the
-    landmark stream jitters a pixel or two every frame and the cursor visibly
-    shakes. alpha in (0, 1]: higher follows the hand faster / smooths less."""
+class _AdaptiveSmoother:
+    """One-euro-lite filter on a single (x, y) point: the blend factor
+    scales with how fast the point is moving, so a quick hand motion barely
+    lags (alpha -> EMA_MAX_ALPHA) while a still hand barely trembles
+    (alpha -> min_alpha, which "калибровка дрожания" tunes per user)."""
 
-    def __init__(self, alpha: float) -> None:
-        self._alpha = max(0.05, min(1.0, alpha))
+    def __init__(self, min_alpha: float = EMA_MIN_ALPHA) -> None:
+        self._min_alpha = max(0.01, min(EMA_MAX_ALPHA, min_alpha))
         self._value: tuple[float, float] | None = None
+        self._prev_raw: tuple[float, float] | None = None
+
+    def set_min_alpha(self, min_alpha: float) -> None:
+        self._min_alpha = max(0.01, min(EMA_MAX_ALPHA, min_alpha))
 
     def update(self, point: tuple[float, float]) -> tuple[float, float]:
-        if self._value is None:
+        if self._value is None or self._prev_raw is None:
             self._value = point
-        else:
-            a = self._alpha
-            self._value = (
-                a * point[0] + (1 - a) * self._value[0],
-                a * point[1] + (1 - a) * self._value[1],
-            )
+            self._prev_raw = point
+            return point
+
+        speed = math.hypot(point[0] - self._prev_raw[0], point[1] - self._prev_raw[1])
+        self._prev_raw = point
+        ratio = min(1.0, speed / EMA_SPEED_FULL) if EMA_SPEED_FULL > 0 else 1.0
+        alpha = self._min_alpha + (EMA_MAX_ALPHA - self._min_alpha) * ratio
+
+        self._value = (
+            alpha * point[0] + (1 - alpha) * self._value[0],
+            alpha * point[1] + (1 - alpha) * self._value[1],
+        )
         return self._value
 
     def reset(self) -> None:
         self._value = None
+        self._prev_raw = None
+
+
+def _looks_like_hand(landmarks: Landmarks) -> bool:
+    """Reject a detection whose bounding box is not a plausible hand size —
+    MediaPipe occasionally locks onto a face or the torso ("воспринимает
+    любой объект, даже голову"); such a blob fills far more of the frame
+    than a hand held up to the camera, or is vanishing-small noise."""
+    xs = [p[0] for p in landmarks]
+    ys = [p[1] for p in landmarks]
+    width = max(xs) - min(xs)
+    height = max(ys) - min(ys)
+    span = max(width, height)
+    if span < HAND_BBOX_MIN or span > HAND_BBOX_MAX:
+        return False
+    thinner, wider = sorted((max(width, 1e-4), max(height, 1e-4)))
+    return wider / thinner <= 3.5
 
 
 def _require_cv2() -> ModuleType:
@@ -65,15 +108,11 @@ def _require_mediapipe() -> ModuleType:
     try:
         import mediapipe  # type: ignore[import-untyped]
     except ImportError as exc:
-        raise RuntimeError(
-            "Gesture control needs mediapipe. Install: pip install mediapipe"
-        ) from exc
+        raise RuntimeError("Gesture control needs mediapipe. Install: pip install mediapipe") from exc
     return mediapipe
 
 
 def ensure_model() -> None:
-    """Downloads the HandLandmarker .task file on first use (cached under
-    data/models/), same one-off fetch as the Silero TTS weights."""
     if HAND_LANDMARKER_TASK_PATH.is_file():
         return
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -85,16 +124,21 @@ def ensure_model() -> None:
 
 class HandTracker:
     """Owns the camera and the MediaPipe HandLandmarker (Tasks API). Each
-    read() grabs one frame, runs detection, and returns up to two hands with
-    the tracked point (index fingertip) already EMA-smoothed per hand."""
+    read() grabs the latest frame, runs detection, and returns up to two
+    hands with the tracked point (index fingertip) already adaptively
+    smoothed per hand."""
 
-    def __init__(self, ema_alpha: float, camera_index: int = CAMERA_INDEX) -> None:
+    def __init__(
+        self, camera_index: int = CAMERA_INDEX, min_alpha: float = EMA_MIN_ALPHA
+    ) -> None:
         self._camera_index = camera_index
-        self._ema_alpha = ema_alpha
         self._cv2 = _require_cv2()
         self._capture = None
         self._landmarker = None
-        self._smoothers: list[_EmaSmoother] = [_EmaSmoother(ema_alpha), _EmaSmoother(ema_alpha)]
+        self._smoothers: list[_AdaptiveSmoother] = [
+            _AdaptiveSmoother(min_alpha),
+            _AdaptiveSmoother(min_alpha),
+        ]
 
     def open(self) -> None:
         ensure_model()
@@ -102,49 +146,80 @@ class HandTracker:
         from mediapipe.tasks import python as mp_python  # type: ignore[import-untyped]
         from mediapipe.tasks.python import vision as mp_vision  # type: ignore[import-untyped]
 
-        self._capture = self._cv2.VideoCapture(self._camera_index)
-        if not self._capture.isOpened():
-            self._capture = None
+        cap = self._cv2.VideoCapture(self._camera_index)
+        if not cap.isOpened():
             raise RuntimeError(
                 f"Не удалось открыть камеру {self._camera_index} — занята другим приложением или недоступна."
             )
+        # Small frame + tiny buffer = lower latency and less CPU per frame.
+        cap.set(self._cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+        cap.set(self._cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+        cap.set(self._cv2.CAP_PROP_FPS, 30)
+        try:
+            cap.set(self._cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
+        self._capture = cap
+
         options = mp_vision.HandLandmarkerOptions(
             base_options=mp_python.BaseOptions(model_asset_path=str(HAND_LANDMARKER_TASK_PATH)),
             running_mode=mp_vision.RunningMode.VIDEO,
             num_hands=2,
-            min_hand_detection_confidence=0.6,
-            min_tracking_confidence=0.5,
+            min_hand_detection_confidence=HAND_DETECTION_CONFIDENCE,
+            min_hand_presence_confidence=HAND_PRESENCE_CONFIDENCE,
+            min_tracking_confidence=HAND_TRACKING_CONFIDENCE,
         )
         self._landmarker = mp_vision.HandLandmarker.create_from_options(options)
         self._mp_image_cls = mp.Image
         self._mp_image_format = mp.ImageFormat.SRGB
         self._frame_index = 0
 
+    def set_min_alpha(self, min_alpha: float) -> None:
+        for smoother in self._smoothers:
+            smoother.set_min_alpha(min_alpha)
+
     def read(self) -> FrameResult | None:
         if self._capture is None or self._landmarker is None:
             return None
-        ok, frame = self._capture.read()
+        # Drain any queued frame so we always act on the freshest one.
+        self._capture.grab()
+        ok, frame = self._capture.retrieve()
         if not ok or frame is None:
-            return None
+            ok, frame = self._capture.read()
+            if not ok or frame is None:
+                return None
 
+        # Mirror horizontally so moving your hand right moves the cursor
+        # right — a raw webcam frame is un-mirrored, which the user reported
+        # as "право и лево перепутаны".
+        frame = self._cv2.flip(frame, 1)
         rgb = self._cv2.cvtColor(frame, self._cv2.COLOR_BGR2RGB)
         mp_image = self._mp_image_cls(image_format=self._mp_image_format, data=rgb)
         self._frame_index += 1
         result = self._landmarker.detect_for_video(mp_image, self._frame_index)
 
+        landmark_sets = getattr(result, "hand_landmarks", []) or []
+        handedness_sets = getattr(result, "handedness", []) or []
         hands: list[Landmarks] = []
-        for hand in getattr(result, "hand_landmarks", []) or []:
-            hands.append([(lm.x, lm.y) for lm in hand])
-        # Stable left-to-right order so hand[0]/hand[1] don't swap frame to frame.
+        for i, hand in enumerate(landmark_sets):
+            score = 1.0
+            if i < len(handedness_sets) and handedness_sets[i]:
+                score = getattr(handedness_sets[i][0], "score", 1.0)
+            if score < HAND_MIN_HANDEDNESS_SCORE:
+                continue
+            points: Landmarks = [(lm.x, lm.y) for lm in hand]
+            if not _looks_like_hand(points):
+                continue
+            hands.append(points)
         hands.sort(key=lambda h: h[0][0])
 
+        raw_index_tips = [hand[8] for hand in hands[:2]]
         for i, hand in enumerate(hands[:2]):
-            smoothed = self._smoothers[i].update(hand[8])
-            hand[8] = smoothed
+            hand[8] = self._smoothers[i].update(hand[8])
         for i in range(len(hands), 2):
             self._smoothers[i].reset()
 
-        return FrameResult(frame=frame, hands=hands)
+        return FrameResult(frame=frame, hands=hands, raw_index_tips=raw_index_tips)
 
     def close(self) -> None:
         if self._capture is not None:

@@ -31,6 +31,13 @@
   flex: 1;
 }
 
+.gesture-mode__how {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
 .gesture-mode__badge {
   font-size: 10px;
   font-weight: 700;

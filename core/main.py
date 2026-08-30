@@ -270,7 +270,6 @@ async def get_status() -> StatusResponse:
         detail=state_manager.detail,
         active_module_context=voice_module_context.current(),
         gesture_mode_active=gesture_overlay_state.active,
-        gesture_cursor_scale=gesture_overlay_state.scale,
     )
 
 

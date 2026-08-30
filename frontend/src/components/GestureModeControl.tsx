@@ -74,6 +74,11 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
         <span className="gesture-mode__title">Режим жестов</span>
         <span className="gesture-mode__badge">активен</span>
       </div>
+      <p className="gesture-mode__how">
+        Поднесите руку к камере — курсор увеличится в 2 раза и пойдёт за ней. Щипок большого и
+        указательного — клик и перетаскивание. Две руки в стороны/вместе — масштаб. Возьмётесь за
+        физическую мышь — жесты уступают, вернёте руку — снова активны.
+      </p>
       <div className="gesture-mode__actions">
         <button
           type="button"

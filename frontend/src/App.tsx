@@ -149,12 +149,6 @@ export function App(): JSX.Element {
           setDetail(status.detail);
           setActiveModuleContext(status.active_module_context);
           setGestureModeActive(status.gesture_mode_active);
-          // Show/size the Electron enlarged-cursor overlay (no-op in a
-          // plain browser / LAN thin client).
-          window.assistantAPI?.setGestureOverlay?.(
-            status.gesture_mode_active,
-            status.gesture_cursor_scale,
-          );
           setConnectionError("");
         }
       } catch (error) {
