@@ -5,12 +5,10 @@ import {
   Battery,
   BatteryCharging,
   CircleStop,
-  Crosshair,
   DownloadCloud,
   FolderInput,
   FolderPlus,
   Gamepad2,
-  Hand,
   Languages,
   Lock,
   MessagesSquare,
@@ -29,6 +27,7 @@ import {
 import { confirmCommand, listCommandButtons, runCommand } from "../api/client";
 import type { CommandButtonDescriptor, CommandParamField } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { GestureModeControl } from "./GestureModeControl";
 import "./CommandPanel.css";
 
 // Matches the "icon" strings in core/command_ui_metadata.py exactly — one
@@ -48,8 +47,6 @@ const ICONS: Record<string, (props: { size?: number }) => ReactNode> = {
   BatteryCharging,
   DownloadCloud,
   Gamepad2,
-  Hand,
-  Crosshair,
   Lock,
   MessagesSquare,
   Moon,
@@ -306,6 +303,9 @@ export function CommandPanel({ onNavigateToGames }: CommandPanelProps): JSX.Elem
             {GROUP_LABELS[group] ?? group}
           </span>
           <div className="command-panel__grid">
+            {group === "modes" && (
+              <GestureModeControl accent={GROUP_ACCENT[group] ?? DEFAULT_GROUP_ACCENT} />
+            )}
             {groupCommands.map((command) => {
               const Icon = ICONS[command.icon];
               return (

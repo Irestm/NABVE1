@@ -132,12 +132,10 @@ COMMAND_UI_METADATA: dict[str, CommandUIMeta] = {
         (ParamField("game", "select", "Игра", options=("Шахматы", "Шашки")),),
         group="modes",
     ),
-    # Toggleable special modes — buttons only (no dedicated panel). Gesture
-    # cursor size is fixed at +10%, so there's no config here. The how-to
-    # for gestures is the "Управление жестами" card on the Ассистент tab
-    # (frontend/src/components/GestureInfo.tsx).
-    "gesture_start": CommandUIMeta("Режим жестов", "Hand", None, group="modes"),
-    "gesture_stop": CommandUIMeta("Выключить жесты", "Hand", None, group="modes"),
-    "gesture_calibrate": CommandUIMeta("Калибровка жестов", "Crosshair", None, group="modes"),
     "discussion_start": CommandUIMeta("Режим дискуссии", "MessagesSquare", None, group="modes"),
+    # gesture_start / gesture_stop / gesture_calibrate are NOT plain buttons:
+    # the "Режимы" group renders frontend/src/components/GestureModeControl.tsx
+    # instead — one entry that expands into stop/calibrate once the mode is
+    # active. Cursor size is a locked +10% (gesture_control/config.CURSOR_SCALE);
+    # the how-to is the "Управление жестами" card on the Ассистент tab.
 }
