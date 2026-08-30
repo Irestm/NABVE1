@@ -446,3 +446,72 @@ def test_resume_media_is_a_noop_for_empty_tokens(monkeypatch) -> None:
     LinuxAdapter().resume_media([])
 
     assert calls == []
+
+
+def test_suspend_prefers_systemctl(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: f"/usr/bin/{name}")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "core.os_adapter.linux.subprocess.run",
+        lambda args, **k: calls.append(args) or MagicMock(returncode=0),
+    )
+
+    LinuxAdapter().suspend()
+
+    assert calls == [["systemctl", "suspend"]]
+
+
+def test_suspend_falls_back_to_loginctl(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "core.os_adapter.linux.shutil.which",
+        lambda name: "/usr/bin/loginctl" if name == "loginctl" else None,
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "core.os_adapter.linux.subprocess.run",
+        lambda args, **k: calls.append(args) or MagicMock(returncode=0),
+    )
+
+    LinuxAdapter().suspend()
+
+    assert calls == [["loginctl", "suspend"]]
+
+
+def test_suspend_raises_without_systemd(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: None)
+    with pytest.raises(RuntimeError):
+        LinuxAdapter().suspend()
+
+
+def test_get_power_profile_reads_powerprofilesctl(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: "/usr/bin/powerprofilesctl")
+    monkeypatch.setattr(
+        "core.os_adapter.linux.subprocess.run",
+        lambda args, **k: MagicMock(returncode=0, stdout="performance\n"),
+    )
+    assert LinuxAdapter().get_power_profile() == "performance"
+
+
+def test_set_power_profile_calls_powerprofilesctl(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: "/usr/bin/powerprofilesctl")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "core.os_adapter.linux.subprocess.run",
+        lambda args, **k: calls.append(args) or MagicMock(returncode=0),
+    )
+
+    LinuxAdapter().set_power_profile("power-saver")
+
+    assert calls == [["/usr/bin/powerprofilesctl", "set", "power-saver"]]
+
+
+def test_set_power_profile_rejects_unknown_value(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: "/usr/bin/powerprofilesctl")
+    with pytest.raises(RuntimeError):
+        LinuxAdapter().set_power_profile("ludicrous")
+
+
+def test_power_profile_raises_without_the_daemon(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: None)
+    with pytest.raises(RuntimeError):
+        LinuxAdapter().get_power_profile()

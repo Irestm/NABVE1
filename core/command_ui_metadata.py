@@ -53,6 +53,18 @@ COMMAND_UI_METADATA: dict[str, CommandUIMeta] = {
     "shutdown": CommandUIMeta("Выключить ПК", "Power", None, group="power"),
     "restart": CommandUIMeta("Перезагрузить ПК", "RefreshCw", None, group="power"),
     "lock_screen": CommandUIMeta("Заблокировать экран", "Lock", None, group="power"),
+    "suspend": CommandUIMeta("Режим сна", "Moon", None, group="power"),
+    "set_power_profile": CommandUIMeta(
+        "Профиль питания",
+        "BatteryCharging",
+        (
+            ParamField(
+                "mode", "select", "Профиль",
+                options=("Экономия энергии", "Сбалансированный", "Производительность"),
+            ),
+        ),
+        group="power",
+    ),
     "get_battery_status": CommandUIMeta("Проверить заряд батареи", "Battery", None, group="power"),
     "check_system_updates": CommandUIMeta("Проверить обновления", "DownloadCloud", None, group="power"),
     "software_install": CommandUIMeta(

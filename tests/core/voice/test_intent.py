@@ -417,12 +417,38 @@ def test_lock_computer_is_not_misread_as_shutdown_ru() -> None:
     assert interpret("заблокируй компьютер", "ru") == Command(name="lock_screen", params={})
 
 
-def test_lock_computer_is_not_misread_as_shutdown_en() -> None:
-    assert interpret("lock the computer", "en") == Command(name="lock_screen", params={})
-
-
 def test_shutdown_still_wins_for_its_own_phrasing() -> None:
     assert interpret("выключи компьютер", "ru") == Command(name="shutdown", params={})
+    assert interpret("shut down the computer", "en") == Command(name="shutdown", params={})
+
+
+# --- suspend (режим сна) / power profile --------------------------------
+
+
+def test_suspend_trigger_ru() -> None:
+    assert interpret("переведи в спящий режим", "ru") == Command(name="suspend", params={})
+    assert interpret("режим сна", "ru") == Command(name="suspend", params={})
+
+
+def test_suspend_does_not_steal_shutdown_or_restart() -> None:
+    assert interpret("выключи компьютер", "ru") == Command(name="shutdown", params={})
+    assert interpret("перезагрузи компьютер", "ru") == Command(name="restart", params={})
+
+
+def test_power_profile_set_phrases() -> None:
+    assert interpret("включи экономию энергии", "ru") == Command(
+        name="set_power_profile", params={"mode": "power-saver"}
+    )
+    assert interpret("режим производительности", "ru") == Command(
+        name="set_power_profile", params={"mode": "performance"}
+    )
+    assert interpret("сбалансированный режим", "ru") == Command(
+        name="set_power_profile", params={"mode": "balanced"}
+    )
+
+
+def test_power_profile_get_phrase() -> None:
+    assert interpret("какой режим питания", "ru") == Command(name="get_power_profile", params={})
 
 
 # --- software installer (modules/software_installer) ---------------------

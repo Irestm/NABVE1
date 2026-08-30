@@ -224,6 +224,38 @@ class WindowsAdapter(OSAdapter):
         if not ctypes.windll.user32.LockWorkStation():
             raise RuntimeError("LockWorkStation failed to lock the session.")
 
+    def suspend(self) -> None:
+        # SetSuspendState(bHibernate=FALSE, bForce=FALSE, bWakeupEventsDisabled=FALSE).
+        if not ctypes.windll.powrprof.SetSuspendState(False, False, False):
+            raise RuntimeError("SetSuspendState failed to put the machine to sleep.")
+
+    # --- power profile ---
+
+    # Windows' built-in power-scheme GUIDs. Balanced/High performance are
+    # always present; "Power saver" usually is. `powercfg` is what actually
+    # switches them — no built-in ctypes call for it.
+    _POWER_SCHEME_GUIDS = {
+        "power-saver": "a1841308-3541-4fab-bc81-f71556f20b4a",
+        "balanced": "381b4222-f694-41f0-9685-ff5bb260df2e",
+        "performance": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+    }
+
+    def get_power_profile(self) -> str:
+        result = subprocess.run(
+            ["powercfg", "/getactivescheme"], capture_output=True, text=True, check=True
+        )
+        lowered = result.stdout.lower()
+        for profile, guid in self._POWER_SCHEME_GUIDS.items():
+            if guid in lowered:
+                return profile
+        raise RuntimeError(f"Active power scheme is not one of the known three: {result.stdout.strip()!r}")
+
+    def set_power_profile(self, profile: str) -> None:
+        guid = self._POWER_SCHEME_GUIDS.get(profile)
+        if guid is None:
+            raise RuntimeError(f"Unknown power profile '{profile}'.")
+        subprocess.run(["powercfg", "/setactive", guid], check=True)
+
     # --- windows / tabs ---
 
     @staticmethod

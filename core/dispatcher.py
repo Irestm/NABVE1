@@ -215,6 +215,42 @@ async def _handle_lock_screen(_params: dict[str, Any]) -> dict[str, Any]:
     return {"message": "Экран заблокирован."}
 
 
+async def _handle_suspend(_params: dict[str, Any]) -> dict[str, Any]:
+    adapter = get_os_adapter()
+    await asyncio.to_thread(adapter.suspend)
+    return {"message": "Перевожу компьютер в спящий режим."}
+
+
+_POWER_PROFILE_ALIASES: dict[str, str] = {
+    "power-saver": "power-saver", "power_saver": "power-saver", "powersave": "power-saver",
+    "экономия": "power-saver", "экономия энергии": "power-saver", "энергосбережение": "power-saver",
+    "balanced": "balanced", "баланс": "balanced", "сбалансированный": "balanced", "обычный": "balanced",
+    "performance": "performance", "производительность": "performance", "макс": "performance",
+    "максимальная производительность": "performance",
+}
+_POWER_PROFILE_LABELS: dict[str, str] = {
+    "power-saver": "экономия энергии",
+    "balanced": "сбалансированный",
+    "performance": "производительность",
+}
+
+
+async def _handle_set_power_profile(params: dict[str, Any]) -> dict[str, Any]:
+    raw = str(params.get("mode") or params.get("profile") or "").strip().lower()
+    profile = _POWER_PROFILE_ALIASES.get(raw)
+    if profile is None:
+        raise ValueError("Не указан профиль питания (экономия / баланс / производительность).")
+    adapter = get_os_adapter()
+    await asyncio.to_thread(adapter.set_power_profile, profile)
+    return {"profile": profile, "message": f"Профиль питания: {_POWER_PROFILE_LABELS[profile]}."}
+
+
+async def _handle_get_power_profile(_params: dict[str, Any]) -> dict[str, Any]:
+    adapter = get_os_adapter()
+    profile = await asyncio.to_thread(adapter.get_power_profile)
+    return {"profile": profile, "message": f"Текущий профиль питания: {_POWER_PROFILE_LABELS.get(profile, profile)}."}
+
+
 async def _handle_click(params: dict[str, Any]) -> dict[str, Any]:
     x, y = params.get("x"), params.get("y")
     if x is None or y is None:
@@ -529,6 +565,29 @@ def build_dispatcher(confirmation_ttl_seconds: int = 60) -> CommandDispatcher:
         # and the user asked for it to fire without a spoken confirmation.
         dangerous=False,
         description="Lock the desktop session (password required to return) — nothing is closed.",
+    )
+    dispatcher.register(
+        "suspend",
+        _handle_suspend,
+        # Interrupts running work, but resumes it intact on wake — and the
+        # user asked for no spoken confirmation, same as lock_screen.
+        dangerous=False,
+        description="Put the machine to sleep (suspend-to-RAM); running work resumes on wake.",
+    )
+    dispatcher.register(
+        "set_power_profile",
+        _handle_set_power_profile,
+        dangerous=False,
+        description=(
+            "Switch the laptop power profile (mode: power-saver/balanced/performance, "
+            "Russian synonyms accepted)."
+        ),
+    )
+    dispatcher.register(
+        "get_power_profile",
+        _handle_get_power_profile,
+        dangerous=False,
+        description="Report the active laptop power profile.",
     )
     dispatcher.register(
         "click",

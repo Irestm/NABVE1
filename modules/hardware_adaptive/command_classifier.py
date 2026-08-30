@@ -169,6 +169,18 @@ _CATALOG: tuple[_CommandSpec, ...] = (
         "поставь блокировку экрана", "заблокуй екран", "заблокуй комп'ютер",
         "lock the screen", "lock the computer", "lock my pc",
     )),
+    _CommandSpec("suspend", (
+        "переведи компьютер в спящий режим", "усыпи компьютер", "уйди в сон", "режим сна",
+        "отправь компьютер в сон", "присипи комп'ютер",
+        "put the computer to sleep", "sleep the computer", "go to sleep",
+    )),
+    _CommandSpec("set_power_profile", (
+        "включи экономию энергии", "режим экономии энергии", "энергосбережение",
+        "режим производительности", "максимальная производительность",
+        "сбалансированный режим питания", "переключи в экономный режим",
+        "режим економії енергії", "режим продуктивності",
+        "switch to power saver mode", "set performance power mode", "balanced power profile",
+    )),
     _CommandSpec("software_install", (
         "установи программу vlc", "установи vlc", "поставь мне телеграм", "установи приложение obs",
         "доустанови гимп", "инсталлируй blender", "поставь программу audacity",
@@ -285,6 +297,22 @@ _SOFTWARE_INSTALL_RE = re.compile(
     r"(.+)$",
     re.IGNORECASE,
 )
+
+
+_POWER_PROFILE_WORDS: tuple[tuple[str, str], ...] = (
+    ("эконом", "power-saver"), ("енергозбереж", "power-saver"), ("энергосбереж", "power-saver"),
+    ("battery saver", "power-saver"), ("power saver", "power-saver"), ("power-saver", "power-saver"),
+    ("производит", "performance"), ("продуктивн", "performance"), ("performance", "performance"),
+    ("сбалансир", "balanced"), ("збалансов", "balanced"), ("balanced", "balanced"), ("обычн", "balanced"),
+)
+
+
+def _extract_set_power_profile(text: str) -> dict[str, str] | None:
+    lowered = text.lower()
+    for word, mode in _POWER_PROFILE_WORDS:
+        if word in lowered:
+            return {"mode": mode}
+    return None
 
 
 def _extract_software_install(text: str) -> dict[str, str] | None:
@@ -459,6 +487,8 @@ _PARAM_EXTRACTORS: dict[str, Callable[[str], dict[str, str] | None]] = {
     "get_battery_status": _no_params,
     "check_system_updates": _no_params,
     "lock_screen": _no_params,
+    "suspend": _no_params,
+    "set_power_profile": _extract_set_power_profile,
     "software_install": _extract_software_install,
     "toggle_timer": _extract_toggle_timer,
     "toggle_stopwatch": _no_params,

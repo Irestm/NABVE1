@@ -178,6 +178,29 @@ class OSAdapter(ABC):
         is available on this platform/desktop environment."""
         raise NotImplementedError
 
+    @abstractmethod
+    def suspend(self) -> None:
+        """Puts the machine into sleep (S3 suspend-to-RAM) — running work is
+        frozen, not closed, and resumes on a key press / lid open. Distinct
+        from lock_screen() (screen only) and shutdown()."""
+        raise NotImplementedError
+
+    # --- power profile ---
+
+    @abstractmethod
+    def get_power_profile(self) -> str:
+        """Returns the active platform power profile: "power-saver",
+        "balanced" or "performance". Raises RuntimeError when the platform
+        exposes no switchable profiles."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_power_profile(self, profile: str) -> None:
+        """Switches the platform power profile. `profile` is one of
+        "power-saver" / "balanced" / "performance". Raises RuntimeError on an
+        unknown value or when the platform has no switchable profiles."""
+        raise NotImplementedError
+
     # --- windows / tabs ---
 
     @abstractmethod

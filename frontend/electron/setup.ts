@@ -9,7 +9,7 @@ import path from "node:path";
 // gain a new entry — an existing install's persisted setup_state.json will
 // then be considered stale and runSetup() runs again, instead of the app
 // silently starting with dependencies missing forever.
-const SETUP_SCHEMA_VERSION = 4;
+const SETUP_SCHEMA_VERSION = 5;
 
 const PYTHON_MIN_MAJOR = 3;
 const PYTHON_MIN_MINOR = 12;
@@ -44,6 +44,10 @@ const LINUX_APT_PACKAGES = [
   // core/os_adapter/linux.py pause_media/resume_media. Best-effort: without
   // it, a critical reminder still fires, it just can't pause media.
   "playerctl",
+  // powerprofilesctl: switch laptop power profile by voice/button
+  // (core/os_adapter/linux.py set_power_profile). Best-effort — no daemon,
+  // the command just reports it's unavailable.
+  "power-profiles-daemon",
   "libnotify-bin",
   "libreoffice",
   "ffmpeg",

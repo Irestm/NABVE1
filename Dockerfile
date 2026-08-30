@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xdotool \
     brightnessctl \
     playerctl \
+    power-profiles-daemon \
     libnotify-bin \
     ffmpeg \
     libportaudio2 \

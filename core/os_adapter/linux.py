@@ -58,6 +58,10 @@ _SCREEN_LOCK_INSTALL_HINT = (
     "or xdg-screensaver. None is available on this system."
 )
 
+# The three profiles power-profiles-daemon (powerprofilesctl) exposes, in
+# order of increasing performance / power draw.
+_POWER_PROFILES: tuple[str, ...] = ("power-saver", "balanced", "performance")
+
 _KEYBOARD_LAYOUT_CODES: dict[str, str] = {"ru": "ru", "uk": "ua", "en": "us"}
 _LOCALE_CODES: dict[str, str] = {"ru": "ru_RU.UTF-8", "uk": "uk_UA.UTF-8", "en": "en_US.UTF-8"}
 
@@ -457,6 +461,42 @@ class LinuxAdapter(OSAdapter):
             )
 
     # --- session ---
+
+    def suspend(self) -> None:
+        if shutil.which("systemctl"):
+            subprocess.run(["systemctl", "suspend"], check=True)
+            return
+        if shutil.which("loginctl"):
+            subprocess.run(["loginctl", "suspend"], check=True)
+            return
+        raise RuntimeError("Suspend requires systemctl or loginctl (systemd).")
+
+    # --- power profile ---
+
+    def _require_powerprofilesctl(self) -> str:
+        path = shutil.which("powerprofilesctl")
+        if not path:
+            raise RuntimeError(
+                "Power-profile switching needs power-profiles-daemon (powerprofilesctl). "
+                "Install it with: sudo apt-get install power-profiles-daemon"
+            )
+        return path
+
+    def get_power_profile(self) -> str:
+        ctl = self._require_powerprofilesctl()
+        result = subprocess.run([ctl, "get"], capture_output=True, text=True, check=True)
+        active = result.stdout.strip()
+        if active not in _POWER_PROFILES:
+            raise RuntimeError(f"Unexpected powerprofilesctl output: {active!r}")
+        return active
+
+    def set_power_profile(self, profile: str) -> None:
+        if profile not in _POWER_PROFILES:
+            raise RuntimeError(f"Unknown power profile '{profile}'.")
+        ctl = self._require_powerprofilesctl()
+        subprocess.run([ctl, "set", profile], check=True)
+
+    # --- session (lock) ---
 
     def lock_screen(self) -> None:
         for command in _SCREEN_LOCK_COMMANDS:

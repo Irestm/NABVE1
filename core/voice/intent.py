@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from core.voice.phrase_matching import fuzzy_matches_any
+from core.voice.phrase_matching import fuzzy_contains_phrase, fuzzy_matches_any
 
 # Minimal rule-based intent parser. It only exists to close the voice loop
 # (wake word -> speech -> command -> response) end to end. Real natural
@@ -686,9 +686,54 @@ _LOCK_SCREEN_PHRASES: dict[str, set[str]] = {
         "заблокуй комп'ютер", "заблокуй пк", "заблокуй екран", "блокування екрана",
     },
     "en": {
-        "lock screen", "lock my screen", "lock the computer", "lock the pc",
-        "lock the workstation",
+        # No bare "lock the computer" / "lock the pc": those fuzzy-collide
+        # with "shut down the computer" (and misroute it to lock). "lock
+        # screen"/"lock my screen" carry the same meaning without the clash.
+        "lock screen", "lock my screen", "lock the workstation", "lock the session",
     },
+}
+
+# Suspend-to-RAM (sleep). Fires without a spoken confirmation
+# (dangerous=False — see core/dispatcher.py), per the user's request.
+# Phrases here are deliberately anchored on "спящий режим"/"сон"/"усыпи" and
+# NOT on "* компьютер" — the latter fuzzy-collides both ways with the
+# shutdown triggers ("выруби компьютер", "выключи компьютер").
+_SUSPEND_PHRASES: dict[str, set[str]] = {
+    "ru": {
+        "переведи в спящий режим", "спящий режим", "режим сна",
+        "уйти в сон", "уйди в сон", "усыпи",
+    },
+    "uk": {"режим сну", "переведи в сплячий режим", "приспати"},
+    # "sleep the computer" is dropped on purpose — it fuzzy-collides with
+    # "shut down the computer" and "lock the computer".
+    "en": {"go to sleep", "sleep mode", "suspend to ram"},
+}
+
+# "включи экономию энергии" / "режим производительности" / ... -> a
+# power-profiles-daemon / Windows power-scheme switch. Phrase -> mode key
+# (matches core/dispatcher.py's _POWER_PROFILE_ALIASES).
+_POWER_PROFILE_PHRASES: dict[str, dict[str, str]] = {
+    "ru": {
+        "включи экономию энергии": "power-saver", "режим экономии энергии": "power-saver",
+        "режим экономии": "power-saver", "энергосбережение": "power-saver",
+        "экономный режим": "power-saver",
+        "режим производительности": "performance", "максимальная производительность": "performance",
+        "режим максимальной производительности": "performance", "производительный режим": "performance",
+        "сбалансированный режим": "balanced", "сбалансированный режим питания": "balanced",
+    },
+    "uk": {
+        "режим економії енергії": "power-saver", "режим продуктивності": "performance",
+        "збалансований режим": "balanced",
+    },
+    "en": {
+        "power saver mode": "power-saver", "battery saver mode": "power-saver",
+        "performance mode": "performance", "balanced power mode": "balanced",
+    },
+}
+_POWER_PROFILE_GET_PHRASES: dict[str, set[str]] = {
+    "ru": {"какой режим питания", "какой профиль питания", "какой сейчас режим питания"},
+    "uk": {"який режим живлення"},
+    "en": {"what power profile", "which power mode"},
 }
 
 _RESTART_PHRASES: dict[str, set[str]] = {
@@ -940,6 +985,16 @@ def interpret(text: str, language: str) -> Command | None:
     # instead of falling through to be misread as something else entirely.
     if fuzzy_matches_any(normalized, _LOCK_SCREEN_PHRASES.get(language, set())):
         return Command(name="lock_screen", params={})
+
+    if fuzzy_matches_any(normalized, _SUSPEND_PHRASES.get(language, set())):
+        return Command(name="suspend", params={})
+
+    if fuzzy_matches_any(normalized, _POWER_PROFILE_GET_PHRASES.get(language, set())):
+        return Command(name="get_power_profile", params={})
+
+    for phrase, mode in _POWER_PROFILE_PHRASES.get(language, {}).items():
+        if fuzzy_contains_phrase(normalized, phrase):
+            return Command(name="set_power_profile", params={"mode": mode})
 
     if fuzzy_matches_any(normalized, _SHUTDOWN_PHRASES.get(language, set())):
         return Command(name="shutdown", params={})

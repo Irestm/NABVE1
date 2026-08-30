@@ -71,7 +71,7 @@ GitHub: https://github.com/Irestm/NABVE1
 - Python 3.12, Node.js 18+
 - Для распознавания/синтеза речи: микрофон, колонки/наушники
 - Опционально: NVIDIA GPU (≥4 ГБ VRAM) для локальной модели
-- Системные пакеты (Linux): `python3-tk python3-dev wmctrl xdotool brightnessctl playerctl libnotify-bin libreoffice ffmpeg tesseract-ocr tesseract-ocr-rus stockfish`
+- Системные пакеты (Linux): `python3-tk python3-dev wmctrl xdotool brightnessctl playerctl power-profiles-daemon libnotify-bin libreoffice ffmpeg tesseract-ocr tesseract-ocr-rus stockfish`
 - `stockfish` нужен только для голосовых шахматных партий (`modules/board_games`, команда «давай сыграем партию в шахматы»); русские шашки работают без системных пакетов — движок py-draughts чистый Python.
 - `brightnessctl` нужен для голосового управления яркостью экрана с реальным управлением подсветкой. apt-пакет ставит udev-правило, дающее группе `video` доступ на запись в `/sys/class/backlight`, но пользователя в эту группу надо добавить самому: `sudo usermod -aG video $USER`, затем перелогиниться. Без `brightnessctl` (или без этой группы) включается запасной путь `xrandr --brightness` — только программное затемнение (гамма), яркость подсветки не меняется.
 - Опционально, для голосового управления UI (`modules/ui_automation` — «нажми на X»/«напиши Y» в активном приложении):

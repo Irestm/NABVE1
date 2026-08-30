@@ -72,7 +72,7 @@ developers/contributors.
 - Python 3.12, Node.js 18+
 - A microphone and speakers/headphones for speech I/O
 - Optional: an NVIDIA GPU (4GB+ VRAM) for the local model
-- System packages (Linux): `python3-tk python3-dev wmctrl xdotool brightnessctl playerctl libnotify-bin libreoffice ffmpeg tesseract-ocr tesseract-ocr-rus stockfish`
+- System packages (Linux): `python3-tk python3-dev wmctrl xdotool brightnessctl playerctl power-profiles-daemon libnotify-bin libreoffice ffmpeg tesseract-ocr tesseract-ocr-rus stockfish`
 - `stockfish` is only needed for voice chess games (`modules/board_games`, "let's play a game of chess"); Russian draughts works with no system packages — py-draughts's engine is pure Python.
 - `brightnessctl` powers voice screen-brightness control with real backlight adjustment. Its apt package ships a udev rule granting the `video` group write access to `/sys/class/backlight`, but you still have to add yourself to that group: `sudo usermod -aG video $USER`, then log out and back in. Without `brightnessctl` (or without that group) the adapter falls back to `xrandr --brightness`, a software gamma dim only (backlight power unchanged).
 - Optional, for voice-driven UI actions (`modules/ui_automation` — "click X"/"type Y" in whatever app currently has focus):
