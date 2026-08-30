@@ -22,13 +22,14 @@ from core.voice.intent import (
     is_stop_command,
 )
 from core.voice.interruption import TurnCancelled, run_cancellable
-from core.voice.language import resolve_language, resolve_response_language
+from core.voice.language import LanguageDecision, resolve_language, resolve_response_language
 from core.voice.phrase_matching import fuzzy_contains_phrase, fuzzy_matches_any, with_transliterated_variant
 from core.voice.plugin_match import match_plugin_command
 from core.voice.fact_extraction import extract_facts
 from core.voice.responses import localize_response, not_understood, tray_hide_ack, tray_show_ack
 from core.voice.stt import SpeechToText
 from core.voice.tts import TextToSpeech
+from modules import multi_command_parser
 from modules.app_catalog import resolver as app_resolver
 from modules.board_games import announce as board_games_announce
 from modules.board_games import service_layer as board_games_service_layer
@@ -1849,6 +1850,45 @@ class VoiceAssistantLoop:
 
         self._learn_facts(result.text, decision.resolved)
 
+        # A chained utterance ("выключи звук и сверни окно") runs as a
+        # sequence of independent commands, each through the full resolve/
+        # dispatch path below — but only when the whole thing isn't itself a
+        # single custom trigger phrase or one rule-based command that merely
+        # contains "и"/"потом"/a comma. See modules/multi_command_parser.
+        parts = multi_command_parser.split_commands(result.text, decision.resolved)
+        if (
+            len(parts) > 1
+            and custom_commands.match(result.text) is None
+            and interpret(result.text, decision.resolved) is None
+        ):
+            interrupted = False
+            for part in parts:
+                interrupted = self._resolve_and_run_one(
+                    part, command_stt, tts, decision, response_language, part_of_multi=True
+                )
+                if interrupted:
+                    break
+            state_manager.set_state(AssistantState.IDLE)
+            return interrupted
+        return self._resolve_and_run_one(result.text, command_stt, tts, decision, response_language)
+
+    def _resolve_and_run_one(
+        self,
+        raw_text: str,
+        command_stt: SpeechToText,
+        tts: TextToSpeech,
+        decision: LanguageDecision,
+        response_language: str,
+        *,
+        part_of_multi: bool = False,
+    ) -> bool:
+        """Resolves one command's text — the whole utterance, or a single
+        segment of a chained "X и Y" utterance (see multi_command_parser) —
+        through the custom-command / interpret() / plugin / local-classifier /
+        AI chain, then dispatches it. Returns True when a stop-word barge-in
+        interrupted this segment (its spoken reply, the recording of a
+        follow-up, or the dispatch itself), which the caller treats exactly
+        as _handle_command's own return does."""
         # Custom commands (modules/custom_commands) are checked before even
         # the rule-based interpret() — a user-authored trigger phrase is
         # meant to be an unconditional personal shortcut, so it must win
@@ -1857,8 +1897,8 @@ class VoiceAssistantLoop:
         # shadow a built-in command; that's the same accepted trade-off
         # modules/plugin_agent's trigger phrases already carry today, not a
         # new risk category.
-        text_to_interpret = result.text
-        custom_match = custom_commands.match(result.text)
+        text_to_interpret = raw_text
+        custom_match = custom_commands.match(raw_text)
         if custom_match is not None:
             # launch_app runs an arbitrary stored executable path and
             # text_instruction can trigger anything the AI/command pipeline
@@ -1954,6 +1994,16 @@ class VoiceAssistantLoop:
                     state_manager.set_state(AssistantState.IDLE)
                     return True
                 if command is None:
+                    # As one segment of a chained utterance, a silent bail
+                    # would leave the user unsure which part failed — name it,
+                    # the way the stateless endpoint's combined reply does
+                    # (see web_pipeline._resolve_and_dispatch_multi). Standalone,
+                    # _classify_via_ai_bridge has already said its piece.
+                    if part_of_multi and not interrupted:
+                        state_manager.set_state(AssistantState.SPEAKING)
+                        interrupted = self._speak_safely(
+                            tts, f"Часть «{raw_text}» не понял.", response_language
+                        )
                     state_manager.set_state(AssistantState.IDLE)
                     return interrupted
 

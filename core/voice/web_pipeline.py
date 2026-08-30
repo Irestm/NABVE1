@@ -13,7 +13,9 @@ import numpy as np
 
 from core.dispatcher import CommandDispatcher
 from core.logger import get_logger
+from core.models import CommandStatus
 from core.voice import ai_router, voice_preference
+from modules import multi_command_parser
 from modules.app_catalog import resolver as app_resolver
 from modules.calendar import extraction as calendar_extraction
 from modules.custom_commands import dispatcher as custom_commands_registry
@@ -142,6 +144,18 @@ async def _resolve_and_dispatch(
     process_text_query (text typed directly into the desktop UI) — kept in
     one place so the two entry points can't drift on how a command actually
     gets resolved. Returns (reply_text, status, token)."""
+    # A chained utterance ("выключи звук и сверни окно") is handled as a
+    # sequence of independent commands — but only when it isn't itself a
+    # single custom trigger phrase or a single rule-based command that just
+    # happens to contain "и"/"потом"/a comma. See modules/multi_command_parser.
+    parts = multi_command_parser.split_commands(text, input_language)
+    if (
+        len(parts) > 1
+        and custom_commands_registry.match(text) is None
+        and interpret(text, input_language) is None
+    ):
+        return await _resolve_and_dispatch_multi(dispatcher, parts, input_language, response_language)
+
     # Custom commands (modules/custom_commands) are checked before even the
     # rule-based interpret() here too, same priority core/voice/pipeline.py's
     # live mic loop gives them (see that method's own comment) — previously
@@ -368,6 +382,44 @@ async def _resolve_and_dispatch(
         reply_text = not_understood(response_language)
 
     return reply_text, status, token
+
+
+async def _resolve_and_dispatch_multi(
+    dispatcher: CommandDispatcher, parts: list[str], input_language: str, response_language: str
+) -> tuple[str, str | None, str | None]:
+    """Runs each sub-command of a chained utterance through
+    _resolve_and_dispatch in order and reports a combined result. A dangerous
+    sub-command can't hold a pending confirmation on this stateless endpoint,
+    so it's named as needing its own turn rather than executed; an unresolved
+    sub-command is named too. Never recurses: each `part` has no separators
+    left for split_commands to act on."""
+    done: list[str] = []
+    deferred: list[str] = []
+    failed: list[str] = []
+    for part in parts:
+        reply_text, status, token = await _resolve_and_dispatch(
+            dispatcher, part, input_language, response_language
+        )
+        if status == CommandStatus.CONFIRMATION_REQUIRED.value:
+            if token:
+                await dispatcher.confirm(token, approved=False)
+            deferred.append(part)
+        elif status == CommandStatus.EXECUTED.value:
+            done.append(reply_text)
+        else:
+            failed.append(part)
+
+    segments: list[str] = []
+    if done:
+        segments.append("; ".join(done))
+    if failed:
+        segments.append("не понял: " + ", ".join(f"«{part}»" for part in failed))
+    if deferred:
+        segments.append(
+            "требуют отдельного подтверждения: " + ", ".join(f"«{part}»" for part in deferred)
+        )
+    combined = ". ".join(segment[:1].upper() + segment[1:] for segment in segments if segment)
+    return combined or not_understood(response_language), None, None
 
 
 async def process_voice_query(
