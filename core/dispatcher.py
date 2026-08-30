@@ -61,6 +61,12 @@ class CommandDispatcher:
         self._descriptions.pop(name, None)
         self._dangerous.discard(name)
 
+    def is_registered(self, name: str) -> bool:
+        return name in self._handlers
+
+    def is_dangerous(self, name: str) -> bool:
+        return name in self._dangerous
+
     def list_commands(self) -> list[CommandDescriptor]:
         return [
             CommandDescriptor(
@@ -99,6 +105,17 @@ class CommandDispatcher:
                 token=token,
             )
 
+        return await self._execute(command, params)
+
+    async def dispatch_preconfirmed(self, command: str, params: dict[str, Any]) -> CommandResponse:
+        """Runs `command` immediately, skipping the dangerous-command
+        confirmation gate. The only caller is modules/delayed_execution: a
+        command scheduled with "выключи компьютер через час" was already
+        confirmed out loud when the user asked for it, and there is nobody to
+        answer a fresh prompt when the timer elapses. Non-dangerous commands
+        go through here unchanged — it is just dispatch() minus the gate."""
+        if command not in self._handlers:
+            raise UnknownCommandError(command)
         return await self._execute(command, params)
 
     async def confirm(self, token: str, approved: bool) -> CommandResponse:

@@ -137,6 +137,13 @@ export interface SpeakResponse {
   audio_wav_base64: string | null;
 }
 
+export interface DelayedTask {
+  id: number;
+  original_text: string;
+  command_name: string;
+  run_at: string;
+}
+
 export interface ConversationTurn {
   timestamp: string;
   role: "user" | "assistant";

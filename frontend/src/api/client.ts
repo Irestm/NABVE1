@@ -9,6 +9,7 @@ import type {
   CommandResponse,
   CommunicationStyle,
   ConversationTurn,
+  DelayedTask,
   CustomCommand,
   CustomCommandActionType,
   ImageRequest,
@@ -255,6 +256,14 @@ export function createCalendarEvent(
 
 export function deleteCalendarEvent(eventId: number): Promise<CommandResponse> {
   return runCommand("calendar_delete_event", { event_id: eventId });
+}
+
+export function listDelayedTasks(): Promise<DelayedTask[]> {
+  return requestJson<DelayedTask[]>("/api/delayed");
+}
+
+export function cancelDelayedTask(taskId: number): Promise<CommandResponse> {
+  return requestJson<CommandResponse>(`/api/delayed/${taskId}/cancel`, { method: "POST" });
 }
 
 export async function listCommunicationStyles(): Promise<CommunicationStyle[]> {

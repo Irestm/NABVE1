@@ -92,6 +92,14 @@ class StatusResponse(BaseModel):
     active_module_context: str | None = None
 
 
+class DelayedTaskResponse(BaseModel):
+    id: int
+    original_text: str
+    command_name: str
+    # ISO-8601 — the frontend formats the local time itself.
+    run_at: str
+
+
 class ConversationTurnResponse(BaseModel):
     # ISO-8601 UTC string straight from modules/conversation_log — the
     # frontend formats the local time and day separators itself.

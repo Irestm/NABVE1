@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createCalendarEvent, deleteCalendarEvent, listUpcomingEvents } from "../api/client";
 import type { CalendarEvent, RecurrenceRule } from "../types";
+import { DelayedTasksPanel } from "./DelayedTasksPanel";
 import "./PlannerView.css";
 
 const WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -352,6 +353,8 @@ export function PlannerView(): JSX.Element {
           ))}
         </div>
       </div>
+
+      <DelayedTasksPanel />
     </div>
   );
 }

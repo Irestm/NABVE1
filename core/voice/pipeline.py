@@ -39,6 +39,10 @@ from modules.calendar import extraction as calendar_extraction
 from modules.conversation_log import record_assistant, record_user
 from modules.custom_commands import dispatcher as custom_commands
 from modules.custom_commands.domain import ActionType, CustomCommand
+from modules.delayed_execution import command_parser as delayed_command_parser
+from modules.delayed_execution import resolver as delayed_resolver
+from modules.delayed_execution import service_layer as delayed_service_layer
+from modules.delayed_execution.uow import DelayedExecutionUnitOfWork
 from modules.fitness_tracker import announce as fitness_announce
 from modules.fitness_tracker import context_state as fitness_context_state
 from modules.fitness_tracker import fitness_chat
@@ -1862,6 +1866,19 @@ class VoiceAssistantLoop:
 
         self._learn_facts(result.text, decision.resolved)
 
+        # A time marker anywhere in the utterance ("... через 10 минут",
+        # "... в 18 часов") schedules whatever is left for later instead of
+        # running it now — checked before the multi-command split so a
+        # single delayed command with an "и" in its object still schedules
+        # as one. See modules/delayed_execution.
+        delay = delayed_command_parser.extract_delay(result.text, decision.resolved)
+        if delay is not None:
+            interrupted = self._schedule_delayed_command(
+                delay, result.text, command_stt, tts, decision, response_language
+            )
+            state_manager.set_state(AssistantState.IDLE)
+            return interrupted
+
         # A chained utterance ("выключи звук и сверни окно") runs as a
         # sequence of independent commands, each through the full resolve/
         # dispatch path below — but only when the whole thing isn't itself a
@@ -1883,6 +1900,52 @@ class VoiceAssistantLoop:
             state_manager.set_state(AssistantState.IDLE)
             return interrupted
         return self._resolve_and_run_one(result.text, command_stt, tts, decision, response_language)
+
+    def _schedule_delayed_command(
+        self,
+        delay: delayed_command_parser.DelaySpec,
+        original_text: str,
+        command_stt: SpeechToText,
+        tts: TextToSpeech,
+        decision: LanguageDecision,
+        response_language: str,
+    ) -> bool:
+        """Resolves the non-time part of the utterance to a command and
+        stores it to run at delay.run_at instead of now. A dangerous command
+        is confirmed out loud right here (there is nobody to ask when the
+        timer elapses — it then fires via dispatch_preconfirmed). Returns
+        True on a stop-word barge-in, same as _resolve_and_run_one."""
+        command = delayed_resolver.resolve_command(delay.remainder, decision.resolved)
+        if command is None:
+            state_manager.set_state(AssistantState.SPEAKING)
+            return self._speak_safely(
+                tts, f"Не понял, что именно отложить: «{delay.remainder}».", response_language
+            )
+
+        pre_confirmed = False
+        if self._dispatcher.is_dangerous(command.name):
+            state_manager.set_state(AssistantState.SPEAKING)
+            if self._speak_safely(
+                tts,
+                f"Отложить «{delay.remainder}» на {delay.spoken_delay}? Это действие требует подтверждения.",
+                response_language,
+            ):
+                return True
+            state_manager.set_state(AssistantState.LISTENING, "Жду подтверждения")
+            confirm_audio = audio_io.record_until_silence(self._settings, self._stop_event)
+            confirm_result = command_stt.transcribe(confirm_audio)
+            if not is_affirmative(confirm_result.text, decision.resolved):
+                state_manager.set_state(AssistantState.SPEAKING)
+                return self._speak_safely(tts, "Хорошо, не откладываю.", response_language)
+            pre_confirmed = True
+
+        delayed_service_layer.schedule(
+            DelayedExecutionUnitOfWork(), command, delay.run_at, original_text, pre_confirmed
+        )
+        state_manager.set_state(AssistantState.SPEAKING)
+        return self._speak_safely(
+            tts, f"Хорошо, «{delay.remainder}» — через {delay.spoken_delay}.", response_language
+        )
 
     def _resolve_and_run_one(
         self,

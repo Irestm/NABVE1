@@ -29,10 +29,12 @@ from core.models import (
     CommandParamField,
     CommandRequest,
     CommandResponse,
+    CommandStatus,
     ConfirmRequest,
     ConversationTurnResponse,
     CustomCommandListResponse,
     CustomCommandResponse,
+    DelayedTaskResponse,
     FitnessBioProfileResponse,
     FitnessBioProfileUpdateRequest,
     FitnessChatRequest,
@@ -111,6 +113,8 @@ from modules.board_games.domain import Difficulty as BoardGameDifficulty
 from modules.board_games.domain import GameKind
 from modules.code_analysis import service_layer as code_analysis_service_layer
 from modules.conversation_log import conversation_log
+from modules.delayed_execution import service_layer as delayed_execution_service_layer
+from modules.delayed_execution.uow import DelayedExecutionUnitOfWork
 from modules.custom_commands import dispatcher as custom_commands_registry
 from modules.custom_commands import service_layer as custom_commands_service_layer
 from modules.custom_commands.domain import ActionType
@@ -156,6 +160,7 @@ recording_processor = _composed.recording_processor
 recording_transcriber = _composed.recording_transcriber
 messaging_snooze_checker = _composed.messaging_snooze_checker
 gmail_poller = _composed.gmail_poller
+delayed_command_runner = _composed.delayed_command_runner
 
 
 @asynccontextmanager
@@ -164,6 +169,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if settings.voice_autostart:
         voice_loop.start()
     reminder_checker.start()
+    delayed_command_runner.start()
     hardware_monitor.start()
     # Must run before the two pollers start: any row still mid-upload or
     # mid-conversion at this point was orphaned by a previous crash/restart
@@ -187,6 +193,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
     voice_loop.stop()
     reminder_checker.stop()
+    delayed_command_runner.stop()
     hardware_monitor.stop()
     recording_processor.stop()
     recording_transcriber.stop()
@@ -270,6 +277,42 @@ async def get_conversation(limit: int = 200) -> list[ConversationTurnResponse]:
     conversation, not just what was typed."""
     turns = await asyncio.to_thread(conversation_log.recent, max(1, min(limit, 1000)))
     return [ConversationTurnResponse(**turn.to_dict()) for turn in turns]
+
+
+@app.get("/api/delayed", response_model=list[DelayedTaskResponse])
+async def list_delayed_tasks() -> list[DelayedTaskResponse]:
+    """Pending delayed commands ("открой браузер через 10 минут"), soonest
+    first — see modules/delayed_execution."""
+    tasks = await asyncio.to_thread(
+        delayed_execution_service_layer.list_pending, DelayedExecutionUnitOfWork()
+    )
+    return [
+        DelayedTaskResponse(
+            id=task.id,
+            original_text=task.original_text,
+            command_name=task.command_name,
+            run_at=task.run_at.isoformat(),
+        )
+        for task in tasks
+    ]
+
+
+@app.post("/api/delayed/{task_id}/cancel", response_model=CommandResponse)
+async def cancel_delayed_task(task_id: int) -> CommandResponse:
+    cancelled = await asyncio.to_thread(
+        delayed_execution_service_layer.cancel, DelayedExecutionUnitOfWork(), task_id
+    )
+    if not cancelled:
+        return CommandResponse(
+            status=CommandStatus.FAILED,
+            command="delayed_cancel",
+            message=f"Отложенная задача №{task_id} не найдена или уже выполнена.",
+        )
+    return CommandResponse(
+        status=CommandStatus.EXECUTED,
+        command="delayed_cancel",
+        message=f"Отложенная задача №{task_id} отменена.",
+    )
 
 
 @app.get("/api/commands/ui", response_model=list[CommandButtonDescriptor])

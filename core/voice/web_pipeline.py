@@ -21,6 +21,10 @@ from modules.calendar import extraction as calendar_extraction
 from modules.conversation_log import record_assistant, record_user
 from modules.custom_commands import dispatcher as custom_commands_registry
 from modules.custom_commands.domain import ActionType
+from modules.delayed_execution import command_parser as delayed_command_parser
+from modules.delayed_execution import resolver as delayed_resolver
+from modules.delayed_execution import service_layer as delayed_service_layer
+from modules.delayed_execution.uow import DelayedExecutionUnitOfWork
 from modules.hardware_adaptive import command_classifier
 from modules.media import query_correction as media_query_correction
 from modules.media import youtube as media_youtube
@@ -145,6 +149,13 @@ async def _resolve_and_dispatch(
     process_text_query (text typed directly into the desktop UI) — kept in
     one place so the two entry points can't drift on how a command actually
     gets resolved. Returns (reply_text, status, token)."""
+    # A time marker ("... через 10 минут", "... в 18 часов") schedules
+    # whatever is left for later instead of running it now — checked first,
+    # before the chained-command split. See modules/delayed_execution.
+    delay = delayed_command_parser.extract_delay(text, input_language)
+    if delay is not None:
+        return await _schedule_delayed(dispatcher, delay, text, input_language, response_language)
+
     # A chained utterance ("выключи звук и сверни окно") is handled as a
     # sequence of independent commands — but only when it isn't itself a
     # single custom trigger phrase or a single rule-based command that just
@@ -383,6 +394,38 @@ async def _resolve_and_dispatch(
         reply_text = not_understood(response_language)
 
     return reply_text, status, token
+
+
+async def _schedule_delayed(
+    dispatcher: CommandDispatcher,
+    delay: delayed_command_parser.DelaySpec,
+    original_text: str,
+    input_language: str,
+    response_language: str,
+) -> tuple[str, str | None, str | None]:
+    """Stores the non-time part of the request to run at delay.run_at. A
+    dangerous command can't be pre-confirmed on this stateless endpoint (no
+    place to hold the yes/no round-trip), so it's refused with a pointer to
+    the desktop voice assistant, same as the other multi-turn commands."""
+    command = await asyncio.to_thread(delayed_resolver.resolve_command, delay.remainder, input_language)
+    if command is None:
+        return f"Не понял, что именно отложить: «{delay.remainder}».", None, None
+    if dispatcher.is_dangerous(command.name):
+        return (
+            f"«{delay.remainder}» требует подтверждения — отложить это можно только через "
+            "голосового ассистента на компьютере.",
+            None,
+            None,
+        )
+    await asyncio.to_thread(
+        delayed_service_layer.schedule,
+        DelayedExecutionUnitOfWork(),
+        command,
+        delay.run_at,
+        original_text,
+        False,
+    )
+    return f"Хорошо, «{delay.remainder}» — через {delay.spoken_delay}.", None, None
 
 
 async def _resolve_and_dispatch_multi(

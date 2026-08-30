@@ -20,6 +20,8 @@ from modules.cmd_executor import register_commands as register_cmd_executor_comm
 from modules.code_analysis import register_commands as register_code_analysis_commands
 from modules.crm_transcribe import register_commands as register_crm_transcribe_commands
 from modules.custom_commands import register_commands as register_custom_commands_commands
+from modules.delayed_execution import register_commands as register_delayed_execution_commands
+from modules.delayed_execution.scheduler import DelayedCommandRunner
 from modules.figma_control import register_commands as register_figma_control_commands
 from modules.files import register_commands as register_files_commands
 from modules.gmail import gmail_poller, register_commands as register_gmail_commands
@@ -101,6 +103,11 @@ class Composed:
     # commands are registered separately below via register_gmail_commands
     # (modules/gmail/dispatcher.py) — still read-only, no send/delete.
     gmail_poller: GmailPoller
+    # modules.delayed_execution's runner is the same background-poller shape
+    # as reminder_checker — it also needs the dispatcher to actually fire a
+    # command when its timer elapses, so it's built here where the
+    # dispatcher exists.
+    delayed_command_runner: DelayedCommandRunner
 
 
 def compose(bus: MessageBus = message_bus) -> Composed:
@@ -153,6 +160,8 @@ def compose(bus: MessageBus = message_bus) -> Composed:
     # turn, by which point every register_*_commands call above has already
     # run regardless of source order.
     register_task_orchestrator_commands(dispatcher)
+    register_delayed_execution_commands(dispatcher)
+    delayed_command_runner = DelayedCommandRunner(dispatcher)
 
     # Cross-module wiring: a due reminder is also spoken aloud while the
     # voice loop is running, on top of calendar's own desktop-notification
@@ -194,4 +203,5 @@ def compose(bus: MessageBus = message_bus) -> Composed:
         recording_transcriber=recording_transcriber,
         messaging_snooze_checker=snooze_checker,
         gmail_poller=gmail_poller,
+        delayed_command_runner=delayed_command_runner,
     )
