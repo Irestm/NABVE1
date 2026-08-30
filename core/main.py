@@ -166,6 +166,11 @@ delayed_command_runner = _composed.delayed_command_runner
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     logger.info("Assistant core service starting up")
+    # The conversation transcript is session-scoped, not a permanent
+    # history — cleared on every startup so it can't outlive a shutdown
+    # (covers a clean power-off and a crash alike). The "Контекст" button
+    # in the text-chat panel clears it on demand within a session.
+    await asyncio.to_thread(conversation_log.clear)
     if settings.voice_autostart:
         voice_loop.start()
     reminder_checker.start()
@@ -277,6 +282,17 @@ async def get_conversation(limit: int = 200) -> list[ConversationTurnResponse]:
     conversation, not just what was typed."""
     turns = await asyncio.to_thread(conversation_log.recent, max(1, min(limit, 1000)))
     return [ConversationTurnResponse(**turn.to_dict()) for turn in turns]
+
+
+@app.post("/api/conversation/clear", response_model=CommandResponse)
+async def clear_conversation() -> CommandResponse:
+    """Wipes the current session's transcript and the voice loop's one-line
+    short-term memory (the "Контекст" button)."""
+    await asyncio.to_thread(conversation_log.clear)
+    voice_loop.clear_dialog_context()
+    return CommandResponse(
+        status=CommandStatus.EXECUTED, command="conversation_clear", message="Контекст очищен."
+    )
 
 
 @app.get("/api/delayed", response_model=list[DelayedTaskResponse])

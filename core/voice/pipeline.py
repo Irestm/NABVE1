@@ -282,6 +282,12 @@ class VoiceAssistantLoop:
         self._manual_trigger_event.set()
         return True
 
+    def clear_dialog_context(self) -> None:
+        """Drops the one-line short-term memory of the previous exchange
+        (see _last_exchange). Paired with the transcript wipe behind the
+        text-chat "Контекст" button so both halves of "context" go at once."""
+        self._last_exchange = None
+
     def request_discussion_mode(self) -> bool:
         """Enters modules/discussion_mode on the next turn, for the "Режим
         дискуссии" command button (no spoken trigger phrase). Like

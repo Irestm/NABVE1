@@ -142,6 +142,10 @@ export function getConversation(limit = 200): Promise<ConversationTurn[]> {
   return requestJson<ConversationTurn[]>(`/api/conversation?limit=${encodeURIComponent(limit)}`);
 }
 
+export function clearConversation(): Promise<CommandResponse> {
+  return requestJson<CommandResponse>("/api/conversation/clear", { method: "POST" });
+}
+
 // Both drive the same always-on backend voice loop VoiceRecorder.tsx's
 // Electron branch uses instead of a second, browser-side microphone — see
 // core/main.py's /api/voice/trigger and /api/voice/pause docstrings.

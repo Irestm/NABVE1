@@ -89,3 +89,18 @@ def test_concurrent_appends_do_not_lose_turns(tmp_path: Path) -> None:
         thread.join()
 
     assert len(log.recent(limit=1000)) == 100
+
+
+def test_clear_removes_all_turns(tmp_path: Path) -> None:
+    log = _make_log(tmp_path)
+    log.append("user", "привет", "text")
+    log.append("assistant", "здравствуйте", "text")
+
+    log.clear()
+
+    assert log.recent() == []
+    assert not (tmp_path / "conversation_log.jsonl").exists()
+
+
+def test_clear_on_an_already_empty_log_is_a_noop(tmp_path: Path) -> None:
+    _make_log(tmp_path).clear()  # must not raise

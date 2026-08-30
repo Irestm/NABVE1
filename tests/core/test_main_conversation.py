@@ -59,3 +59,20 @@ def test_confirming_a_command_records_its_outcome_message(monkeypatch) -> None:
         "text": "Компьютер выключается.",
         "source": "text",
     }
+
+
+def test_clear_endpoint_wipes_the_transcript_and_short_term_memory(monkeypatch) -> None:
+    main_module.conversation_log.append("user", "первая реплика", "text")
+    main_module.conversation_log.append("assistant", "первый ответ", "text")
+    main_module.voice_loop._last_exchange = "Пользователь спросил ..."
+
+    response = client.post("/api/conversation/clear", headers=AUTH)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "executed"
+    assert client.get("/api/conversation", headers=AUTH).json() == []
+    assert main_module.voice_loop._last_exchange is None
+
+
+def test_clear_endpoint_requires_auth() -> None:
+    assert client.post("/api/conversation/clear").status_code == 401

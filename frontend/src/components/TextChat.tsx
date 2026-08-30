@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { confirmCommand, getConversation, sendTextQuery } from "../api/client";
+import { Eraser } from "lucide-react";
+import { clearConversation, confirmCommand, getConversation, sendTextQuery } from "../api/client";
 import type { ConversationTurn } from "../types";
 import "./TextChat.css";
 
@@ -104,6 +105,21 @@ export function TextChat(): JSX.Element {
     }
   }
 
+  async function handleClearContext(): Promise<void> {
+    if (!window.confirm("Очистить контекст диалога? Лента и короткая память ассистента будут стёрты.")) {
+      return;
+    }
+    try {
+      await clearConversation();
+    } catch (err) {
+      console.error("Failed to clear the conversation context:", err);
+      setError("Не удалось очистить контекст.");
+    }
+    setServerTurns([]);
+    setOptimistic([]);
+    await refresh();
+  }
+
   async function handleConfirm(approved: boolean): Promise<void> {
     if (!pending) {
       return;
@@ -124,6 +140,19 @@ export function TextChat(): JSX.Element {
 
   return (
     <div className="text-chat">
+      <div className="text-chat__toolbar">
+        <button
+          type="button"
+          className="text-chat__context-clear"
+          onClick={() => void handleClearContext()}
+          disabled={sending}
+          title="Очистить контекст диалога"
+        >
+          <Eraser size={13} />
+          Контекст
+        </button>
+      </div>
+
       {error && <p className="status-error">{error}</p>}
 
       <div className="text-chat__log" ref={logRef}>

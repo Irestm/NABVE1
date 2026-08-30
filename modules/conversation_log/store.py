@@ -47,6 +47,16 @@ class ConversationLog:
             self._trim_locked()
         return turn
 
+    def clear(self) -> None:
+        """Drops the whole transcript. Called on backend startup (the
+        transcript is session-scoped — see core/main.py's lifespan) and by
+        the "Контекст" button in the text-chat panel."""
+        with self._lock:
+            try:
+                self._path.unlink()
+            except FileNotFoundError:
+                pass
+
     def recent(self, limit: int = 200) -> list[ConversationTurn]:
         if limit <= 0:
             return []
