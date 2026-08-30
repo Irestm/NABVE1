@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 import urllib.request
 from dataclasses import dataclass
 from types import ModuleType
@@ -16,6 +17,7 @@ from modules.gesture_control.config import (
     HAND_BBOX_MAX,
     HAND_BBOX_MIN,
     HAND_DETECTION_CONFIDENCE,
+    HAND_KNUCKLE_RADIUS_TOLERANCE,
     HAND_LANDMARKER_TASK_PATH,
     HAND_LANDMARKER_TASK_URL,
     HAND_MIN_HANDEDNESS_SCORE,
@@ -94,19 +96,30 @@ class _AdaptiveSmoother:
 
 
 def _looks_like_hand(landmarks: Landmarks) -> bool:
-    """Reject a detection whose bounding box is not a plausible hand size —
-    MediaPipe occasionally locks onto a face or the torso ("воспринимает
-    любой объект, даже голову"); such a blob fills far more of the frame
-    than a hand held up to the camera, or is vanishing-small noise."""
+    """Reject a detection that isn't hand-shaped. A loose bbox check throws
+    out noise dots and frame-filling blobs; then the real test — the four
+    knuckles (5, 9, 13, 17) of a genuine hand sit at a consistent distance
+    from the wrist, whereas a face/torso false positive has them scattered.
+    Deliberately lenient: a real hand at any angle must pass."""
+    if len(landmarks) < 18:
+        return False
     xs = [p[0] for p in landmarks]
     ys = [p[1] for p in landmarks]
-    width = max(xs) - min(xs)
-    height = max(ys) - min(ys)
-    span = max(width, height)
+    span = max(max(xs) - min(xs), max(ys) - min(ys))
     if span < HAND_BBOX_MIN or span > HAND_BBOX_MAX:
         return False
-    thinner, wider = sorted((max(width, 1e-4), max(height, 1e-4)))
-    return wider / thinner <= 3.5
+
+    wrist = landmarks[0]
+    radii = [
+        math.hypot(landmarks[k][0] - wrist[0], landmarks[k][1] - wrist[1])
+        for k in (5, 9, 13, 17)
+    ]
+    mean_radius = sum(radii) / len(radii)
+    if mean_radius < 1e-3:
+        return False
+    lo = mean_radius / HAND_KNUCKLE_RADIUS_TOLERANCE
+    hi = mean_radius * HAND_KNUCKLE_RADIUS_TOLERANCE
+    return all(lo <= r <= hi for r in radii)
 
 
 def _require_cv2() -> ModuleType:
@@ -187,7 +200,12 @@ class HandTracker:
         self._landmarker = mp_vision.HandLandmarker.create_from_options(options)
         self._mp_image_cls = mp.Image
         self._mp_image_format = mp.ImageFormat.SRGB
-        self._frame_index = 0
+        # VIDEO mode wants a real, monotonically increasing millisecond
+        # timestamp — feeding it a frame counter (1, 2, 3, ...) made the
+        # model treat frames as 1 ms apart and its temporal tracking fell
+        # apart ("распознавание очень плохо").
+        self._epoch = time.monotonic()
+        self._last_timestamp_ms = -1
 
     def set_min_alpha(self, min_alpha: float) -> None:
         for smoother in self._smoothers:
@@ -210,8 +228,11 @@ class HandTracker:
         frame = self._cv2.flip(frame, 1)
         rgb = self._cv2.cvtColor(frame, self._cv2.COLOR_BGR2RGB)
         mp_image = self._mp_image_cls(image_format=self._mp_image_format, data=rgb)
-        self._frame_index += 1
-        result = self._landmarker.detect_for_video(mp_image, self._frame_index)
+        timestamp_ms = int((time.monotonic() - self._epoch) * 1000)
+        if timestamp_ms <= self._last_timestamp_ms:
+            timestamp_ms = self._last_timestamp_ms + 1
+        self._last_timestamp_ms = timestamp_ms
+        result = self._landmarker.detect_for_video(mp_image, timestamp_ms)
 
         landmark_sets = getattr(result, "hand_landmarks", []) or []
         handedness_sets = getattr(result, "handedness", []) or []

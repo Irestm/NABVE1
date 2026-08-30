@@ -14,8 +14,8 @@ GESTURE_TRACKING_ZONE_KEY = "gesture_tracking_zone"
 # hand span dist(wrist, index_mcp). ~0.35 when the fingers touch, ~1.0+ when
 # the hand is open — so it doesn't drift with camera distance / hand size.
 # Calibration tunes this per user; this default works without calibrating.
-DEFAULT_PINCH_RATIO = 0.45
-DEFAULT_TRACKING_ZONE = 0.55  # central fraction of the camera frame that maps to the whole screen
+DEFAULT_PINCH_RATIO = 0.5
+DEFAULT_TRACKING_ZONE = 0.70  # central fraction of the camera frame that maps to the whole screen
 
 # Ignore final on-screen cursor moves smaller than this — kills the last of
 # the landmark shimmer so a resting hand doesn't twitch the pointer. This is
@@ -55,10 +55,31 @@ STEADY_CALIBRATION_SAMPLES = 45
 JITTER_LOW_PX = 1.5
 JITTER_HIGH_PX = 9.0
 
-# Pinch = click. Hysteresis (release once the ratio climbs to 1.5x the
-# entry threshold) + a 2-frame debounce so a click never flickers.
-PINCH_RELEASE_MULT = 1.5
-PINCH_DEBOUNCE_FRAMES = 2
+# Pinch = click. The pinch ratio is median-filtered over PINCH_RATIO_MEDIAN
+# frames first (landmark noise made a raw ratio flicker past the debounce and
+# never engage — "щипок вообще не работает"). Engage is near-instant;
+# release is debounced and uses hysteresis (ratio must climb to
+# PINCH_RELEASE_MULT x the threshold) so a drag never drops on one bad frame.
+PINCH_RATIO_MEDIAN = 3
+PINCH_RELEASE_MULT = 1.6
+PINCH_ENGAGE_DEBOUNCE_FRAMES = 1
+PINCH_RELEASE_DEBOUNCE_FRAMES = 3
+
+# Precision hover: the cursor eases toward the mapped hand position with a
+# gain that scales with hand speed. Fast hand -> gain 1.0 (1:1, cross the
+# screen). Nearly still hand -> PRECISION_GAIN_MIN, so tremor barely nudges
+# the pointer and small targets ("маленький крестик") are reachable.
+PRECISION_SPEED_LOW = 0.006   # norm units/frame at/below which gain = PRECISION_GAIN_MIN
+PRECISION_SPEED_HIGH = 0.055  # norm units/frame at/above which gain = 1.0
+PRECISION_GAIN_MIN = 0.35
+
+# Dwell freeze: once the cursor has stayed within DWELL_RADIUS_PX for
+# DWELL_FRAMES it locks in place (ignores sub-DWELL_BREAK_PX hand motion)
+# until the hand moves clearly away or a pinch happens — so a hovered small
+# target stays under the pointer while you pinch to click it.
+DWELL_RADIUS_PX = 14
+DWELL_FRAMES = 7
+DWELL_BREAK_PX = 45
 
 # The physical mouse always wins: the instant the real cursor moves by
 # more than this (px) from where the worker last put it, gesture control
@@ -71,29 +92,36 @@ ZOOM_DELTA_THRESHOLD = 0.04
 ZOOM_COOLDOWN_FRAMES = 8
 
 # Open-palm horizontal swipe = switch windows (Alt+Tab / Alt+Shift+Tab).
-# The palm centre must travel at least SWIPE_MIN_DX (normalized) across the
-# last SWIPE_HISTORY_FRAMES frames, staying mostly horizontal, with the hand
-# open (pinch ratio above SWIPE_OPEN_HAND_RATIO). Cooldown blocks cursor
-# motion briefly after a switch so the swipe doesn't also fling the pointer.
+# A whole open palm (gesture_recognizer.is_open_palm — 3+ fingers extended,
+# not pinching) held for SWIPE_OPEN_STREAK_FRAMES puts the worker in "swipe
+# mode": the cursor is frozen and only a horizontal palm-centre travel of at
+# least SWIPE_MIN_DX across SWIPE_HISTORY_FRAMES (mostly horizontal) fires a
+# switch. A pointing hand never enters this mode, so it can't swipe by
+# accident. Cooldown blocks everything briefly after a switch.
 SWIPE_HISTORY_FRAMES = 5
-SWIPE_MIN_DX = 0.22
-SWIPE_MAX_DY_RATIO = 0.6
-SWIPE_OPEN_HAND_RATIO = 1.3
+SWIPE_MIN_DX = 0.26
+SWIPE_MAX_DY_RATIO = 0.55
+SWIPE_OPEN_STREAK_FRAMES = 3
 SWIPE_COOLDOWN_FRAMES = 12
 
-# Rejecting false hands ("воспринимает любой объект, даже голову"):
-# MediaPipe's own thresholds are raised, and every detection is then
-# sanity-checked — its Left/Right classification must be confident, and its
-# bounding box must be a plausible hand size (not a face-sized blob).
-HAND_DETECTION_CONFIDENCE = 0.75
-HAND_PRESENCE_CONFIDENCE = 0.7
-HAND_TRACKING_CONFIDENCE = 0.65
-HAND_MIN_HANDEDNESS_SCORE = 0.75
-HAND_BBOX_MIN = 0.04  # fraction of the frame — smaller = noise
-HAND_BBOX_MAX = 0.55  # larger = a face / torso, not a hand
+# Rejecting false hands ("воспринимает любой объект, даже голову") WITHOUT
+# starving real recognition (over-tight thresholds broke tracking): keep
+# MediaPipe near its own defaults, then sanity-check the *geometry* — the
+# four knuckles (5, 9, 13, 17) must sit at a consistent radius from the
+# wrist, which a scattered face/torso blob fails but a real hand at any
+# angle passes.
+HAND_DETECTION_CONFIDENCE = 0.5
+HAND_PRESENCE_CONFIDENCE = 0.5
+HAND_TRACKING_CONFIDENCE = 0.5
+HAND_MIN_HANDEDNESS_SCORE = 0.55
+HAND_BBOX_MIN = 0.03  # fraction of the frame — smaller = noise
+HAND_BBOX_MAX = 0.85  # larger = fills the frame, not a hand held up to the camera
+HAND_KNUCKLE_RADIUS_TOLERANCE = 2.4  # max ratio of any wrist->knuckle distance to their mean
 # A hand must be seen this many consecutive frames before it drives the
-# cursor, so a one-frame false blip can't jerk the pointer.
-HAND_WARMUP_FRAMES = 3
+# cursor, so a one-frame false blip can't jerk the pointer. hand_seen_streak
+# decays by 1 on a missed frame rather than resetting, so a brief tracking
+# gap doesn't restart the warmup.
+HAND_WARMUP_FRAMES = 2
 
 # MediaPipe Tasks HandLandmarker model — fetched once on first use into
 # data/models/, same pattern as the Silero TTS weights.

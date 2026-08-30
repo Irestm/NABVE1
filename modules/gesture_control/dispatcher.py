@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import threading
 import time
 from typing import Any
@@ -11,18 +12,26 @@ from core.message_bus import MessageBus, message_bus
 from modules.gesture_control import calibration
 from modules.gesture_control.config import (
     DEFAULT_TRACKING_ZONE,
+    DWELL_BREAK_PX,
+    DWELL_FRAMES,
+    DWELL_RADIUS_PX,
     GESTURE_TRACKING_ZONE_KEY,
     HAND_WARMUP_FRAMES,
     PHYSICAL_MOUSE_OVERRIDE_SECONDS,
     PHYSICAL_MOUSE_THRESHOLD_PX,
-    PINCH_DEBOUNCE_FRAMES,
+    PINCH_ENGAGE_DEBOUNCE_FRAMES,
+    PINCH_RATIO_MEDIAN,
+    PINCH_RELEASE_DEBOUNCE_FRAMES,
     PINCH_RELEASE_MULT,
+    PRECISION_GAIN_MIN,
+    PRECISION_SPEED_HIGH,
+    PRECISION_SPEED_LOW,
     PROCESSING_FPS,
     SWIPE_COOLDOWN_FRAMES,
     SWIPE_HISTORY_FRAMES,
     SWIPE_MAX_DY_RATIO,
     SWIPE_MIN_DX,
-    SWIPE_OPEN_HAND_RATIO,
+    SWIPE_OPEN_STREAK_FRAMES,
     ZOOM_COOLDOWN_FRAMES,
     ZOOM_DELTA_THRESHOLD,
 )
@@ -31,6 +40,8 @@ from modules.gesture_control.cursor_zoom import cursor_zoom
 from modules.gesture_control.events import GestureAnnouncement
 from modules.gesture_control.gesture_recognizer import (
     hand_centre,
+    is_open_palm,
+    median,
     pinch_ratio,
     swipe_direction,
     two_hand_spread_delta,
@@ -49,6 +60,15 @@ def _load_float(key: str, default: float) -> float:
         return float(raw) if raw else default
     except ValueError:
         return default
+
+
+def _precision_gain(hand_speed: float) -> float:
+    """Easing factor for the cursor's step toward the mapped hand position:
+    PRECISION_GAIN_MIN when the hand is nearly still (fine aiming), rising to
+    1.0 once it moves fast enough to cross the screen."""
+    span = max(PRECISION_SPEED_HIGH - PRECISION_SPEED_LOW, 1e-6)
+    t = max(0.0, min(1.0, (hand_speed - PRECISION_SPEED_LOW) / span))
+    return PRECISION_GAIN_MIN + (1.0 - PRECISION_GAIN_MIN) * t
 
 
 class GestureController:
@@ -142,16 +162,29 @@ class GestureController:
             self._drain_calibration_prompt(session)
 
         frame_interval = 1.0 / PROCESSING_FPS
+        warmup_cap = HAND_WARMUP_FRAMES + 2
         prev_spread: float | None = None
         zoom_cooldown = 0
         pinch_state = False
         pinch_streak = 0
+        ratio_buf: list[float] = []
         override_until = 0.0
         announced_ready = False
         hand_seen_streak = 0
         swipe_x: list[float] = []
         swipe_y: list[float] = []
         swipe_cooldown = 0
+        open_palm_streak = 0
+        prev_tip: tuple[float, float] | None = None
+        dwell_anchor: tuple[float, float] | None = None
+        dwell_frames = 0
+
+        def _release_pinch() -> None:
+            nonlocal pinch_state, pinch_streak
+            if pinch_state:
+                cursor.click_up()
+            pinch_state = False
+            pinch_streak = 0
 
         try:
             while not self._stop_event.is_set():
@@ -170,51 +203,54 @@ class GestureController:
                 # away from where we left it, yield for a short cooldown.
                 if cursor.physical_mouse_moved(PHYSICAL_MOUSE_THRESHOLD_PX):
                     override_until = loop_start + PHYSICAL_MOUSE_OVERRIDE_SECONDS
-                    if pinch_state:
-                        cursor.click_up()
-                        pinch_state = False
-                        pinch_streak = 0
+                    _release_pinch()
                 if loop_start < override_until:
-                    if pinch_state:
-                        cursor.click_up()
-                        pinch_state = False
+                    _release_pinch()
                     cursor.sync_last_set()
+                    prev_tip = None
+                    dwell_anchor = None
+                    dwell_frames = 0
                     self._pace(loop_start, frame_interval)
                     continue
 
                 if not result.hands:
-                    if pinch_state:
-                        cursor.click_up()
-                        pinch_state = False
+                    _release_pinch()
                     prev_spread = None
-                    hand_seen_streak = 0
+                    # decay, don't reset — a one-frame tracking gap shouldn't
+                    # restart the warmup.
+                    hand_seen_streak = max(0, hand_seen_streak - 1)
+                    ratio_buf.clear()
                     swipe_x.clear()
                     swipe_y.clear()
+                    open_palm_streak = 0
+                    prev_tip = None
+                    dwell_anchor = None
+                    dwell_frames = 0
                     self._pace(loop_start, frame_interval)
                     continue
 
                 primary = result.hands[0]
-                ratio = pinch_ratio(primary)
-
-                # A hand must persist a few frames before it drives the
-                # cursor — a one-frame false positive (a passing object, the
-                # user's head) can't jerk the pointer.
-                hand_seen_streak += 1
-                if session is None and hand_seen_streak < HAND_WARMUP_FRAMES:
-                    cursor.sync_last_set()
-                    self._pace(loop_start, frame_interval)
-                    continue
+                tip = primary[8]
+                raw_tip = result.raw_primary_tip or tip
+                ratio_raw = pinch_ratio(primary)
 
                 if session is not None and not session.done:
                     # Steady-phase tremor is measured on the *raw* fingertip —
                     # the smoothed one would understate the very shake we're
                     # trying to size the deadzone against.
-                    session.observe(ratio, result.raw_primary_tip or primary[8])
+                    session.observe(ratio_raw, raw_tip)
                     self._drain_calibration_prompt(session)
                     if session.done:
                         threshold, deadzone_px, applied_alpha = session.persist()
                         tracker.set_min_alpha(applied_alpha)
                         session = None
+                    self._pace(loop_start, frame_interval)
+                    continue
+
+                hand_seen_streak = min(hand_seen_streak + 1, warmup_cap)
+                if hand_seen_streak < HAND_WARMUP_FRAMES:
+                    cursor.sync_last_set()
+                    prev_tip = tip
                     self._pace(loop_start, frame_interval)
                     continue
 
@@ -225,53 +261,89 @@ class GestureController:
                         "взмах открытой ладонью — переключение окон. Возьмётесь за мышь — жесты уступают."
                     )
 
-                # Open-palm horizontal swipe -> Alt+Tab. Tracked on the palm
-                # centre; suppressed while pinching so a drag isn't read as a
-                # swipe, and the cooldown freezes the cursor so the swipe
-                # itself doesn't fling the pointer across the screen.
-                centre = hand_centre(primary)
-                if pinch_state:
+                # Median-filtered pinch ratio: raw landmark noise made the
+                # ratio flicker past the debounce so a pinch never engaged.
+                ratio_buf.append(ratio_raw)
+                if len(ratio_buf) > PINCH_RATIO_MEDIAN:
+                    ratio_buf.pop(0)
+                ratio = median(ratio_buf)
+                release_threshold = threshold * PINCH_RELEASE_MULT
+                pinching_now = ratio <= (release_threshold if pinch_state else threshold)
+
+                # --- swipe mode: a whole open palm, not pinching ---
+                if not pinching_now and not pinch_state and is_open_palm(primary):
+                    open_palm_streak += 1
+                else:
+                    open_palm_streak = 0
                     swipe_x.clear()
                     swipe_y.clear()
-                else:
+
+                if swipe_cooldown > 0:
+                    swipe_cooldown -= 1
+                    cursor.sync_last_set()
+                    prev_tip = tip
+                    self._pace(loop_start, frame_interval)
+                    continue
+
+                if open_palm_streak >= SWIPE_OPEN_STREAK_FRAMES:
+                    centre = hand_centre(primary)
                     swipe_x.append(centre[0])
                     swipe_y.append(centre[1])
                     if len(swipe_x) > SWIPE_HISTORY_FRAMES:
                         swipe_x.pop(0)
                         swipe_y.pop(0)
-
-                if swipe_cooldown > 0:
-                    swipe_cooldown -= 1
-                    cursor.sync_last_set()
-                    self._pace(loop_start, frame_interval)
-                    continue
-
-                if not pinch_state and len(result.hands) == 1 and ratio > SWIPE_OPEN_HAND_RATIO:
-                    direction = swipe_direction(
-                        swipe_x, swipe_y, SWIPE_MIN_DX, SWIPE_MAX_DY_RATIO
-                    )
+                    direction = swipe_direction(swipe_x, swipe_y, SWIPE_MIN_DX, SWIPE_MAX_DY_RATIO)
                     if direction != 0:
                         cursor.trigger_window_switch("next" if direction > 0 else "prev")
                         swipe_cooldown = SWIPE_COOLDOWN_FRAMES
                         swipe_x.clear()
                         swipe_y.clear()
-                        cursor.sync_last_set()
-                        self._pace(loop_start, frame_interval)
-                        continue
+                        open_palm_streak = 0
+                    cursor.sync_last_set()
+                    prev_tip = tip
+                    dwell_anchor = None
+                    dwell_frames = 0
+                    self._pace(loop_start, frame_interval)
+                    continue
 
-                target = map_hand_to_screen(primary[8], cursor.screen_size, zone)
+                # --- pointing mode: cursor + pinch + two-hand zoom ---
+                if prev_tip is None:
+                    prev_tip = tip
+                hand_speed = math.hypot(tip[0] - prev_tip[0], tip[1] - prev_tip[1])
+                prev_tip = tip
+
+                target = map_hand_to_screen(tip, cursor.screen_size, zone)
                 cx, cy = cursor.current_pos()
-                if abs(target[0] - cx) >= deadzone_px or abs(target[1] - cy) >= deadzone_px:
-                    cursor.move_cursor(*target)
+                gain = _precision_gain(hand_speed)
+                eased = (cx + (target[0] - cx) * gain, cy + (target[1] - cy) * gain)
 
-                # Pinch with hysteresis (release at 1.5x the threshold) and
-                # a 2-frame debounce so a click never flickers.
-                exit_threshold = threshold * PINCH_RELEASE_MULT
-                desired = ratio <= threshold if not pinch_state else ratio <= exit_threshold
-                if desired != pinch_state:
+                if dwell_anchor is None or math.hypot(
+                    eased[0] - dwell_anchor[0], eased[1] - dwell_anchor[1]
+                ) > DWELL_RADIUS_PX:
+                    dwell_anchor = eased
+                    dwell_frames = 0
+                else:
+                    dwell_frames += 1
+
+                frozen = dwell_frames >= DWELL_FRAMES and math.hypot(
+                    target[0] - dwell_anchor[0], target[1] - dwell_anchor[1]
+                ) <= DWELL_BREAK_PX
+                if not frozen:
+                    ex, ey = int(round(eased[0])), int(round(eased[1]))
+                    if abs(ex - cx) >= deadzone_px or abs(ey - cy) >= deadzone_px:
+                        cursor.move_cursor(ex, ey)
+
+                # Pinch: near-instant engage, debounced + hysteresis release
+                # so a drag never drops on one bad frame.
+                if pinching_now != pinch_state:
                     pinch_streak += 1
-                    if pinch_streak >= PINCH_DEBOUNCE_FRAMES:
-                        pinch_state = desired
+                    need = (
+                        PINCH_ENGAGE_DEBOUNCE_FRAMES
+                        if pinching_now
+                        else PINCH_RELEASE_DEBOUNCE_FRAMES
+                    )
+                    if pinch_streak >= need:
+                        pinch_state = pinching_now
                         pinch_streak = 0
                         cursor.click_down() if pinch_state else cursor.click_up()
                 else:

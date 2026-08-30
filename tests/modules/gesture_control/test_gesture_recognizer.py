@@ -78,3 +78,39 @@ def test_swipe_direction_ignores_a_mostly_vertical_move() -> None:
 
 def test_swipe_direction_needs_two_samples() -> None:
     assert gr.swipe_direction([0.5], [0.5], min_dx=0.25, max_dy_ratio=0.6) == 0
+
+
+def test_median() -> None:
+    assert gr.median([]) == 0.0
+    assert gr.median([0.4]) == 0.4
+    assert gr.median([0.9, 0.1, 0.5]) == 0.5
+    assert gr.median([5.0, 0.2, 0.3]) == 0.3  # one spike ignored
+
+
+def _open_hand() -> list[tuple[float, float]]:
+    hand = _flat_hand()
+    hand[0] = (0.5, 0.9)  # wrist
+    for tip, pip in ((8, 6), (12, 10), (16, 14), (20, 18)):
+        hand[pip] = (0.5, 0.6)
+        hand[tip] = (0.5, 0.3)  # tip well past the pip -> extended
+    return hand
+
+
+def test_is_open_palm_true_for_a_spread_hand() -> None:
+    assert gr.is_open_palm(_open_hand()) is True
+
+
+def test_is_open_palm_false_for_a_pointing_hand() -> None:
+    hand = _open_hand()
+    for tip, pip in ((12, 10), (16, 14), (20, 18)):  # curl all but the index
+        hand[tip] = (0.5, 0.62)  # tip barely past pip -> not extended
+    assert gr.is_open_palm(hand) is False
+
+
+def test_is_open_palm_false_for_a_fist() -> None:
+    hand = _flat_hand()
+    hand[0] = (0.5, 0.9)
+    for tip, pip in ((8, 6), (12, 10), (16, 14), (20, 18)):
+        hand[pip] = (0.5, 0.7)
+        hand[tip] = (0.5, 0.75)  # tip closer to wrist than pip -> curled
+    assert gr.is_open_palm(hand) is False

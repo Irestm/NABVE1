@@ -22,6 +22,23 @@ def _require_pyautogui() -> ModuleType:
     return pyautogui
 
 
+def _virtual_screen_size(pyautogui: ModuleType) -> tuple[int, int]:
+    """The full virtual desktop, spanning every monitor. pyautogui.size()
+    returns only the primary screen on a multi-monitor X11 setup, which
+    would trap the gesture cursor on one monitor and land clicks off-target.
+    Xlib (already a pyautogui dependency on Linux) gives the real span."""
+    try:
+        from Xlib.display import Display  # type: ignore[import-untyped]
+
+        geom = Display().screen().root.get_geometry()
+        if geom.width > 0 and geom.height > 0:
+            return int(geom.width), int(geom.height)
+    except Exception:
+        logger.debug("Xlib virtual screen size lookup failed, using pyautogui.size()", exc_info=True)
+    size = pyautogui.size()
+    return int(size[0]), int(size[1])
+
+
 def map_hand_to_screen(
     hand_xy: tuple[float, float],
     screen_size: tuple[int, int],
@@ -53,7 +70,7 @@ class CursorController:
         self._pyautogui = _require_pyautogui()
         self._button_down = False
         self._last_set: tuple[int, int] | None = None
-        self.screen_size: tuple[int, int] = tuple(self._pyautogui.size())  # (w, h)
+        self.screen_size: tuple[int, int] = _virtual_screen_size(self._pyautogui)  # (w, h)
 
     def current_pos(self) -> tuple[int, int]:
         point = self._pyautogui.position()

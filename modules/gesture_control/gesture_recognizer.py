@@ -11,9 +11,18 @@ _INDEX_TIP = 8
 _WRIST = 0
 _MIDDLE_MCP = 9  # base of the middle finger — a stable "hand centre" proxy
 
+# Non-thumb fingers: (tip, proximal-interphalangeal joint).
+_FINGERS = ((8, 6), (12, 10), (16, 14), (20, 18))
+
 
 def _distance(a: tuple[float, float], b: tuple[float, float]) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return sorted(values)[len(values) // 2]
 
 
 def _hand_span(hand: Landmarks) -> float:
@@ -31,6 +40,19 @@ def pinch_ratio(hand: Landmarks) -> float:
 
 def is_pinching(ratio: float, threshold: float) -> bool:
     return ratio <= threshold
+
+
+def is_open_palm(hand: Landmarks) -> bool:
+    """A whole open hand: at least three non-thumb fingers extended (tip
+    noticeably farther from the wrist than that finger's PIP joint). A
+    pointing hand (only the index out) fails this, so it can't be mistaken
+    for a swipe while the user is just aiming the cursor."""
+    wrist = hand[_WRIST]
+    extended = 0
+    for tip, pip in _FINGERS:
+        if _distance(hand[tip], wrist) > _distance(hand[pip], wrist) * 1.15:
+            extended += 1
+    return extended >= 3
 
 
 def hand_centre(hand: Landmarks) -> tuple[float, float]:
