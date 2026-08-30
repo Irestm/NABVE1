@@ -18,6 +18,7 @@ from core.voice import ai_router, voice_preference
 from modules import multi_command_parser
 from modules.app_catalog import resolver as app_resolver
 from modules.calendar import extraction as calendar_extraction
+from modules.conversation_log import record_assistant, record_user
 from modules.custom_commands import dispatcher as custom_commands_registry
 from modules.custom_commands.domain import ActionType
 from modules.hardware_adaptive import command_classifier
@@ -545,6 +546,9 @@ async def process_text_query(
         )
 
     reply_text, status, token = await _resolve_and_dispatch(dispatcher, text, input_language, response_language)
+
+    record_user(text, "text")
+    record_assistant(reply_text, "text")
 
     return VoiceQueryResult(
         transcribed_text=text,

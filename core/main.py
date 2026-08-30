@@ -30,6 +30,7 @@ from core.models import (
     CommandRequest,
     CommandResponse,
     ConfirmRequest,
+    ConversationTurnResponse,
     CustomCommandListResponse,
     CustomCommandResponse,
     FitnessBioProfileResponse,
@@ -109,6 +110,7 @@ from modules.board_games import ui_session as board_games_ui_session
 from modules.board_games.domain import Difficulty as BoardGameDifficulty
 from modules.board_games.domain import GameKind
 from modules.code_analysis import service_layer as code_analysis_service_layer
+from modules.conversation_log import conversation_log
 from modules.custom_commands import dispatcher as custom_commands_registry
 from modules.custom_commands import service_layer as custom_commands_service_layer
 from modules.custom_commands.domain import ActionType
@@ -260,6 +262,16 @@ async def list_commands() -> list[CommandDescriptor]:
     return dispatcher.list_commands()
 
 
+@app.get("/api/conversation", response_model=list[ConversationTurnResponse])
+async def get_conversation(limit: int = 200) -> list[ConversationTurnResponse]:
+    """Merged transcript of spoken and typed turns (see
+    modules/conversation_log) so the desktop text-chat panel can show — and
+    keep across restarts — what the assistant said out loud during a voice
+    conversation, not just what was typed."""
+    turns = await asyncio.to_thread(conversation_log.recent, max(1, min(limit, 1000)))
+    return [ConversationTurnResponse(**turn.to_dict()) for turn in turns]
+
+
 @app.get("/api/commands/ui", response_model=list[CommandButtonDescriptor])
 async def list_command_buttons() -> list[CommandButtonDescriptor]:
     """Curated subset of list_commands() with label/icon/params_schema for
@@ -301,7 +313,13 @@ async def run_command(request: CommandRequest) -> CommandResponse:
 
 @app.post("/api/command/confirm", response_model=CommandResponse)
 async def confirm_command(request: ConfirmRequest) -> CommandResponse:
-    return await dispatcher.confirm(request.token, request.approved)
+    response = await dispatcher.confirm(request.token, request.approved)
+    # The text-chat panel resolves a confirmation_required reply through
+    # this route, so the outcome message ("Компьютер выключается", ...) is
+    # part of that typed conversation and belongs in the transcript too.
+    if response.message:
+        await asyncio.to_thread(conversation_log.append, "assistant", response.message, "text")
+    return response
 
 
 @app.websocket(FIGMA_WEBSOCKET_PATH)

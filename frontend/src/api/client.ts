@@ -8,6 +8,7 @@ import type {
   CommandDescriptor,
   CommandResponse,
   CommunicationStyle,
+  ConversationTurn,
   CustomCommand,
   CustomCommandActionType,
   ImageRequest,
@@ -134,6 +135,10 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getStatus(): Promise<StatusResponse> {
   return requestJson<StatusResponse>("/api/status");
+}
+
+export function getConversation(limit = 200): Promise<ConversationTurn[]> {
+  return requestJson<ConversationTurn[]>(`/api/conversation?limit=${encodeURIComponent(limit)}`);
 }
 
 // Both drive the same always-on backend voice loop VoiceRecorder.tsx's

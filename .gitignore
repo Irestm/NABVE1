@@ -28,6 +28,9 @@ data/.cache/
 data/api_token.txt
 # AI-generated images (modules/image_generation) — user content, not source.
 data/generated_images/
+# Rolling transcript of user/assistant turns (modules/conversation_log) —
+# per-machine conversation history, not source.
+data/conversation_log.jsonl
 
 # Node / frontend
 frontend/node_modules/

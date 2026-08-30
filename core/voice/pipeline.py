@@ -36,6 +36,7 @@ from modules.board_games import service_layer as board_games_service_layer
 from modules.board_games import ui_session as board_games_ui_session
 from modules.board_games.domain import GameKind
 from modules.calendar import extraction as calendar_extraction
+from modules.conversation_log import record_assistant, record_user
 from modules.custom_commands import dispatcher as custom_commands
 from modules.custom_commands.domain import ActionType, CustomCommand
 from modules.fitness_tracker import announce as fitness_announce
@@ -301,6 +302,14 @@ class VoiceAssistantLoop:
         exactly like any other barge-in interruption: propagate it up as
         `interrupted` until it reaches VoiceAssistantLoop._run, which pauses
         (AssistantState.PAUSED), not "go straight back to listening"."""
+        # Recorded here, before synthesis, so the on-screen transcript
+        # still shows what the assistant meant to say even if TTS or the
+        # speaker fails below. Every spoken command result, prompt and
+        # acknowledgement in this loop passes through _speak_safely; the
+        # streamed free-text answers that don't are recorded in
+        # _classify_via_ai_bridge instead.
+        if text and text.strip():
+            record_assistant(text, "voice")
         try:
             samples, sample_rate = tts.synthesize(text, language)
         except RuntimeError as exc:
@@ -692,6 +701,7 @@ class VoiceAssistantLoop:
             # answer are both valid context for a follow-up either way, the
             # interruption only affects whether it finished being *spoken*.
             self._last_exchange = f"Пользователь спросил: «{text}». Ассистент ответил: «{answer}»."
+            record_assistant(answer, "voice")
 
         if streamed_interrupted is not None:
             if streamed_interrupted:
@@ -1841,6 +1851,8 @@ class VoiceAssistantLoop:
         # at all for this turn.
         if self._pause_if_stop_word(result.text, context="as the command itself"):
             return False
+
+        record_user(result.text, "voice")
 
         decision = resolve_language(result.detected_language, result.language_probability, self._settings)
         # decision.resolved drives interpretation of the user's own words (interpret,

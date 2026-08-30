@@ -137,6 +137,13 @@ export interface SpeakResponse {
   audio_wav_base64: string | null;
 }
 
+export interface ConversationTurn {
+  timestamp: string;
+  role: "user" | "assistant";
+  text: string;
+  source: "voice" | "text";
+}
+
 export interface LanUrlResponse {
   url: string;
 }
