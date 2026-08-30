@@ -1,6 +1,18 @@
 from __future__ import annotations
 
+import os
+
 from core.config import DATA_DIR
+
+# Set NABVE_GESTURE_DEBUG=1 to log raw MediaPipe landmarks every frame plus
+# a periodic processing-FPS line — the diagnostic pass for "распознавание
+# работает плохо". Off by default (per-frame logging is noisy).
+GESTURE_DEBUG = os.environ.get("NABVE_GESTURE_DEBUG", "").strip() not in ("", "0", "false", "no")
+
+# Try the MediaPipe GPU delegate for inference first (RTX 4050), fall back to
+# CPU/XNNPACK if the wheel/driver can't provide it — the worker logs which
+# one it ended up on.
+GESTURE_TRY_GPU = os.environ.get("NABVE_GESTURE_GPU", "1").strip() not in ("0", "false", "no")
 
 # Per-user profile facts written by the calibration wizard
 # (calibration.CalibrationSession): one phase per gesture, each done 3x, each
@@ -35,8 +47,12 @@ CURSOR_SCALE = 1.5
 # Processing rate — enough for a responsive cursor without pinning a core.
 PROCESSING_FPS = 24
 CAMERA_INDEX = 0
-CAMERA_WIDTH = 640
-CAMERA_HEIGHT = 480
+# 720p capture: MediaPipe downsamples internally, but a higher-res source
+# keeps finger detail crisper when the hand is small / far from the camera.
+# The worker logs the resolution the driver actually granted.
+CAMERA_WIDTH = 1280
+CAMERA_HEIGHT = 720
+CAMERA_FPS = 30
 
 # Cursor smoothing: a genuine 1€ (One-Euro) filter on the tracked point,
 # fed by a median-of-3 prefilter that drops single-frame spikes. ONE_EURO_
@@ -132,10 +148,13 @@ OPEN_PALM_RATIO_MAX = 1.7
 # four knuckles (5, 9, 13, 17) must sit at a consistent radius from the
 # wrist, which a scattered face/torso blob fails but a real hand at any
 # angle passes.
-HAND_DETECTION_CONFIDENCE = 0.5
-HAND_PRESENCE_CONFIDENCE = 0.5
-HAND_TRACKING_CONFIDENCE = 0.5
-HAND_MIN_HANDEDNESS_SCORE = 0.55
+# Raised back up now that One-Euro + the geometry check absorb the extra
+# rejections: a low-confidence landmark set reads as "дёрганье", so it's
+# better to drop it and let the filter coast than to steer the cursor with it.
+HAND_DETECTION_CONFIDENCE = 0.6
+HAND_PRESENCE_CONFIDENCE = 0.6
+HAND_TRACKING_CONFIDENCE = 0.55
+HAND_MIN_HANDEDNESS_SCORE = 0.6
 HAND_BBOX_MIN = 0.03  # fraction of the frame — smaller = noise
 HAND_BBOX_MAX = 0.85  # larger = fills the frame, not a hand held up to the camera
 HAND_KNUCKLE_RADIUS_TOLERANCE = 2.4  # max ratio of any wrist->knuckle distance to their mean

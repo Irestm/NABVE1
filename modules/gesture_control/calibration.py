@@ -27,7 +27,6 @@ from modules.gesture_control.config import (
     SWIPE_MIN_DX_CEIL,
     SWIPE_MIN_DX_FLOOR,
 )
-from modules.gesture_control.gesture_recognizer import median
 from modules.user_profile import service_layer as profile_service_layer
 from modules.user_profile.uow import ProfileUnitOfWork
 
@@ -102,18 +101,33 @@ def _lerp_min_cutoff(jitter_px: float) -> float:
     return round(MIN_CUTOFF_CEIL + (MIN_CUTOFF_FLOOR - MIN_CUTOFF_CEIL) * t, 3)
 
 
+def _trimmed_mean(values: list[float]) -> float:
+    """Mean after dropping the single lowest and highest sample (needs >=3)
+    — a robust personal level that one bad rep can't skew."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) >= 3:
+        ordered = ordered[1:-1]
+    return sum(ordered) / len(ordered)
+
+
 class _RepCounter:
     """Counts "do it N times" for a scalar signal that swings between a low
-    and a high state. A rep = the value crosses the midpoint of its observed
-    range into the gesture side and back out (with a hysteresis band).
-    `active_high` picks which side is the gesture — pinch drives the ratio
-    low, open palm drives the score high."""
+    and a high state, and records the extreme reached on each side. A rep =
+    the value crosses the midpoint of its observed range into the gesture
+    side and back out (with a hysteresis band). `active_high` picks which
+    side is the gesture — pinch drives the ratio low, open palm the score
+    high."""
 
     def __init__(self, active_high: bool, min_span: float) -> None:
         self._active_high = active_high
         self._min_span = min_span
         self._samples: list[float] = []
         self._in_gesture = False
+        self._cur_extreme: float | None = None
+        self._gesture_extremes: list[float] = []
+        self._rest_extremes: list[float] = []
         self.reps = 0
 
     def observe(self, value: float) -> None:
@@ -128,14 +142,31 @@ class _RepCounter:
             enter, leave = value >= mid + band, value <= mid - band
         else:
             enter, leave = value <= mid - band, value >= mid + band
+
+        if self._cur_extreme is None:
+            self._cur_extreme = value
+        elif self._in_gesture == self._active_high:
+            self._cur_extreme = max(self._cur_extreme, value)
+        else:
+            self._cur_extreme = min(self._cur_extreme, value)
+
         if not self._in_gesture and enter:
+            self._rest_extremes.append(self._cur_extreme)
             self._in_gesture = True
+            self._cur_extreme = value
         elif self._in_gesture and leave:
+            self._gesture_extremes.append(self._cur_extreme)
             self._in_gesture = False
+            self._cur_extreme = value
             self.reps += 1
 
-    def span(self) -> tuple[float, float]:
-        return min(self._samples), max(self._samples)
+    def gesture_level(self) -> float:
+        return _trimmed_mean(self._gesture_extremes)
+
+    def rest_level(self) -> float:
+        if self._rest_extremes:
+            return _trimmed_mean(self._rest_extremes)
+        return max(self._samples) if self._active_high else min(self._samples)
 
 
 @dataclass
@@ -238,28 +269,32 @@ class CalibrationSession:
         self._advance(_PHASE_PINCH)
 
     def _finish_pinch(self) -> None:
-        tight, wide = self._pinch.span()
+        tight = self._pinch.gesture_level()  # trimmed mean of per-squeeze minima
+        wide = self._pinch.rest_level()  # trimmed mean of the open-hand ratio
         span = wide - tight
         value = tight + span * 0.45 if span > 1e-3 else DEFAULT_PINCH_RATIO
         self.pinch_threshold = round(_clamp(value, 0.2, 0.75), 4)
         logger.info(
-            "Calibration PINCH: tight=%.3f wide=%.3f threshold=%.3f",
+            "Calibration PINCH: squeezed=%.3f open=%.3f threshold=%.3f (%d reps)",
             tight,
             wide,
             self.pinch_threshold,
+            self._pinch.reps,
         )
         self._advance(_PHASE_OPEN_PALM)
 
     def _finish_open_palm(self) -> None:
-        low, high = self._open_palm.span()
+        high = self._open_palm.gesture_level()  # trimmed mean of per-spread maxima
+        low = self._open_palm.rest_level()  # trimmed mean of the fist score
         span = high - low
         value = low + span * 0.5 if span > 1e-3 else DEFAULT_OPEN_PALM_RATIO
         self.open_palm_ratio = round(_clamp(value, OPEN_PALM_RATIO_MIN, OPEN_PALM_RATIO_MAX), 3)
         logger.info(
-            "Calibration OPEN_PALM: low=%.3f high=%.3f threshold=%.3f",
+            "Calibration OPEN_PALM: fist=%.3f spread=%.3f threshold=%.3f (%d reps)",
             low,
             high,
             self.open_palm_ratio,
+            self._open_palm.reps,
         )
         self._advance(_PHASE_SWIPE)
 
@@ -287,7 +322,7 @@ class CalibrationSession:
             self._finish_swipe()
 
     def _finish_swipe(self) -> None:
-        value = median(self._swipe_travels) * 0.6
+        value = _trimmed_mean(self._swipe_travels) * 0.6
         self.swipe_min_dx = round(_clamp(value, SWIPE_MIN_DX_FLOOR, SWIPE_MIN_DX_CEIL), 3)
         logger.info(
             "Calibration SWIPE: travels=%s swipe_min_dx=%.3f",

@@ -8,9 +8,12 @@ from types import ModuleType
 
 from core.logger import get_logger
 from modules.gesture_control.config import (
+    CAMERA_FPS,
     CAMERA_HEIGHT,
     CAMERA_INDEX,
     CAMERA_WIDTH,
+    GESTURE_DEBUG,
+    GESTURE_TRY_GPU,
     HAND_BBOX_MAX,
     HAND_BBOX_MIN,
     HAND_DETECTION_CONFIDENCE,
@@ -21,10 +24,9 @@ from modules.gesture_control.config import (
     HAND_PRESENCE_CONFIDENCE,
     HAND_TRACKING_CONFIDENCE,
     MODELS_DIR,
-    ONE_EURO_BETA,
-    ONE_EURO_D_CUTOFF,
     ONE_EURO_MIN_CUTOFF,
 )
+from modules.gesture_control.one_euro_filter import OneEuroFilter
 
 logger = get_logger(__name__)
 
@@ -42,80 +44,6 @@ class FrameResult:
     @property
     def raw_primary_tip(self) -> tuple[float, float] | None:
         return self.raw_index_tips[0] if self.raw_index_tips else None
-
-
-def _median(values: list[float]) -> float:
-    return sorted(values)[len(values) // 2]
-
-
-def _euro_alpha(cutoff: float, dt: float) -> float:
-    tau = 1.0 / (2.0 * math.pi * cutoff)
-    return 1.0 / (1.0 + tau / dt)
-
-
-class _OneEuroFilter:
-    """The 1€ (One-Euro) filter on a single (x, y) point, fed by a median-of-3
-    prefilter that drops single-frame landmark spikes. `min_cutoff` (Hz) sets
-    the low-pass when the hand is still — lower = steadier + more lag; `beta`
-    raises the cutoff with hand speed so a deliberate move barely lags.
-    Needs a real timestamp (seconds) each update. `min_cutoff` is tuned per
-    user by "калибровка дрожания"."""
-
-    def __init__(
-        self,
-        min_cutoff: float = ONE_EURO_MIN_CUTOFF,
-        beta: float = ONE_EURO_BETA,
-        d_cutoff: float = ONE_EURO_D_CUTOFF,
-    ) -> None:
-        self._min_cutoff = max(0.05, min_cutoff)
-        self._beta = beta
-        self._d_cutoff = d_cutoff
-        self._window: list[tuple[float, float]] = []
-        self._x_prev: tuple[float, float] | None = None
-        self._dx_prev = (0.0, 0.0)
-        self._t_prev: float | None = None
-
-    def set_min_cutoff(self, min_cutoff: float) -> None:
-        self._min_cutoff = max(0.05, min_cutoff)
-
-    def update(self, point: tuple[float, float], timestamp: float) -> tuple[float, float]:
-        self._window.append(point)
-        if len(self._window) > 3:
-            self._window.pop(0)
-        point = (
-            _median([p[0] for p in self._window]),
-            _median([p[1] for p in self._window]),
-        )
-
-        if self._x_prev is None or self._t_prev is None:
-            self._x_prev = point
-            self._t_prev = timestamp
-            return point
-
-        dt = timestamp - self._t_prev
-        if dt <= 0:
-            dt = 1.0 / 30.0
-        self._t_prev = timestamp
-
-        a_d = _euro_alpha(self._d_cutoff, dt)
-        out: list[float] = []
-        dx_new: list[float] = []
-        for axis in (0, 1):
-            raw_dx = (point[axis] - self._x_prev[axis]) / dt
-            edx = self._dx_prev[axis] + a_d * (raw_dx - self._dx_prev[axis])
-            dx_new.append(edx)
-            cutoff = self._min_cutoff + self._beta * abs(edx)
-            a = _euro_alpha(cutoff, dt)
-            out.append(self._x_prev[axis] + a * (point[axis] - self._x_prev[axis]))
-        self._dx_prev = (dx_new[0], dx_new[1])
-        self._x_prev = (out[0], out[1])
-        return self._x_prev
-
-    def reset(self) -> None:
-        self._window.clear()
-        self._x_prev = None
-        self._dx_prev = (0.0, 0.0)
-        self._t_prev = None
 
 
 def _looks_like_hand(landmarks: Landmarks) -> bool:
@@ -186,10 +114,15 @@ class HandTracker:
         self._cv2 = _require_cv2()
         self._capture = None
         self._landmarker = None
-        self._smoothers: list[_OneEuroFilter] = [
-            _OneEuroFilter(min_cutoff),
-            _OneEuroFilter(min_cutoff),
+        self._smoothers: list[OneEuroFilter] = [
+            OneEuroFilter(min_cutoff),
+            OneEuroFilter(min_cutoff),
         ]
+        # Diagnostics (§1): rolling processing FPS + last detect latency.
+        self._diag_frames = 0
+        self._diag_since = time.monotonic()
+        self._diag_detect_ms = 0.0
+        self.delegate = "cpu"
 
     def open(self) -> None:
         ensure_model()
@@ -202,31 +135,54 @@ class HandTracker:
             raise RuntimeError(
                 f"Не удалось открыть камеру {self._camera_index} — занята другим приложением или недоступна."
             )
-        # Small frame + tiny buffer = lower latency and less CPU per frame.
         cap.set(self._cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
         cap.set(self._cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-        cap.set(self._cv2.CAP_PROP_FPS, 30)
+        cap.set(self._cv2.CAP_PROP_FPS, CAMERA_FPS)
         try:
-            cap.set(self._cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(self._cv2.CAP_PROP_BUFFERSIZE, 1)  # tiny buffer = act on the freshest frame
         except Exception:
             pass
         self._capture = cap
-
-        options = mp_vision.HandLandmarkerOptions(
-            base_options=mp_python.BaseOptions(model_asset_path=str(HAND_LANDMARKER_TASK_PATH)),
-            running_mode=mp_vision.RunningMode.VIDEO,
-            num_hands=2,
-            min_hand_detection_confidence=HAND_DETECTION_CONFIDENCE,
-            min_hand_presence_confidence=HAND_PRESENCE_CONFIDENCE,
-            min_tracking_confidence=HAND_TRACKING_CONFIDENCE,
+        actual_w = int(cap.get(self._cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h = int(cap.get(self._cv2.CAP_PROP_FRAME_HEIGHT))
+        actual_fps = cap.get(self._cv2.CAP_PROP_FPS)
+        logger.info(
+            "Gesture camera: requested %dx%d@%d, driver granted %dx%d@%.0f",
+            CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS, actual_w, actual_h, actual_fps,
         )
-        self._landmarker = mp_vision.HandLandmarker.create_from_options(options)
+
+        def _make_options(delegate):
+            return mp_vision.HandLandmarkerOptions(
+                base_options=mp_python.BaseOptions(
+                    model_asset_path=str(HAND_LANDMARKER_TASK_PATH), delegate=delegate
+                ),
+                running_mode=mp_vision.RunningMode.VIDEO,
+                num_hands=2,
+                min_hand_detection_confidence=HAND_DETECTION_CONFIDENCE,
+                min_hand_presence_confidence=HAND_PRESENCE_CONFIDENCE,
+                min_tracking_confidence=HAND_TRACKING_CONFIDENCE,
+            )
+
+        cpu = mp_python.BaseOptions.Delegate.CPU
+        gpu = mp_python.BaseOptions.Delegate.GPU
+        self._landmarker = None
+        if GESTURE_TRY_GPU:
+            try:
+                self._landmarker = mp_vision.HandLandmarker.create_from_options(_make_options(gpu))
+                self.delegate = "gpu"
+                logger.info("Gesture HandLandmarker: GPU delegate active")
+            except Exception:
+                logger.info("Gesture HandLandmarker: GPU delegate unavailable, falling back to CPU", exc_info=True)
+        if self._landmarker is None:
+            self._landmarker = mp_vision.HandLandmarker.create_from_options(_make_options(cpu))
+            self.delegate = "cpu"
+            logger.info("Gesture HandLandmarker: CPU (XNNPACK) delegate active")
+
         self._mp_image_cls = mp.Image
         self._mp_image_format = mp.ImageFormat.SRGB
         # VIDEO mode wants a real, monotonically increasing millisecond
-        # timestamp — feeding it a frame counter (1, 2, 3, ...) made the
-        # model treat frames as 1 ms apart and its temporal tracking fell
-        # apart ("распознавание очень плохо").
+        # timestamp — a frame counter (1, 2, 3, ...) made the model treat
+        # frames as 1 ms apart and its temporal tracking fell apart.
         self._epoch = time.monotonic()
         self._last_timestamp_ms = -1
 
@@ -255,7 +211,10 @@ class HandTracker:
         if timestamp_ms <= self._last_timestamp_ms:
             timestamp_ms = self._last_timestamp_ms + 1
         self._last_timestamp_ms = timestamp_ms
+
+        detect_start = time.perf_counter()
         result = self._landmarker.detect_for_video(mp_image, timestamp_ms)
+        self._diag_detect_ms = (time.perf_counter() - detect_start) * 1000.0
 
         landmark_sets = getattr(result, "hand_landmarks", []) or []
         handedness_sets = getattr(result, "handedness", []) or []
@@ -265,12 +224,18 @@ class HandTracker:
             if i < len(handedness_sets) and handedness_sets[i]:
                 score = getattr(handedness_sets[i][0], "score", 1.0)
             if score < HAND_MIN_HANDEDNESS_SCORE:
+                if GESTURE_DEBUG:
+                    logger.debug("hand %d rejected: handedness score %.2f", i, score)
                 continue
             points: Landmarks = [(lm.x, lm.y) for lm in hand]
             if not _looks_like_hand(points):
+                if GESTURE_DEBUG:
+                    logger.debug("hand %d rejected: geometry (bbox/knuckles)", i)
                 continue
             hands.append(points)
         hands.sort(key=lambda h: h[0][0])
+
+        self._log_diagnostics(len(landmark_sets), hands)
 
         timestamp_s = timestamp_ms / 1000.0
         raw_index_tips = [hand[8] for hand in hands[:2]]
@@ -280,6 +245,25 @@ class HandTracker:
             self._smoothers[i].reset()
 
         return FrameResult(frame=frame, hands=hands, raw_index_tips=raw_index_tips)
+
+    def _log_diagnostics(self, raw_count: int, hands: list[Landmarks]) -> None:
+        self._diag_frames += 1
+        elapsed = time.monotonic() - self._diag_since
+        if elapsed >= 2.0:
+            fps = self._diag_frames / elapsed
+            logger.info(
+                "Gesture worker: %.1f fps, detect %.1f ms/frame (%s), %d hand(s) this frame",
+                fps, self._diag_detect_ms, self.delegate, len(hands),
+            )
+            self._diag_frames = 0
+            self._diag_since = time.monotonic()
+        if GESTURE_DEBUG and hands:
+            h = hands[0]
+            logger.debug(
+                "raw landmarks: wrist=(%.3f,%.3f) thumb=(%.3f,%.3f) index=(%.3f,%.3f) "
+                "mid_mcp=(%.3f,%.3f) [%d raw hands]",
+                h[0][0], h[0][1], h[4][0], h[4][1], h[8][0], h[8][1], h[9][0], h[9][1], raw_count,
+            )
 
     def close(self) -> None:
         if self._capture is not None:
