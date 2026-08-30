@@ -12,24 +12,12 @@ from core.message_bus import MessageBus, message_bus
 from modules.gesture_control import calibration
 from modules.gesture_control.config import (
     DEFAULT_TRACKING_ZONE,
-    DWELL_BREAK_PX,
-    DWELL_FRAMES,
-    DWELL_RADIUS_PX,
+    FIST_DEBOUNCE_FRAMES,
+    FIST_LOST_GRACE_FRAMES,
     GESTURE_TRACKING_ZONE_KEY,
     HAND_WARMUP_FRAMES,
     PHYSICAL_MOUSE_OVERRIDE_SECONDS,
     PHYSICAL_MOUSE_THRESHOLD_PX,
-    FIST_CURSOR_LOCK_MULT,
-    FIST_CURSOR_UNLOCK_MULT,
-    FIST_DRAG_DEADZONE_PX,
-    FIST_ENGAGE_DEBOUNCE_FRAMES,
-    FIST_LOST_GRACE_FRAMES,
-    FIST_RATIO_MEDIAN,
-    FIST_RELEASE_DEBOUNCE_FRAMES,
-    FIST_RELEASE_MULT,
-    PRECISION_GAIN_MIN,
-    PRECISION_SPEED_HIGH,
-    PRECISION_SPEED_LOW,
     PROCESSING_FPS,
     SWIPE_COOLDOWN_FRAMES,
     SWIPE_HISTORY_FRAMES,
@@ -46,15 +34,15 @@ from modules.gesture_control.cursor_controller import (
 from modules.gesture_control.cursor_zoom import cursor_zoom
 from modules.gesture_control.events import GestureAnnouncement
 from modules.gesture_control.gesture_recognizer import (
+    fist_score,
     hand_centre,
     is_open_palm,
-    median,
     open_palm_score,
-    fist_score,
     swipe_direction,
     two_hand_spread_delta,
 )
 from modules.gesture_control.hand_tracker import HandTracker
+from modules.gesture_control.one_euro_filter import OneEuroFilter
 from modules.gesture_control.overlay_state import overlay_state
 from modules.user_profile import service_layer as profile_service_layer
 from modules.user_profile.uow import ProfileUnitOfWork
@@ -68,15 +56,6 @@ def _load_float(key: str, default: float) -> float:
         return float(raw) if raw else default
     except ValueError:
         return default
-
-
-def _precision_gain(hand_speed: float) -> float:
-    """Easing factor for the cursor's step toward the mapped hand position:
-    PRECISION_GAIN_MIN when the hand is nearly still (fine aiming), rising to
-    1.0 once it moves fast enough to cross the screen."""
-    span = max(PRECISION_SPEED_HIGH - PRECISION_SPEED_LOW, 1e-6)
-    t = max(0.0, min(1.0, (hand_speed - PRECISION_SPEED_LOW) / span))
-    return PRECISION_GAIN_MIN + (1.0 - PRECISION_GAIN_MIN) * t
 
 
 class GestureController:
@@ -164,13 +143,14 @@ class GestureController:
     def _run(self) -> None:
         zone = _load_float(GESTURE_TRACKING_ZONE_KEY, DEFAULT_TRACKING_ZONE)
         bounds = calibration.load_zone_bounds() or bounds_from_zone(zone)
-        min_cutoff = calibration.load_min_cutoff()
         deadzone_px = calibration.load_deadzone_px()
+        fist_threshold = calibration.load_fist_threshold()
         open_palm_ratio = calibration.load_open_palm_ratio()
         swipe_min_dx = calibration.load_swipe_min_dx()
+        euro = OneEuroFilter(min_cutoff=calibration.load_min_cutoff())
 
         try:
-            tracker = HandTracker(min_cutoff=min_cutoff)
+            tracker = HandTracker()
             tracker.open()
             cursor = CursorController()
         except Exception as exc:
@@ -184,11 +164,7 @@ class GestureController:
         overlay_state.set(active=True)
         cursor_zoom.enlarge()
         px_per_norm = cursor.screen_size[0] / max(bounds[1] - bounds[0], 1e-6)
-        # No forced calibration on first activation (the user found the
-        # surprise prompt annoying, and an un-finished session used to
-        # freeze the cursor). The stored / default values work out of the
-        # box; calibration runs only when "Калибровка" asks for it.
-        threshold = calibration.load_fist_threshold()
+
         session: calibration.CalibrationSession | None = None
         if self._recalibrate:
             self._recalibrate = False
@@ -198,35 +174,25 @@ class GestureController:
 
         frame_interval = 1.0 / PROCESSING_FPS
         warmup_cap = HAND_WARMUP_FRAMES + 2
-        prev_spread: float | None = None
-        zoom_cooldown = 0
-        fist_state = False
-        fist_streak = 0
-        fist_lost_grace = 0
-        fist_buf: list[float] = []
+        seen = 0
+        announced = False
         override_until = 0.0
-        announced_ready = False
-        hand_seen_streak = 0
+        fist_held = False
+        fist_streak = 0
+        fist_lost = 0
+        palm_streak = 0
         swipe_x: list[float] = []
         swipe_y: list[float] = []
         swipe_cooldown = 0
-        open_palm_streak = 0
-        prev_tip: tuple[float, float] | None = None
-        dwell_anchor: tuple[float, float] | None = None
-        dwell_frames = 0
-        cursor_locked = False
-        drag_anchor_hand: tuple[float, float] | None = None
-        drag_anchor_cursor: tuple[int, int] = (0, 0)
-        py_per_norm = cursor.screen_size[1] / max(bounds[3] - bounds[2], 1e-6)
+        prev_spread: float | None = None
+        zoom_cooldown = 0
 
-        def _release_grab() -> None:
-            nonlocal fist_state, fist_streak, cursor_locked, drag_anchor_hand
-            if fist_state:
+        def _release_click() -> None:
+            nonlocal fist_held, fist_streak
+            if fist_held:
                 cursor.click_up()
-            fist_state = False
+            fist_held = False
             fist_streak = 0
-            cursor_locked = False
-            drag_anchor_hand = None
 
         try:
             while not self._stop_event.is_set():
@@ -246,187 +212,95 @@ class GestureController:
                     with self._preview_lock:
                         self._preview_source = (result.frame, [list(h) for h in result.hands])
 
-                # The physical mouse always wins: if the OS cursor moved
-                # away from where we left it, yield for a short cooldown.
+                # Physical mouse always wins.
                 if cursor.physical_mouse_moved(PHYSICAL_MOUSE_THRESHOLD_PX):
                     override_until = loop_start + PHYSICAL_MOUSE_OVERRIDE_SECONDS
-                    _release_grab()
+                    _release_click()
                 if loop_start < override_until:
-                    _release_grab()
+                    _release_click()
                     cursor.sync_last_set()
-                    prev_tip = None
-                    dwell_anchor = None
-                    dwell_frames = 0
+                    euro.reset()
                     self._pace(loop_start, frame_interval)
                     continue
 
-                if not result.hands:
-                    # MediaPipe sometimes drops the hand for a frame or two —
-                    # hold the click through a short gap instead of releasing it.
-                    if fist_state and fist_lost_grace < FIST_LOST_GRACE_FRAMES:
-                        fist_lost_grace += 1
-                        prev_spread = None
+                hands = result.hands
+                if not hands:
+                    if fist_held and fist_lost < FIST_LOST_GRACE_FRAMES:
+                        fist_lost += 1
                         self._pace(loop_start, frame_interval)
                         continue
-                    _release_grab()
-                    prev_spread = None
-                    # decay, don't reset — a one-frame tracking gap shouldn't
-                    # restart the warmup.
-                    hand_seen_streak = max(0, hand_seen_streak - 1)
-                    fist_buf.clear()
+                    _release_click()
+                    seen = max(0, seen - 1)
+                    euro.reset()
                     swipe_x.clear()
                     swipe_y.clear()
-                    open_palm_streak = 0
-                    prev_tip = None
-                    dwell_anchor = None
-                    dwell_frames = 0
+                    palm_streak = 0
+                    prev_spread = None
                     self._pace(loop_start, frame_interval)
                     continue
+                fist_lost = 0
 
-                fist_lost_grace = 0
+                primary = hands[0]
+                palm = hand_centre(primary)
+                fist_s = fist_score(primary)
+                palm_open_s = open_palm_score(primary)
 
-                primary = result.hands[0]
-                tip = primary[8]
-                raw_tip = result.raw_primary_tip or tip
-                fist_raw = fist_score(primary)
-
+                # --- calibration wizard ---
                 if session is not None and not session.done:
-                    if result.fresh:
-                        session.observe(
-                            calibration.CalibrationFrame(
-                                fist_score=fist_raw,
-                                open_palm_score=open_palm_score(primary),
-                                raw_tip=raw_tip,
-                                palm_centre=hand_centre(primary),
-                                brightness=result.brightness,
-                            )
+                    session.observe(
+                        calibration.CalibrationFrame(
+                            fist_score=fist_s,
+                            open_palm_score=palm_open_s,
+                            raw_tip=palm,
+                            palm_centre=palm,
+                            brightness=result.brightness,
                         )
-                        self._drain_calibration_prompt(session)
-                        overlay_state.set_calibration(session.progress())
+                    )
+                    self._drain_calibration_prompt(session)
+                    overlay_state.set_calibration(session.progress())
                     if session.done:
                         applied = session.persist()
                         if not session.aborted:
-                            threshold = applied.fist_threshold
+                            fist_threshold = applied.fist_threshold
                             deadzone_px = applied.deadzone_px
                             open_palm_ratio = applied.open_palm_ratio
                             swipe_min_dx = applied.swipe_min_dx
                             if applied.zone_bounds is not None:
                                 bounds = applied.zone_bounds
-                            tracker.set_min_cutoff(applied.min_cutoff)
+                            euro.set_min_cutoff(applied.min_cutoff)
                         session = None
                         overlay_state.set_calibration(None)
                     self._pace(loop_start, frame_interval)
                     continue
 
-                if result.fresh:
-                    hand_seen_streak = min(hand_seen_streak + 1, warmup_cap)
-                if hand_seen_streak < HAND_WARMUP_FRAMES:
+                seen = min(seen + 1, warmup_cap)
+                if seen < HAND_WARMUP_FRAMES:
                     cursor.sync_last_set()
-                    prev_tip = tip
                     self._pace(loop_start, frame_interval)
                     continue
-
-                if not announced_ready and result.fresh:
-                    announced_ready = True
+                if not announced:
+                    announced = True
                     self._announce("Режим жестов включён.")
 
-                def _move_toward(point: tuple[float, float]) -> None:
-                    nonlocal prev_tip, dwell_anchor, dwell_frames
-                    if prev_tip is None:
-                        prev_tip = point
-                    speed = math.hypot(point[0] - prev_tip[0], point[1] - prev_tip[1])
-                    prev_tip = point
-                    tgt = map_hand_to_screen(point, cursor.screen_size, bounds)
-                    px, py = cursor.current_pos()
-                    g = _precision_gain(speed)
-                    ez = (px + (tgt[0] - px) * g, py + (tgt[1] - py) * g)
-                    if dwell_anchor is None or math.hypot(
-                        ez[0] - dwell_anchor[0], ez[1] - dwell_anchor[1]
-                    ) > DWELL_RADIUS_PX:
-                        dwell_anchor = ez
-                        dwell_frames = 0
-                    else:
-                        dwell_frames += 1
-                    is_frozen = dwell_frames >= DWELL_FRAMES and math.hypot(
-                        tgt[0] - dwell_anchor[0], tgt[1] - dwell_anchor[1]
-                    ) <= DWELL_BREAK_PX
-                    if not is_frozen:
-                        ix, iy = int(round(ez[0])), int(round(ez[1]))
-                        if abs(ix - px) >= deadzone_px or abs(iy - py) >= deadzone_px:
-                            cursor.move_cursor(ix, iy)
+                fist_now = fist_s <= fist_threshold
 
-                def _position_cursor(hand: list) -> None:
-                    # A held fist drags from the click point using the stable
-                    # palm centre (the curled fingertip is useless for this);
-                    # a closing hand freezes the pointer so the curl doesn't
-                    # drag it off target; otherwise track the fingertip.
-                    if fist_state and drag_anchor_hand is not None:
-                        hc = hand_centre(hand)
-                        w, h = cursor.screen_size
-                        tx = drag_anchor_cursor[0] + (hc[0] - drag_anchor_hand[0]) * px_per_norm
-                        ty = drag_anchor_cursor[1] + (hc[1] - drag_anchor_hand[1]) * py_per_norm
-                        tx = max(0.0, min(w - 1.0, tx))
-                        ty = max(0.0, min(h - 1.0, ty))
-                        cx, cy = cursor.current_pos()
-                        if abs(tx - cx) >= FIST_DRAG_DEADZONE_PX or abs(ty - cy) >= FIST_DRAG_DEADZONE_PX:
-                            cursor.move_cursor(int(round(tx)), int(round(ty)))
-                    elif cursor_locked:
-                        cursor.sync_last_set()
-                    else:
-                        _move_toward(hand[8])
-
-                # Fist score + cursor lock. The fresh buffer feeds a median so
-                # one noisy frame can't fake a fist; the lock latches with
-                # hysteresis the moment the hand begins to close.
-                if result.fresh:
-                    fist_buf.append(fist_raw)
-                    if len(fist_buf) > FIST_RATIO_MEDIAN:
-                        fist_buf.pop(0)
-                fist_med = median(fist_buf) if fist_buf else fist_raw
-                if fist_state:
-                    cursor_locked = False
-                elif not cursor_locked and fist_med <= threshold * FIST_CURSOR_LOCK_MULT:
-                    cursor_locked = True
-                elif cursor_locked and fist_med > threshold * FIST_CURSOR_UNLOCK_MULT:
-                    cursor_locked = False
-
-                # No new camera frame — position the cursor with the current
-                # latched state, but don't advance any gesture state machine.
-                if not result.fresh:
-                    if swipe_cooldown > 0 or open_palm_streak >= SWIPE_OPEN_STREAK_FRAMES:
-                        cursor.sync_last_set()
-                    else:
-                        _position_cursor(primary)
-                    self._pace(loop_start, frame_interval)
-                    continue
-
-                release_threshold = threshold * FIST_RELEASE_MULT
-                fisting_now = fist_med <= (release_threshold if fist_state else threshold)
-
-                # --- swipe mode: a whole open palm, not a fist / closing hand ---
-                if (
-                    not fisting_now
-                    and not fist_state
-                    and not cursor_locked
-                    and is_open_palm(primary, open_palm_ratio)
-                ):
-                    open_palm_streak += 1
+                # --- open-palm swipe = switch windows ---
+                if not fist_now and not fist_held and is_open_palm(primary, open_palm_ratio):
+                    palm_streak += 1
                 else:
-                    open_palm_streak = 0
+                    palm_streak = 0
                     swipe_x.clear()
                     swipe_y.clear()
 
                 if swipe_cooldown > 0:
                     swipe_cooldown -= 1
                     cursor.sync_last_set()
-                    prev_tip = tip
                     self._pace(loop_start, frame_interval)
                     continue
 
-                if open_palm_streak >= SWIPE_OPEN_STREAK_FRAMES:
-                    centre = hand_centre(primary)
-                    swipe_x.append(centre[0])
-                    swipe_y.append(centre[1])
+                if palm_streak >= SWIPE_OPEN_STREAK_FRAMES:
+                    swipe_x.append(palm[0])
+                    swipe_y.append(palm[1])
                     if len(swipe_x) > SWIPE_HISTORY_FRAMES:
                         swipe_x.pop(0)
                         swipe_y.pop(0)
@@ -436,44 +310,31 @@ class GestureController:
                         swipe_cooldown = SWIPE_COOLDOWN_FRAMES
                         swipe_x.clear()
                         swipe_y.clear()
-                        open_palm_streak = 0
+                        palm_streak = 0
                     cursor.sync_last_set()
-                    prev_tip = tip
-                    dwell_anchor = None
-                    dwell_frames = 0
                     self._pace(loop_start, frame_interval)
                     continue
 
-                # --- pointing / drag: move cursor, then run the fist state ---
-                _position_cursor(primary)
+                # --- cursor: palm centre, One-Euro filtered, moved every tick ---
+                fx, fy = euro.update(palm, loop_start)
+                tx, ty = map_hand_to_screen((fx, fy), cursor.screen_size, bounds)
+                cx, cy = cursor.current_pos()
+                if abs(tx - cx) >= deadzone_px or abs(ty - cy) >= deadzone_px:
+                    cursor.move_cursor(tx, ty)
 
-                if fisting_now != fist_state:
+                # --- fist = click / drag (simple debounce) ---
+                if fist_now != fist_held:
                     fist_streak += 1
-                    need = (
-                        FIST_ENGAGE_DEBOUNCE_FRAMES
-                        if fisting_now
-                        else FIST_RELEASE_DEBOUNCE_FRAMES
-                    )
-                    if fist_streak >= need:
-                        fist_state = fisting_now
+                    if fist_streak >= FIST_DEBOUNCE_FRAMES:
+                        fist_held = fist_now
                         fist_streak = 0
-                        if fist_state:
-                            # Click lands where the cursor was frozen; the
-                            # drag from here follows the palm centre.
-                            cursor.click_down()
-                            drag_anchor_hand = hand_centre(primary)
-                            drag_anchor_cursor = cursor.current_pos()
-                            cursor_locked = False
-                        else:
-                            cursor.click_up()
-                            drag_anchor_hand = None
+                        cursor.click_down() if fist_held else cursor.click_up()
                 else:
                     fist_streak = 0
 
-                if len(result.hands) >= 2:
-                    prev_spread, delta = two_hand_spread_delta(
-                        result.hands[0], result.hands[1], prev_spread
-                    )
+                # --- two-hand spread = zoom ---
+                if len(hands) >= 2:
+                    prev_spread, delta = two_hand_spread_delta(hands[0], hands[1], prev_spread)
                     if zoom_cooldown > 0:
                         zoom_cooldown -= 1
                     elif delta > ZOOM_DELTA_THRESHOLD:
@@ -490,10 +351,19 @@ class GestureController:
             logger.exception("Gesture worker loop crashed")
             self._announce("Режим жестов остановлен из-за ошибки.")
         finally:
-            cursor.release()
-            tracker.close()
-            cursor_zoom.restore()
-            overlay_state.set(active=False)
+            # Each step guarded so a failure in one still runs the rest —
+            # in particular cursor_zoom.restore() must always fire or the
+            # desktop cursor stays enlarged.
+            for cleanup in (
+                cursor.release,
+                tracker.close,
+                cursor_zoom.restore,
+                lambda: overlay_state.set(active=False),
+            ):
+                try:
+                    cleanup()
+                except Exception:
+                    logger.exception("Gesture worker cleanup step failed")
             with self._preview_lock:
                 self._preview_source = None
 

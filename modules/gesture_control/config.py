@@ -111,44 +111,13 @@ CORNER_CALIBRATION_SAMPLES = 90
 CORNER_ZONE_PAD = 0.04
 CORNER_ZONE_MIN_SPAN = 0.18
 
-# Fist = click / drag. "Catch fast, release slow": engage when the *best*
-# (min) of the last FIST_RATIO_MEDIAN raw scores dips under the threshold
-# for FIST_ENGAGE_DEBOUNCE_FRAMES frames; release only when the *median*
-# climbs past FIST_RELEASE_MULT x threshold and holds for
-# FIST_RELEASE_DEBOUNCE_FRAMES. If MediaPipe drops the hand for a frame or
-# two, FIST_LOST_GRACE_FRAMES keeps the click held through the gap.
-FIST_RATIO_MEDIAN = 3
-FIST_RELEASE_MULT = 1.5
-FIST_ENGAGE_DEBOUNCE_FRAMES = 1
-FIST_RELEASE_DEBOUNCE_FRAMES = 3
-FIST_LOST_GRACE_FRAMES = 4
-
-# The tracked point (index fingertip) sweeps a long way as the hand closes,
-# which used to drag the cursor off-target right before a click. So the
-# instant the hand starts closing (fist_score drops below threshold x
-# FIST_CURSOR_LOCK_MULT) the cursor freezes in place, and only unfreezes
-# once the hand is clearly open again (above threshold x FIST_CURSOR_UNLOCK_
-# MULT). While a fist is *held*, dragging follows the stable palm centre,
-# not the curled fingertip.
-FIST_CURSOR_LOCK_MULT = 1.5
-FIST_CURSOR_UNLOCK_MULT = 2.0
-FIST_DRAG_DEADZONE_PX = 3
-
-# Precision hover: the cursor eases toward the mapped hand position with a
-# gain that scales with hand speed. Fast hand -> gain 1.0 (1:1, cross the
-# screen). Nearly still hand -> PRECISION_GAIN_MIN, so tremor barely nudges
-# the pointer and small targets ("маленький крестик") are reachable.
-PRECISION_SPEED_LOW = 0.006   # norm units/frame at/below which gain = PRECISION_GAIN_MIN
-PRECISION_SPEED_HIGH = 0.055  # norm units/frame at/above which gain = 1.0
-PRECISION_GAIN_MIN = 0.35
-
-# Dwell freeze: once the cursor has stayed within DWELL_RADIUS_PX for
-# DWELL_FRAMES it locks in place (ignores sub-DWELL_BREAK_PX hand motion)
-# until the hand moves clearly away or a fist happens — so a hovered small
-# target stays under the pointer while you close your hand to click it.
-DWELL_RADIUS_PX = 14
-DWELL_FRAMES = 7
-DWELL_BREAK_PX = 45
+# Fist = click / drag. Dead simple: fist_score <= threshold for
+# FIST_DEBOUNCE_FRAMES consecutive frames toggles the click. The cursor
+# tracks the *palm centre*, which barely moves when the fingers curl, so no
+# freeze/anchor trickery is needed for the click to land on target. If
+# MediaPipe drops the hand briefly, FIST_LOST_GRACE_FRAMES holds the click.
+FIST_DEBOUNCE_FRAMES = 2
+FIST_LOST_GRACE_FRAMES = 3
 
 # The physical mouse always wins: the instant the real cursor moves by
 # more than this (px) from where the worker last put it, gesture control

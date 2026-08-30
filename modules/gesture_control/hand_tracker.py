@@ -27,9 +27,7 @@ from modules.gesture_control.config import (
     HAND_PRESENCE_CONFIDENCE,
     HAND_TRACKING_CONFIDENCE,
     MODELS_DIR,
-    ONE_EURO_MIN_CUTOFF,
 )
-from modules.gesture_control.one_euro_filter import OneEuroFilter
 
 logger = get_logger(__name__)
 
@@ -41,14 +39,8 @@ Landmarks = list[tuple[float, float]]
 @dataclass(frozen=True)
 class FrameResult:
     frame: object  # mirrored BGR frame from cv2 (for the optional preview)
-    hands: list[Landmarks]  # 0-2 hands, left-to-right by wrist x; index tip is smoothed
-    raw_index_tips: list[tuple[float, float]]  # unsmoothed landmark 8 per hand, same order
-    fresh: bool = True  # False = re-smoothed from the last detection (no new camera frame)
+    hands: list[Landmarks]  # 0-2 raw hands, left-to-right by wrist x
     brightness: float = -1.0  # mean pixel value 0-255 of this frame, -1 if unknown
-
-    @property
-    def raw_primary_tip(self) -> tuple[float, float] | None:
-        return self.raw_index_tips[0] if self.raw_index_tips else None
 
 
 class _CameraReader:
@@ -85,25 +77,38 @@ class _CameraReader:
         self._last_ok = time.monotonic()
 
     def _loop(self) -> None:
-        while not self._stop.is_set():
-            ok = False
-            frame = None
-            try:
-                ok, frame = self._cap.read()
-            except Exception:
+        try:
+            while not self._stop.is_set():
                 ok = False
-            if ok and frame is not None:
-                with self._lock:
-                    self._frame = frame
-                self._last_ok = time.monotonic()
-                self._ever_ok = True
-            else:
-                self._stop.wait(0.03)
-                # Only treat a gap as a stall if frames were flowing before —
-                # a merely slow (few-fps) feed must not trigger a reopen loop.
-                if self._ever_ok and time.monotonic() - self._last_ok > CAMERA_STALL_REOPEN_SECONDS:
-                    logger.warning("Gesture camera stalled — reopening")
-                    self._reopen()
+                frame = None
+                try:
+                    ok, frame = self._cap.read()
+                except Exception:
+                    ok = False
+                if ok and frame is not None:
+                    with self._lock:
+                        self._frame = frame
+                    self._last_ok = time.monotonic()
+                    self._ever_ok = True
+                else:
+                    self._stop.wait(0.03)
+                    # Only treat a gap as a stall if frames were flowing
+                    # before — a merely slow (few-fps) feed must not trigger
+                    # a reopen loop.
+                    if (
+                        self._ever_ok
+                        and time.monotonic() - self._last_ok > CAMERA_STALL_REOPEN_SECONDS
+                    ):
+                        logger.warning("Gesture camera stalled — reopening")
+                        self._reopen()
+        finally:
+            # Release the camera from *this* thread once the loop is done —
+            # calling cap.release() from another thread while this one is
+            # blocked in cap.read() used to hang gesture_stop.
+            try:
+                self._cap.release()
+            except Exception:
+                pass
 
     def latest(self):
         with self._lock:
@@ -111,11 +116,7 @@ class _CameraReader:
 
     def stop(self) -> None:
         self._stop.set()
-        self._thread.join(timeout=2)
-        try:
-            self._cap.release()
-        except Exception:
-            pass
+        self._thread.join(timeout=3)
 
 
 def _looks_like_hand(landmarks: Landmarks) -> bool:
@@ -174,29 +175,18 @@ def ensure_model() -> None:
 
 
 class HandTracker:
-    """Owns the camera and the MediaPipe HandLandmarker (Tasks API). Each
-    read() grabs the latest frame, runs detection, and returns up to two
-    hands with the tracked point (index fingertip) already adaptively
-    smoothed per hand."""
+    """Owns the camera (via a reader thread) and the MediaPipe HandLandmarker
+    (Tasks API). Each read() takes the latest frame, runs detection and
+    returns up to two raw hands — all smoothing/interpretation is the
+    worker's job now."""
 
-    def __init__(
-        self, camera_index: int = CAMERA_INDEX, min_cutoff: float = ONE_EURO_MIN_CUTOFF
-    ) -> None:
+    def __init__(self, camera_index: int = CAMERA_INDEX) -> None:
         self._camera_index = camera_index
         self._cv2 = _require_cv2()
         self._capture = None
         self._reader: _CameraReader | None = None
         self._landmarker = None
-        self._smoothers: list[OneEuroFilter] = [
-            OneEuroFilter(min_cutoff),
-            OneEuroFilter(min_cutoff),
-        ]
-        self._last_seen_frame = None
-        self._last_frame = None
-        self._last_full_hands: list[Landmarks] | None = None
-        self._last_raw_tips: list[tuple[float, float]] = []
-        self._last_brightness = -1.0
-        # Diagnostics (§1): rolling processing FPS + last detect latency.
+        # Diagnostics: rolling processing FPS + last detect latency.
         self._diag_frames = 0
         self._diag_since = time.monotonic()
         self._diag_detect_ms = 0.0
@@ -276,84 +266,52 @@ class HandTracker:
         self._epoch = time.monotonic()
         self._last_timestamp_ms = -1
 
-    def set_min_cutoff(self, min_cutoff: float) -> None:
-        for smoother in self._smoothers:
-            smoother.set_min_cutoff(min_cutoff)
-
     def read(self) -> FrameResult | None:
         if self._reader is None or self._landmarker is None:
             return None
         raw = self._reader.latest()
         if raw is None:
             return None
-        new_frame = raw is not self._last_seen_frame
-        self._last_seen_frame = raw
-        timestamp_s = time.monotonic() - self._epoch
 
-        if new_frame:
-            # Mirror horizontally so moving your hand right moves the cursor
-            # right — a raw webcam frame is un-mirrored.
-            frame = self._cv2.flip(raw, 1)
-            try:
-                self._last_brightness = float(frame.mean())
-            except Exception:
-                self._last_brightness = -1.0
-            rgb = self._cv2.cvtColor(frame, self._cv2.COLOR_BGR2RGB)
-            mp_image = self._mp_image_cls(image_format=self._mp_image_format, data=rgb)
-            timestamp_ms = int(timestamp_s * 1000)
-            if timestamp_ms <= self._last_timestamp_ms:
-                timestamp_ms = self._last_timestamp_ms + 1
-            self._last_timestamp_ms = timestamp_ms
+        # Mirror horizontally so moving your hand right moves the cursor
+        # right — a raw webcam frame is un-mirrored.
+        frame = self._cv2.flip(raw, 1)
+        try:
+            brightness = float(frame.mean())
+        except Exception:
+            brightness = -1.0
+        rgb = self._cv2.cvtColor(frame, self._cv2.COLOR_BGR2RGB)
+        mp_image = self._mp_image_cls(image_format=self._mp_image_format, data=rgb)
+        timestamp_ms = int((time.monotonic() - self._epoch) * 1000)
+        if timestamp_ms <= self._last_timestamp_ms:
+            timestamp_ms = self._last_timestamp_ms + 1
+        self._last_timestamp_ms = timestamp_ms
 
-            detect_start = time.perf_counter()
-            result = self._landmarker.detect_for_video(mp_image, timestamp_ms)
-            self._diag_detect_ms = (time.perf_counter() - detect_start) * 1000.0
+        detect_start = time.perf_counter()
+        result = self._landmarker.detect_for_video(mp_image, timestamp_ms)
+        self._diag_detect_ms = (time.perf_counter() - detect_start) * 1000.0
 
-            landmark_sets = getattr(result, "hand_landmarks", []) or []
-            handedness_sets = getattr(result, "handedness", []) or []
-            hands = []
-            for i, hand in enumerate(landmark_sets):
-                score = 1.0
-                if i < len(handedness_sets) and handedness_sets[i]:
-                    score = getattr(handedness_sets[i][0], "score", 1.0)
-                if score < HAND_MIN_HANDEDNESS_SCORE:
-                    if GESTURE_DEBUG:
-                        logger.debug("hand %d rejected: handedness score %.2f", i, score)
-                    continue
-                points: Landmarks = [(lm.x, lm.y) for lm in hand]
-                if not _looks_like_hand(points):
-                    if GESTURE_DEBUG:
-                        logger.debug("hand %d rejected: geometry (bbox/knuckles)", i)
-                    continue
-                hands.append(points)
-            hands.sort(key=lambda h: h[0][0])
-            self._log_diagnostics(len(landmark_sets), hands, frame)
+        landmark_sets = getattr(result, "hand_landmarks", []) or []
+        handedness_sets = getattr(result, "handedness", []) or []
+        hands: list[Landmarks] = []
+        for i, hand in enumerate(landmark_sets):
+            score = 1.0
+            if i < len(handedness_sets) and handedness_sets[i]:
+                score = getattr(handedness_sets[i][0], "score", 1.0)
+            if score < HAND_MIN_HANDEDNESS_SCORE:
+                if GESTURE_DEBUG:
+                    logger.debug("hand %d rejected: handedness score %.2f", i, score)
+                continue
+            points: Landmarks = [(lm.x, lm.y) for lm in hand]
+            if not _looks_like_hand(points):
+                if GESTURE_DEBUG:
+                    logger.debug("hand %d rejected: geometry (bbox/knuckles)", i)
+                continue
+            hands.append(points)
+        hands.sort(key=lambda h: h[0][0])
+        self._log_diagnostics(len(landmark_sets), hands, frame)
 
-            self._last_frame = frame
-            self._last_full_hands = [list(h) for h in hands]
-            self._last_raw_tips = [h[8] for h in hands[:2]]
-        elif self._last_full_hands is None:
-            return None  # no detection has happened yet
-        else:
-            # No new camera frame: re-emit the last detection so the worker
-            # can keep easing the cursor toward it at the full tick rate
-            # instead of hard-stepping at the (possibly low) camera fps.
-            frame = self._last_frame
-            hands = [list(h) for h in self._last_full_hands]
-
-        raw_index_tips = list(self._last_raw_tips)
-        for i in range(min(len(hands), 2)):
-            hands[i][8] = self._smoothers[i].update(raw_index_tips[i], timestamp_s)
-        for i in range(len(hands), 2):
-            self._smoothers[i].reset()
-
-        return FrameResult(
-            frame=frame,
-            hands=hands,
-            raw_index_tips=raw_index_tips,
-            fresh=new_frame,
-            brightness=self._last_brightness,
-        )
+        return FrameResult(frame=frame, hands=hands, brightness=brightness)
 
     def _log_diagnostics(self, raw_count: int, hands: list[Landmarks], frame) -> None:
         self._diag_frames += 1
@@ -395,5 +353,3 @@ class HandTracker:
             except Exception:
                 logger.debug("HandLandmarker.close() raised", exc_info=True)
             self._landmarker = None
-        for smoother in self._smoothers:
-            smoother.reset()
