@@ -51,12 +51,15 @@ CURSOR_SCALE = 1.5
 # Processing rate — enough for a responsive cursor without pinning a core.
 PROCESSING_FPS = 24
 CAMERA_INDEX = 0
-# 720p capture: MediaPipe downsamples internally, but a higher-res source
-# keeps finger detail crisper when the hand is small / far from the camera.
-# The worker logs the resolution the driver actually granted.
+# 720p capture over MJPG (many UVC cams cap 720p at ~10 fps on raw YUYV but
+# allow 30 fps compressed). A dedicated reader thread keeps the newest frame
+# so MediaPipe never blocks on the camera. The worker logs the resolution,
+# fps and mean brightness the driver actually delivered — a dark or slow
+# feed is the usual reason gesture tracking "работает плохо".
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
 CAMERA_FPS = 30
+CAMERA_FOURCC = "MJPG"
 
 # Cursor smoothing: a genuine 1€ (One-Euro) filter on the tracked point,
 # fed by a median-of-3 prefilter that drops single-frame spikes. ONE_EURO_

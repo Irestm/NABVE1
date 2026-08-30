@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import threading
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from types import ModuleType
 
 from core.logger import get_logger
 from modules.gesture_control.config import (
+    CAMERA_FOURCC,
     CAMERA_FPS,
     CAMERA_HEIGHT,
     CAMERA_INDEX,
@@ -44,6 +46,41 @@ class FrameResult:
     @property
     def raw_primary_tip(self) -> tuple[float, float] | None:
         return self.raw_index_tips[0] if self.raw_index_tips else None
+
+
+class _CameraReader:
+    """Owns the VideoCapture on its own daemon thread, continuously reading
+    so the newest frame is always ready. Without this, the worker loop
+    blocks inside cap.read() for a whole frame period every iteration —
+    which, on a slow/dark webcam, is most of the reason the cursor feels
+    choppy."""
+
+    def __init__(self, cv2, capture) -> None:
+        self._cv2 = cv2
+        self._cap = capture
+        self._lock = threading.Lock()
+        self._frame = None
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, name="gesture-camera", daemon=True)
+        self._thread.start()
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            ok, frame = self._cap.read()
+            if ok and frame is not None:
+                with self._lock:
+                    self._frame = frame
+            else:
+                self._stop.wait(0.02)
+
+    def latest(self):
+        with self._lock:
+            return self._frame
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=2)
+        self._cap.release()
 
 
 def _looks_like_hand(landmarks: Landmarks) -> bool:
@@ -113,11 +150,13 @@ class HandTracker:
         self._camera_index = camera_index
         self._cv2 = _require_cv2()
         self._capture = None
+        self._reader: _CameraReader | None = None
         self._landmarker = None
         self._smoothers: list[OneEuroFilter] = [
             OneEuroFilter(min_cutoff),
             OneEuroFilter(min_cutoff),
         ]
+        self._last_seen_frame = None
         # Diagnostics (§1): rolling processing FPS + last detect latency.
         self._diag_frames = 0
         self._diag_since = time.monotonic()
@@ -135,6 +174,10 @@ class HandTracker:
             raise RuntimeError(
                 f"Не удалось открыть камеру {self._camera_index} — занята другим приложением или недоступна."
             )
+        try:
+            cap.set(self._cv2.CAP_PROP_FOURCC, self._cv2.VideoWriter_fourcc(*CAMERA_FOURCC))
+        except Exception:
+            logger.debug("Camera FOURCC set failed", exc_info=True)
         cap.set(self._cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
         cap.set(self._cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
         cap.set(self._cv2.CAP_PROP_FPS, CAMERA_FPS)
@@ -147,9 +190,10 @@ class HandTracker:
         actual_h = int(cap.get(self._cv2.CAP_PROP_FRAME_HEIGHT))
         actual_fps = cap.get(self._cv2.CAP_PROP_FPS)
         logger.info(
-            "Gesture camera: requested %dx%d@%d, driver granted %dx%d@%.0f",
-            CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS, actual_w, actual_h, actual_fps,
+            "Gesture camera: requested %dx%d@%d %s, driver granted %dx%d@%.0f",
+            CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS, CAMERA_FOURCC, actual_w, actual_h, actual_fps,
         )
+        self._reader = _CameraReader(self._cv2, cap)
 
         def _make_options(delegate):
             return mp_vision.HandLandmarkerOptions(
@@ -191,15 +235,12 @@ class HandTracker:
             smoother.set_min_cutoff(min_cutoff)
 
     def read(self) -> FrameResult | None:
-        if self._capture is None or self._landmarker is None:
+        if self._reader is None or self._landmarker is None:
             return None
-        # Drain any queued frame so we always act on the freshest one.
-        self._capture.grab()
-        ok, frame = self._capture.retrieve()
-        if not ok or frame is None:
-            ok, frame = self._capture.read()
-            if not ok or frame is None:
-                return None
+        frame = self._reader.latest()
+        if frame is None or frame is self._last_seen_frame:
+            return None  # camera hasn't delivered a new frame since last call
+        self._last_seen_frame = frame
 
         # Mirror horizontally so moving your hand right moves the cursor
         # right — a raw webcam frame is un-mirrored, which the user reported
@@ -235,7 +276,7 @@ class HandTracker:
             hands.append(points)
         hands.sort(key=lambda h: h[0][0])
 
-        self._log_diagnostics(len(landmark_sets), hands)
+        self._log_diagnostics(len(landmark_sets), hands, frame)
 
         timestamp_s = timestamp_ms / 1000.0
         raw_index_tips = [hand[8] for hand in hands[:2]]
@@ -246,15 +287,25 @@ class HandTracker:
 
         return FrameResult(frame=frame, hands=hands, raw_index_tips=raw_index_tips)
 
-    def _log_diagnostics(self, raw_count: int, hands: list[Landmarks]) -> None:
+    def _log_diagnostics(self, raw_count: int, hands: list[Landmarks], frame) -> None:
         self._diag_frames += 1
         elapsed = time.monotonic() - self._diag_since
         if elapsed >= 2.0:
             fps = self._diag_frames / elapsed
+            try:
+                brightness = float(frame.mean())
+            except Exception:
+                brightness = -1.0
             logger.info(
-                "Gesture worker: %.1f fps, detect %.1f ms/frame (%s), %d hand(s) this frame",
-                fps, self._diag_detect_ms, self.delegate, len(hands),
+                "Gesture worker: %.1f fps, detect %.1f ms (%s), brightness %.0f/255, %d hand(s)",
+                fps, self._diag_detect_ms, self.delegate, brightness, len(hands),
             )
+            if fps < 15.0 or (0 <= brightness < 40.0):
+                logger.warning(
+                    "Gesture input is poor (%.1f fps, brightness %.0f/255) — a slow or dark "
+                    "camera feed is the usual cause of shaky/missed tracking; add light on the hand.",
+                    fps, brightness,
+                )
             self._diag_frames = 0
             self._diag_since = time.monotonic()
         if GESTURE_DEBUG and hands:
@@ -266,9 +317,10 @@ class HandTracker:
             )
 
     def close(self) -> None:
-        if self._capture is not None:
-            self._capture.release()
-            self._capture = None
+        if self._reader is not None:
+            self._reader.stop()
+            self._reader = None
+        self._capture = None
         if self._landmarker is not None:
             try:
                 self._landmarker.close()
