@@ -153,6 +153,16 @@ def test_match_system_command_returns_none_when_extractor_declines(monkeypatch: 
 # has a matching extractor going forward, so a new command added to one
 # without the other fails a test instead of silently degrading to that
 # same fallback-only behavior.
+def test_extract_software_install_pulls_the_app_name() -> None:
+    assert cc._extract_software_install("установи программу vlc") == {"app": "vlc"}
+    assert cc._extract_software_install("install the app obs studio") == {"app": "obs studio"}
+    assert cc._extract_software_install("поставь мне телеграм")["app"] == "телеграм"
+
+
+def test_extract_software_install_returns_none_without_an_app() -> None:
+    assert cc._extract_software_install("установи") is None
+
+
 def test_every_catalog_command_has_a_param_extractor() -> None:
     catalog_commands = {spec.command for spec in cc._CATALOG}
     assert catalog_commands == set(cc._PARAM_EXTRACTORS.keys())

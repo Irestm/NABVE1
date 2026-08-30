@@ -36,6 +36,32 @@ _OPEN_APP_PATTERNS: dict[str, re.Pattern[str]] = {
     "en": re.compile(r"^open\s+(.+)$"),
 }
 
+# modules/software_installer. "установи X" is distinct from "поставь X"
+# (media/volume/timer), but "установи будильник"/"установи таймер" still
+# collide — the marker word ("программу"/"приложение"/"install") group
+# forces install intent; without it, interpret() only claims the utterance
+# when package_map actually recognizes the name (see the block in
+# interpret() below), otherwise it falls through untouched.
+_SOFTWARE_INSTALL_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(r"^(?:установи|установить|поставь|инсталлируй|доустанови)\s+(?:мне\s+|нам\s+|себе\s+)?(?P<marker>программу\s+|приложение\s+|прогу\s+)?(?P<app>.+)$"),
+    "uk": re.compile(r"^(?:встанови|встановити|інсталюй)\s+(?:мені\s+|нам\s+|собі\s+)?(?P<marker>програму\s+|застосунок\s+|додаток\s+)?(?P<app>.+)$"),
+    "en": re.compile(r"^install\s+(?:me\s+)?(?P<marker>the\s+app\s+|app\s+|program\s+|software\s+)?(?P<app>.+)$"),
+}
+
+# "нажми далее"/"нажми установить"/"click next" while a third-party
+# installer wizard is on screen — routed to installer_click_button.
+_INSTALLER_BUTTON_KINDS: dict[str, str] = {
+    "далее": "next", "дальше": "next", "продолжить": "next", "next": "next", "continue": "next", "далі": "next",
+    "установить": "install", "установи": "install", "инсталлировать": "install", "install": "install", "встановити": "install",
+    "готово": "finish", "завершить": "finish", "finish": "finish", "done": "finish", "завершити": "finish",
+    "принять": "accept", "согласен": "accept", "принимаю": "accept", "accept": "accept", "agree": "accept", "прийняти": "accept",
+}
+_INSTALLER_BUTTON_PATTERNS: dict[str, re.Pattern[str]] = {
+    "ru": re.compile(r"^нажми(?:\s+кнопку)?\s+(?P<label>[\w'ії-]+)(?:\s+в\s+установщике)?$"),
+    "uk": re.compile(r"^натисни(?:\s+кнопку)?\s+(?P<label>[\w'ії-]+)$"),
+    "en": re.compile(r"^(?:click|press)\s+(?:the\s+)?(?P<label>[\w-]+)(?:\s+button)?$"),
+}
+
 # Checked before _OPEN_APP_PATTERNS in interpret() — distinct verbs, so
 # there's no overlap risk, but locality-of-check matters once several
 # prefix-verb patterns exist in the same function.
@@ -907,6 +933,31 @@ def interpret(text: str, language: str) -> Command | None:
 
     if fuzzy_matches_any(normalized, _RESTART_PHRASES.get(language, set())):
         return Command(name="restart", params={})
+
+    # modules/software_installer — checked early so bare "нажми далее" /
+    # "установи <known program>" aren't first claimed by ui_action /
+    # media_next / open_app. The installer-button pattern only fires when
+    # the single label word is a recognized button (_INSTALLER_BUTTON_KINDS);
+    # the install pattern only claims the utterance when a marker word is
+    # present or package_map recognizes the name (otherwise falls through).
+    installer_button_pattern = _INSTALLER_BUTTON_PATTERNS.get(language)
+    if installer_button_pattern:
+        button_match = installer_button_pattern.match(normalized)
+        if button_match:
+            kind = _INSTALLER_BUTTON_KINDS.get(button_match.group("label").strip().lower())
+            if kind is not None:
+                return Command(name="installer_click_button", params={"button": kind})
+
+    install_pattern = _SOFTWARE_INSTALL_PATTERNS.get(language)
+    if install_pattern:
+        install_match = install_pattern.match(normalized)
+        if install_match:
+            app = install_match.group("app").strip()
+            has_marker = bool(install_match.group("marker"))
+            from modules.software_installer import package_map
+
+            if app and (has_marker or package_map.resolve(app) is not None):
+                return Command(name="software_install", params={"app": app})
 
     if normalized in _SHOW_WINDOW_PHRASES.get(language, set()):
         return Command(name="show_window", params={})

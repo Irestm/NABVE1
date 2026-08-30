@@ -423,6 +423,51 @@ def test_shutdown_still_wins_for_its_own_phrasing() -> None:
     assert interpret("выключи компьютер", "ru") == Command(name="shutdown", params={})
 
 
+# --- software installer (modules/software_installer) ---------------------
+
+
+def test_install_known_program_by_name() -> None:
+    assert interpret("установи vlc", "ru") == Command(name="software_install", params={"app": "vlc"})
+
+
+def test_install_with_marker_word_claims_any_name() -> None:
+    assert interpret("установи программу медиаплеер", "ru") == Command(
+        name="software_install", params={"app": "медиаплеер"}
+    )
+
+
+def test_install_without_marker_and_unknown_name_falls_through() -> None:
+    assert interpret("установи будильник на 7", "ru") is None
+
+
+def test_install_does_not_steal_set_music() -> None:
+    assert interpret("поставь музыку", "ru").name != "software_install"
+
+
+def test_installer_button_next_ru() -> None:
+    assert interpret("нажми далее", "ru") == Command(
+        name="installer_click_button", params={"button": "next"}
+    )
+
+
+def test_installer_button_install_with_knopku() -> None:
+    assert interpret("нажми кнопку установить", "ru") == Command(
+        name="installer_click_button", params={"button": "install"}
+    )
+
+
+def test_installer_button_finish_en() -> None:
+    assert interpret("click finish", "en") == Command(
+        name="installer_click_button", params={"button": "finish"}
+    )
+
+
+def test_installer_button_ignores_unrecognized_label() -> None:
+    assert interpret("нажми сохранить", "ru") != Command(
+        name="installer_click_button", params={"button": "next"}
+    )
+
+
 # --- Weather (modules/weather) -----------------------------------------------
 
 

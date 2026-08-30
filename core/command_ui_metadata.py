@@ -55,6 +55,12 @@ COMMAND_UI_METADATA: dict[str, CommandUIMeta] = {
     "lock_screen": CommandUIMeta("Заблокировать экран", "Lock", None, group="power"),
     "get_battery_status": CommandUIMeta("Проверить заряд батареи", "Battery", None, group="power"),
     "check_system_updates": CommandUIMeta("Проверить обновления", "DownloadCloud", None, group="power"),
+    "software_install": CommandUIMeta(
+        "Установить программу",
+        "PackagePlus",
+        (ParamField("app", "text", "Название программы"),),
+        group="power",
+    ),
     "set_volume": CommandUIMeta(
         "Громкость",
         "Volume2",

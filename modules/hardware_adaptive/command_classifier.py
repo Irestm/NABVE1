@@ -169,6 +169,12 @@ _CATALOG: tuple[_CommandSpec, ...] = (
         "поставь блокировку экрана", "заблокуй екран", "заблокуй комп'ютер",
         "lock the screen", "lock the computer", "lock my pc",
     )),
+    _CommandSpec("software_install", (
+        "установи программу vlc", "установи vlc", "поставь мне телеграм", "установи приложение obs",
+        "доустанови гимп", "инсталлируй blender", "поставь программу audacity",
+        "встанови застосунок telegram", "встанови програму vlc",
+        "install vlc", "install the app obs studio", "install program blender",
+    )),
     # Found missing entirely (no rule-based regex either) while auditing
     # every button in core/command_ui_metadata.py's "Системные команды"
     # panel for voice coverage - unlike the commands above, these had no
@@ -270,6 +276,23 @@ def _extract_change_brightness(text: str) -> dict[str, str]:
     else:
         sign = 1
     return {"delta_percent": str(sign * magnitude)}
+
+
+_SOFTWARE_INSTALL_RE = re.compile(
+    r"^(?:установи(?:ть)?|поставь|инсталлируй|доустанови|встанови(?:ти)?|інсталюй|install)\s+"
+    r"(?:мне\s+|нам\s+|себе\s+|мені\s+|собі\s+|me\s+)?"
+    r"(?:программу\s+|приложение\s+|прогу\s+|програму\s+|застосунок\s+|додаток\s+|the\s+app\s+|app\s+|program\s+|software\s+)?"
+    r"(.+)$",
+    re.IGNORECASE,
+)
+
+
+def _extract_software_install(text: str) -> dict[str, str] | None:
+    match = _SOFTWARE_INSTALL_RE.match(text.strip())
+    if not match:
+        return None
+    app = match.group(1).strip().strip("\"'")
+    return {"app": app} if app else None
 
 
 def _no_params(_text: str) -> dict[str, str]:
@@ -436,6 +459,7 @@ _PARAM_EXTRACTORS: dict[str, Callable[[str], dict[str, str] | None]] = {
     "get_battery_status": _no_params,
     "check_system_updates": _no_params,
     "lock_screen": _no_params,
+    "software_install": _extract_software_install,
     "toggle_timer": _extract_toggle_timer,
     "toggle_stopwatch": _no_params,
 }

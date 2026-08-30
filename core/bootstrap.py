@@ -49,6 +49,8 @@ from modules.plugin_agent import register_commands as register_plugin_agent_comm
 from modules.plugin_agent import shutdown as shutdown_plugin_agent
 from modules.plugin_agent.events import PluginCandidateReadyForReview
 from modules.search import register_commands as register_search_commands
+from modules.software_installer import register_commands as register_software_installer_commands
+from modules.software_installer.events import SoftwareInstallFinished
 from modules.spotify_control import register_commands as register_spotify_control_commands
 from modules.task_orchestrator import register_commands as register_task_orchestrator_commands
 from modules.text_editing import register_commands as register_text_editing_commands
@@ -161,6 +163,7 @@ def compose(bus: MessageBus = message_bus) -> Composed:
     # turn, by which point every register_*_commands call above has already
     # run regardless of source order.
     register_task_orchestrator_commands(dispatcher)
+    register_software_installer_commands(dispatcher)
     register_delayed_execution_commands(dispatcher)
     delayed_command_runner = DelayedCommandRunner(dispatcher)
 
@@ -188,6 +191,9 @@ def compose(bus: MessageBus = message_bus) -> Composed:
     # (modules/timer/notification_adapter.py), same split as calendar's.
     bus.subscribe(TimerFired, proactive_announcer.handle)
     bus.subscribe(TimerFired, send_timer_desktop_notification)
+    # A finished background install (modules/software_installer/installer.py)
+    # carries its own pre-built message, same as TimerFired above.
+    bus.subscribe(SoftwareInstallFinished, proactive_announcer.handle)
 
     # Outbound Telegram notifications (see core/telegram_notifier.py) — a
     # separate delivery channel from the two spoken subscribers above, for

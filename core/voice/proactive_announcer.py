@@ -47,4 +47,6 @@ class ProactiveAnnouncer:
         try:
             await asyncio.to_thread(self._tts.speak, event.message, language)
         except Exception:
-            logger.exception("Failed to speak hardware alert metric=%s", event.metric)
+            # Also carries TimerFired and SoftwareInstallFinished now — none
+            # of which have a `metric`, so read it defensively.
+            logger.exception("Failed to speak proactive event %s", getattr(event, "metric", type(event).__name__))
