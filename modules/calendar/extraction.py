@@ -32,6 +32,20 @@ class ExtractedEvent:
     # overwhelmingly common case) annoyingly slower to create by voice.
     recurrence: RecurrenceRule
     category: str | None
+    # Set from a keyword match on the raw request text, not from the model
+    # — "критическое"/"важное"/"обязательно не пропустить" means the
+    # reminder should take over on firing (see CalendarEvent.critical).
+    critical: bool = False
+
+
+_CRITICAL_MARKERS = re.compile(
+    r"критическ|критичн|очень важн|обязательно не пропуст|ни в коем случае не пропуст|срочн",
+    re.IGNORECASE,
+)
+
+
+def _looks_critical(text: str) -> bool:
+    return _CRITICAL_MARKERS.search(text) is not None
 
 
 def _build_prompt(text: str, now: datetime) -> str:
@@ -52,7 +66,7 @@ def _build_prompt(text: str, now: datetime) -> str:
     )
 
 
-def _parse_extraction(raw: str) -> ExtractedEvent | None:
+def _parse_extraction(raw: str, source_text: str = "") -> ExtractedEvent | None:
     match = _JSON_OBJECT_PATTERN.search(raw)
     if not match:
         logger.warning("Event extraction returned no JSON object")
@@ -95,6 +109,7 @@ def _parse_extraction(raw: str) -> ExtractedEvent | None:
         remind_before_minutes=remind_before_minutes,
         recurrence=recurrence,
         category=category,
+        critical=_looks_critical(source_text),
     )
 
 
@@ -118,7 +133,7 @@ async def extract_event(text: str, now: datetime | None = None) -> ExtractedEven
             logger.warning("Event extraction adapter '%s' failed: %s", adapter.name, exc, exc_info=exc)
             continue
 
-        extracted = _parse_extraction(raw)
+        extracted = _parse_extraction(raw, text)
         if extracted is not None:
             return extracted
 

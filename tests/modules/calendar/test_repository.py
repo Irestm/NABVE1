@@ -155,3 +155,41 @@ def test_list_not_notified_excludes_notified_events(tmp_db_path: Path) -> None:
     result = repo.list_not_notified()
 
     assert [e.id for e in result] == [pending_id]
+
+
+def test_critical_flag_round_trips(tmp_db_path: Path) -> None:
+    conn = _connect(tmp_db_path)
+    repo = CalendarEventRepository(conn)
+
+    normal_id = repo.add(CalendarEvent(title="Normal", event_time=datetime(2030, 1, 1)))
+    critical_id = repo.add(
+        CalendarEvent(title="Critical", event_time=datetime(2030, 1, 2), critical=True)
+    )
+
+    assert repo.get(normal_id).critical is False
+    assert repo.get(critical_id).critical is True
+
+
+def test_critical_column_is_added_to_a_legacy_table(tmp_db_path: Path) -> None:
+    legacy = _connect(tmp_db_path)
+    legacy.execute(
+        """
+        CREATE TABLE calendar_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            event_time TEXT NOT NULL,
+            remind_before_minutes INTEGER NOT NULL DEFAULT 0,
+            notified INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    legacy.execute(
+        "INSERT INTO calendar_events (title, event_time, remind_before_minutes, notified, created_at)"
+        " VALUES ('Old', '2030-01-01T00:00:00', 0, 0, '2020-01-01T00:00:00')"
+    )
+    legacy.commit()
+
+    repo = CalendarEventRepository(_connect(tmp_db_path))
+    stored = repo.get(1)
+    assert stored is not None and stored.critical is False

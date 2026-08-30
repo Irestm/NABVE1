@@ -8,6 +8,7 @@ from core.dispatcher import CommandDispatcher, build_dispatcher
 from core.message_bus import MessageBus, message_bus
 from core.telegram_notifier import TelegramNotifier
 from core.voice.announcements import ReminderAnnouncer
+from core.voice.critical_reminder import CriticalReminderHandler
 from core.voice.pipeline import VoiceAssistantLoop
 from core.voice.proactive_announcer import ProactiveAnnouncer
 from modules.ai_bridge import register_commands as register_ai_bridge_commands
@@ -169,6 +170,11 @@ def compose(bus: MessageBus = message_bus) -> Composed:
     # doesn't need anything outside the calendar module).
     announcer = ReminderAnnouncer(voice_loop)
     bus.subscribe(ReminderDue, announcer.handle)
+    # A ReminderDue with critical=True is a full takeover (pause media, orb
+    # attention state, spoken acknowledgement wait) — see
+    # core/voice/critical_reminder.py. ReminderAnnouncer above skips those.
+    critical_reminder_handler = CriticalReminderHandler(voice_loop)
+    bus.subscribe(ReminderDue, critical_reminder_handler.handle)
 
     # Same cross-module wiring shape as the reminder announcer above:
     # modules.hardware_adaptive only knows how to detect a low-battery/

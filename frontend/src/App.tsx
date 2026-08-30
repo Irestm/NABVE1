@@ -71,6 +71,7 @@ const STATE_LABELS: Record<AssistantState, string> = {
   error: "Ошибка",
   paused: "На паузе",
   onboarding: "Знакомимся",
+  critical_reminder: "Критическое напоминание",
 };
 
 // Labels for core/voice/module_context.py's active_module_context, shown as

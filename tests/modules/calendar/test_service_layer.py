@@ -157,3 +157,22 @@ async def test_real_sqlite_repository_reminder_flow(tmp_db_path: Path) -> None:
 
     assert handled == 1
     assert received[0].event_id == event_id
+
+
+async def test_check_due_reminders_propagates_the_critical_flag() -> None:
+    uow = FakeCalendarUnitOfWork()
+    now = datetime.now()
+    service_layer.create_event(uow, "Normal", now - timedelta(minutes=1))
+    service_layer.create_event(uow, "Critical", now - timedelta(minutes=1), critical=True)
+
+    bus = MessageBus()
+    received: list[ReminderDue] = []
+
+    async def handler(event: ReminderDue) -> None:
+        received.append(event)
+
+    bus.subscribe(ReminderDue, handler)
+    await service_layer.check_due_reminders(uow, bus, now=now)
+
+    by_title = {e.title: e.critical for e in received}
+    assert by_title == {"Normal": False, "Critical": True}

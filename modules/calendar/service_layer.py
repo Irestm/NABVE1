@@ -19,6 +19,7 @@ def create_event(
     color: str | None = None,
     category: str | None = None,
     recurrence: RecurrenceRule = RecurrenceRule.NONE,
+    critical: bool = False,
 ) -> int:
     with uow:
         event_id = uow.events.add(
@@ -29,6 +30,7 @@ def create_event(
                 color=color,
                 category=category,
                 recurrence=recurrence,
+                critical=critical,
             )
         )
         uow.commit()
@@ -81,6 +83,13 @@ async def check_due_reminders(uow: CalendarUnitOfWork, bus: MessageBus, now: dat
 
     for event in due:
         assert event.id is not None
-        await bus.publish(ReminderDue(event_id=event.id, title=event.title, event_time=event.event_time))
+        await bus.publish(
+            ReminderDue(
+                event_id=event.id,
+                title=event.title,
+                event_time=event.event_time,
+                critical=event.critical,
+            )
+        )
 
     return len(due)

@@ -108,6 +108,7 @@ export function PlannerView(): JSX.Element {
   const [color, setColor] = useState<string>(BASIC_COLORS[0]);
   const [category, setCategory] = useState("");
   const [recurrence, setRecurrence] = useState<RecurrenceRule>("none");
+  const [critical, setCritical] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function refresh(): Promise<void> {
@@ -184,10 +185,12 @@ export function PlannerView(): JSX.Element {
         color,
         category.trim() || null,
         recurrence,
+        critical,
       );
       setTitle("");
       setCategory("");
       setRecurrence("none");
+      setCritical(false);
       await refresh();
     } catch (error) {
       console.error("Failed to create a calendar event:", error);
@@ -312,6 +315,19 @@ export function PlannerView(): JSX.Element {
               title="Свой цвет"
             />
           </div>
+          <label className="planner__critical-toggle">
+            <input
+              type="checkbox"
+              checked={critical}
+              onChange={(event) => setCritical(event.target.checked)}
+            />
+            <span>
+              Критическое напоминание
+              <span className="planner__critical-hint">
+                поставит медиа на паузу и потребует голосового подтверждения
+              </span>
+            </span>
+          </label>
           <div className="row">
             <button disabled={submitting} onClick={() => void handleCreate()}>
               Добавить
@@ -339,6 +355,7 @@ export function PlannerView(): JSX.Element {
                 <span className="planner__event-title">
                   {event.title}
                   {event.category && <span className="planner__event-category">{event.category}</span>}
+                  {event.critical && <span className="planner__event-critical">критическое</span>}
                 </span>
                 <span className="planner__event-time">
                   {formatEventTime(event.event_time)}

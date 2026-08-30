@@ -421,6 +421,41 @@ class LinuxAdapter(OSAdapter):
             raise RuntimeError("Could not parse brightness from xrandr output")
         return round(float(match.group(1)) * 100)
 
+    # --- media ---
+
+    def pause_media(self) -> list[str]:
+        # playerctl speaks MPRIS, so this covers browsers (YouTube), Spotify,
+        # VLC, mpv, ... — anything exposing a standard media interface. No
+        # playerctl -> nothing we can do, but a reminder must not fail over
+        # it, so return [] rather than raising.
+        if not shutil.which("playerctl"):
+            logger.info("pause_media: playerctl not installed, nothing paused")
+            return []
+        listing = subprocess.run(
+            ["playerctl", "--list-all"], capture_output=True, text=True
+        )
+        if listing.returncode != 0:
+            return []
+        paused: list[str] = []
+        for player in (line.strip() for line in listing.stdout.splitlines() if line.strip()):
+            status = subprocess.run(
+                ["playerctl", "--player", player, "status"], capture_output=True, text=True
+            )
+            if status.returncode == 0 and status.stdout.strip().lower() == "playing":
+                if subprocess.run(
+                    ["playerctl", "--player", player, "pause"], capture_output=True, text=True
+                ).returncode == 0:
+                    paused.append(player)
+        return paused
+
+    def resume_media(self, tokens: list[str]) -> None:
+        if not tokens or not shutil.which("playerctl"):
+            return
+        for player in tokens:
+            subprocess.run(
+                ["playerctl", "--player", player, "play"], capture_output=True, text=True
+            )
+
     # --- session ---
 
     def lock_screen(self) -> None:

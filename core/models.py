@@ -29,6 +29,11 @@ class AssistantState(str, Enum):
     # assistant ignores the wake word and everything else until the same
     # word is said again (see core/voice/pipeline.py._wait_for_wake_or_pause).
     PAUSED = "paused"
+    # A critical calendar reminder has taken over: media is paused and the
+    # assistant is waiting for a spoken acknowledgement before restoring
+    # everything — see core/voice/critical_reminder.py and the orb's
+    # attention animation (frontend CentralOrb.css).
+    CRITICAL_REMINDER = "critical_reminder"
 
 
 class CommandRequest(BaseModel):

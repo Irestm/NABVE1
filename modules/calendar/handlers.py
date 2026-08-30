@@ -9,6 +9,12 @@ from modules.calendar import service_layer
 from modules.calendar.domain import RecurrenceRule
 from modules.calendar.uow import CalendarUnitOfWork
 
+def _parse_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "1", "yes", "да")
+
+
 _RECURRENCE_LABELS: dict[RecurrenceRule, str] = {
     RecurrenceRule.NONE: "не повторяется",
     RecurrenceRule.DAILY: "каждый день",
@@ -29,6 +35,7 @@ async def _handle_calendar_create_event(params: dict[str, Any]) -> dict[str, Any
     remind_before_minutes = int(params.get("remind_before_minutes", 0))
     color = params.get("color") or None
     category = params.get("category") or None
+    critical = _parse_bool(params.get("critical", False))
     try:
         recurrence = RecurrenceRule(params.get("recurrence") or RecurrenceRule.NONE.value)
     except ValueError as exc:
@@ -43,10 +50,13 @@ async def _handle_calendar_create_event(params: dict[str, Any]) -> dict[str, Any
         color,
         category,
         recurrence,
+        critical,
     )
     message = f"Событие «{title}» добавлено на {event_time.strftime('%d.%m.%Y %H:%M')}."
     if recurrence != RecurrenceRule.NONE:
         message += f" Повтор: {_RECURRENCE_LABELS[recurrence]}."
+    if critical:
+        message += " Критическое напоминание."
     return {
         "id": event_id,
         "title": title,
@@ -55,6 +65,7 @@ async def _handle_calendar_create_event(params: dict[str, Any]) -> dict[str, Any
         "color": color,
         "category": category,
         "recurrence": recurrence.value,
+        "critical": critical,
         "message": message,
     }
 
@@ -78,6 +89,7 @@ async def _handle_calendar_list_upcoming(params: dict[str, Any]) -> dict[str, An
                 "color": event.color,
                 "category": event.category,
                 "recurrence": event.recurrence.value,
+                "critical": event.critical,
             }
             for event in events
         ],
@@ -101,7 +113,8 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         description=(
             "Создать событие/напоминание в календаре: название, время в ISO-8601, опционально "
             "remind_before_minutes, color (hex), category (текст-группа), recurrence "
-            "(none/daily/weekly/monthly/yearly)."
+            "(none/daily/weekly/monthly/yearly), critical (true — с полной блокировкой при "
+            "срабатывании: пауза медиа, привлекающая анимация, ожидание голосового подтверждения)."
         ),
     )
     dispatcher.register(

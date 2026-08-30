@@ -149,6 +149,25 @@ class OSAdapter(ABC):
     def get_brightness(self) -> int:
         raise NotImplementedError
 
+    # --- media ---
+
+    @abstractmethod
+    def pause_media(self) -> list[str]:
+        """Pauses every currently-playing media player (browser video,
+        Spotify, ...) WITHOUT closing anything, and returns opaque tokens
+        identifying the players it paused so resume_media() can start exactly
+        those again. Best-effort: returns [] (never raises) when the platform
+        has no way to do this. Used by the critical-reminder takeover — see
+        core/voice/critical_reminder.py."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def resume_media(self, tokens: list[str]) -> None:
+        """Resumes the players pause_media() reported. A token that is no
+        longer valid (the player was closed meanwhile) is skipped, not an
+        error."""
+        raise NotImplementedError
+
     # --- session ---
 
     @abstractmethod

@@ -55,6 +55,27 @@
   --glow-strength: 0.9;
 }
 
+/* Critical calendar reminder takeover (core/voice/critical_reminder.py) —
+   must grab attention across the room: a hard red/amber glow that pulses
+   its whole scale, not just the halo opacity the other states animate. */
+.central-orb--critical_reminder {
+  --glow: var(--glow-error);
+  --glow-strength: 1;
+  animation: central-orb-critical-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes central-orb-critical-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 18px rgba(248, 81, 73, 0.55)) saturate(1.2);
+  }
+  50% {
+    transform: scale(1.06);
+    filter: drop-shadow(0 0 42px rgba(255, 169, 64, 0.95)) saturate(1.6);
+  }
+}
+
 .central-orb--paused {
   --glow: var(--glow-paused);
   /* Was 0.3 — nearly invisible next to idle's own 0.45, so pausing didn't

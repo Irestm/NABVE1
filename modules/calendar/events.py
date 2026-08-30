@@ -17,3 +17,7 @@ class ReminderDue(Event):
     event_id: int
     title: str
     event_time: datetime
+    # See modules/calendar/domain.py's CalendarEvent.critical — a critical
+    # reminder is handled by core/voice/critical_reminder.py instead of the
+    # plain spoken announcement.
+    critical: bool = False

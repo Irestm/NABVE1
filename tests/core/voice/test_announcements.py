@@ -70,3 +70,16 @@ async def test_handle_swallows_tts_failure_without_raising(monkeypatch: pytest.M
     announcer = ReminderAnnouncer(_FakeVoiceLoop(running=True))
 
     await announcer.handle(_event())  # must not raise
+
+
+async def test_handle_skips_a_critical_reminder(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Critical reminders are handled by core.voice.critical_reminder instead;
+    # ReminderAnnouncer must not also speak them.
+    monkeypatch.setattr(announcements, "TextToSpeech", _FakeTTS)
+    announcer = ReminderAnnouncer(_FakeVoiceLoop(running=True))
+
+    await announcer.handle(
+        ReminderDue(event_id=1, title="Важное", event_time=datetime(2026, 1, 1, 9, 0), critical=True)
+    )
+
+    assert announcer._tts is None

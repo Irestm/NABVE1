@@ -246,6 +246,7 @@ async def _resolve_and_dispatch(
                     "remind_before_minutes": str(extracted.remind_before_minutes),
                     "recurrence": extracted.recurrence.value,
                     "category": extracted.category,
+                    "critical": extracted.critical,
                 },
             )
         else:

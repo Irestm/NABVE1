@@ -36,6 +36,11 @@ class ReminderAnnouncer:
         self._tts: TextToSpeech | None = None
 
     async def handle(self, event: ReminderDue) -> None:
+        # A critical reminder is handled by core.voice.critical_reminder
+        # .CriticalReminderHandler (media pause + orb + spoken ack wait) —
+        # this plain announcer must not also speak it.
+        if event.critical:
+            return
         if not self._voice_loop.is_running:
             return
         if state_manager.state in BUSY_STATES:

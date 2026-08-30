@@ -201,6 +201,22 @@ class WindowsAdapter(OSAdapter):
             raise RuntimeError("This display does not report WMI brightness.")
         return int(readings[0].CurrentBrightness)
 
+    # --- media ---
+
+    def pause_media(self) -> list[str]:
+        # Windows has no built-in per-player MPRIS-style control, and the
+        # only key available (VK_MEDIA_PLAY_PAUSE) is a toggle that would
+        # START playback if nothing is playing — worse than doing nothing
+        # for the critical-reminder use case. Documented best-effort no-op;
+        # the reminder still pauses via the app's own controls if the user
+        # does it. A future win32 SystemMediaTransportControls integration
+        # could replace this.
+        logger.info("pause_media: not supported on Windows without extra tooling; nothing paused")
+        return []
+
+    def resume_media(self, tokens: list[str]) -> None:
+        return None
+
     # --- session ---
 
     def lock_screen(self) -> None:

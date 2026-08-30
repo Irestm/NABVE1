@@ -243,6 +243,7 @@ export function createCalendarEvent(
   color: string | null = null,
   category: string | null = null,
   recurrence: RecurrenceRule = "none",
+  critical = false,
 ): Promise<CommandResponse> {
   return runCommand("calendar_create_event", {
     title,
@@ -251,6 +252,7 @@ export function createCalendarEvent(
     color,
     category,
     recurrence,
+    critical,
   });
 }
 

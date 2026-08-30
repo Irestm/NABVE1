@@ -44,6 +44,12 @@ class CalendarEvent:
     # entity with its own lifecycle.
     category: str | None = None
     recurrence: RecurrenceRule = RecurrenceRule.NONE
+    # A critical reminder takes over on firing (see
+    # core/voice/critical_reminder.py): it pauses any playing media, puts
+    # the orb in its attention state, speaks the reminder, and waits for a
+    # spoken acknowledgement before restoring everything. A normal reminder
+    # (the default) is just the existing spoken/desktop notification.
+    critical: bool = False
 
     def is_due(self, now: datetime) -> bool:
         if self.notified:

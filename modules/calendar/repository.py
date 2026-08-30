@@ -29,6 +29,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "color": f"ALTER TABLE {_TABLE} ADD COLUMN color TEXT",
         "category": f"ALTER TABLE {_TABLE} ADD COLUMN category TEXT",
         "recurrence": f"ALTER TABLE {_TABLE} ADD COLUMN recurrence TEXT NOT NULL DEFAULT '{RecurrenceRule.NONE.value}'",
+        "critical": f"ALTER TABLE {_TABLE} ADD COLUMN critical INTEGER NOT NULL DEFAULT 0",
     }
     for column, ddl in migrations.items():
         if column not in existing_columns:
@@ -46,6 +47,7 @@ def _row_to_event(row: sqlite3.Row) -> CalendarEvent:
         color=row["color"],
         category=row["category"],
         recurrence=RecurrenceRule(row["recurrence"]),
+        critical=bool(row["critical"]),
     )
 
 
@@ -59,8 +61,8 @@ class CalendarEventRepository(AbstractRepository[CalendarEvent, int]):
         cursor = self._conn.execute(
             f"""
             INSERT INTO {_TABLE}
-                (title, event_time, remind_before_minutes, notified, created_at, color, category, recurrence)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (title, event_time, remind_before_minutes, notified, created_at, color, category, recurrence, critical)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item.title,
@@ -71,6 +73,7 @@ class CalendarEventRepository(AbstractRepository[CalendarEvent, int]):
                 item.color,
                 item.category,
                 item.recurrence.value,
+                int(item.critical),
             ),
         )
         return int(cursor.lastrowid)

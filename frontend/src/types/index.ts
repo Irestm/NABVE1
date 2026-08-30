@@ -7,7 +7,8 @@ export type AssistantState =
   | "speaking"
   | "error"
   | "paused"
-  | "onboarding";
+  | "onboarding"
+  | "critical_reminder";
 
 export interface StatusResponse {
   state: AssistantState;
@@ -98,6 +99,7 @@ export interface CalendarEvent {
   color: string | null;
   category: string | null;
   recurrence: RecurrenceRule;
+  critical?: boolean;
 }
 
 export interface PluginSuggestion {

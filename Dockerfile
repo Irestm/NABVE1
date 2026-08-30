@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wmctrl \
     xdotool \
     brightnessctl \
+    playerctl \
     libnotify-bin \
     ffmpeg \
     libportaudio2 \

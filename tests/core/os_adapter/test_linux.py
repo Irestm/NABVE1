@@ -388,3 +388,61 @@ def test_lock_screen_raises_without_any_backend(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError):
         LinuxAdapter().lock_screen()
+
+
+def test_pause_media_pauses_only_playing_players(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: "/usr/bin/playerctl")
+    calls: list[list[str]] = []
+
+    def _run(args, **_kwargs):
+        calls.append(args)
+        if args[:2] == ["playerctl", "--list-all"]:
+            return MagicMock(returncode=0, stdout="firefox\nspotify\nvlc\n")
+        if args[-1] == "status":
+            player = args[2]
+            playing = player in ("firefox", "spotify")
+            return MagicMock(returncode=0, stdout="Playing\n" if playing else "Paused\n")
+        return MagicMock(returncode=0, stdout="")
+
+    monkeypatch.setattr("core.os_adapter.linux.subprocess.run", _run)
+
+    paused = LinuxAdapter().pause_media()
+
+    assert paused == ["firefox", "spotify"]
+    assert ["playerctl", "--player", "firefox", "pause"] in calls
+    assert ["playerctl", "--player", "spotify", "pause"] in calls
+    assert ["playerctl", "--player", "vlc", "pause"] not in calls
+
+
+def test_pause_media_returns_empty_without_playerctl(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: None)
+    assert LinuxAdapter().pause_media() == []
+
+
+def test_resume_media_plays_each_reported_player(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: "/usr/bin/playerctl")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "core.os_adapter.linux.subprocess.run",
+        lambda args, **k: calls.append(args) or MagicMock(returncode=0, stdout=""),
+    )
+
+    LinuxAdapter().resume_media(["firefox", "spotify"])
+
+    assert calls == [
+        ["playerctl", "--player", "firefox", "play"],
+        ["playerctl", "--player", "spotify", "play"],
+    ]
+
+
+def test_resume_media_is_a_noop_for_empty_tokens(monkeypatch) -> None:
+    monkeypatch.setattr("core.os_adapter.linux.shutil.which", lambda name: "/usr/bin/playerctl")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "core.os_adapter.linux.subprocess.run",
+        lambda args, **k: calls.append(args) or MagicMock(returncode=0),
+    )
+
+    LinuxAdapter().resume_media([])
+
+    assert calls == []

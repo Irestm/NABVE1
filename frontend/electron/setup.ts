@@ -9,7 +9,7 @@ import path from "node:path";
 // gain a new entry — an existing install's persisted setup_state.json will
 // then be considered stale and runSetup() runs again, instead of the app
 // silently starting with dependencies missing forever.
-const SETUP_SCHEMA_VERSION = 3;
+const SETUP_SCHEMA_VERSION = 4;
 
 const PYTHON_MIN_MAJOR = 3;
 const PYTHON_MIN_MINOR = 12;
@@ -39,6 +39,11 @@ const LINUX_APT_PACKAGES = [
   // before that first re-login, the adapter falls back to `xrandr
   // --brightness` — a software gamma dim only (backlight power unchanged).
   "brightnessctl",
+  // playerctl (MPRIS) lets a critical calendar reminder pause any playing
+  // media before its takeover and resume it afterward — see
+  // core/os_adapter/linux.py pause_media/resume_media. Best-effort: without
+  // it, a critical reminder still fires, it just can't pause media.
+  "playerctl",
   "libnotify-bin",
   "libreoffice",
   "ffmpeg",

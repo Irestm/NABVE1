@@ -946,6 +946,7 @@ class VoiceAssistantLoop:
             "remind_before_minutes": str(extracted.remind_before_minutes),
             "recurrence": extracted.recurrence.value,
             "category": extracted.category,
+            "critical": extracted.critical,
         }
         return Command(name="calendar_create_event", params=params), False
 

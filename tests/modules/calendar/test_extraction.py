@@ -135,3 +135,14 @@ def test_extract_event_returns_none_when_model_cannot_parse_request(monkeypatch:
     monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: _FailingAdapter())
 
     assert asyncio.run(extract_event("бла бла бла")) is None
+
+
+def test_critical_keyword_in_source_text_sets_the_flag() -> None:
+    raw = '{"title": "Принять лекарство", "event_time": "2026-08-06T09:00:00", "remind_before_minutes": 5}'
+    assert _parse_extraction(raw, "критически важно принять лекарство в 9").critical is True
+    assert _parse_extraction(raw, "принять лекарство в 9").critical is False
+
+
+def test_critical_defaults_to_false_without_source_text() -> None:
+    raw = '{"title": "X", "event_time": "2026-08-06T09:00:00", "remind_before_minutes": 5}'
+    assert _parse_extraction(raw).critical is False
