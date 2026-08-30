@@ -13,6 +13,7 @@ from modules.gesture_control.config import (
     CAMERA_FPS,
     CAMERA_HEIGHT,
     CAMERA_INDEX,
+    CAMERA_STALL_REOPEN_SECONDS,
     CAMERA_WIDTH,
     GESTURE_DEBUG,
     GESTURE_TRY_GPU,
@@ -39,9 +40,11 @@ Landmarks = list[tuple[float, float]]
 
 @dataclass(frozen=True)
 class FrameResult:
-    frame: object  # BGR frame from cv2 (unused now that the preview is gone; kept for shape)
+    frame: object  # mirrored BGR frame from cv2 (for the optional preview)
     hands: list[Landmarks]  # 0-2 hands, left-to-right by wrist x; index tip is smoothed
     raw_index_tips: list[tuple[float, float]]  # unsmoothed landmark 8 per hand, same order
+    fresh: bool = True  # False = re-smoothed from the last detection (no new camera frame)
+    brightness: float = -1.0  # mean pixel value 0-255 of this frame, -1 if unknown
 
     @property
     def raw_primary_tip(self) -> tuple[float, float] | None:
@@ -50,28 +53,53 @@ class FrameResult:
 
 class _CameraReader:
     """Owns the VideoCapture on its own daemon thread, continuously reading
-    so the newest frame is always ready. Without this, the worker loop
-    blocks inside cap.read() for a whole frame period every iteration —
-    which, on a slow/dark webcam, is most of the reason the cursor feels
-    choppy."""
+    so the newest frame is always ready — the worker loop never blocks
+    inside cap.read() (a big part of the choppiness on a slow/dark webcam).
+    If reads stop succeeding for CAMERA_STALL_REOPEN_SECONDS (a driver
+    stall, typically an abrupt lighting change forcing exposure
+    renegotiation) it releases and reopens the camera instead of wedging
+    the cursor forever."""
 
-    def __init__(self, cv2, capture) -> None:
+    def __init__(self, cv2, camera_index: int, configure) -> None:
         self._cv2 = cv2
-        self._cap = capture
+        self._camera_index = camera_index
+        self._configure = configure  # (cap) -> None, applies fourcc/res/fps
+        self._cap = self._open()
         self._lock = threading.Lock()
         self._frame = None
         self._stop = threading.Event()
+        self._last_ok = time.monotonic()
         self._thread = threading.Thread(target=self._loop, name="gesture-camera", daemon=True)
         self._thread.start()
 
+    def _open(self):
+        cap = self._cv2.VideoCapture(self._camera_index)
+        if cap.isOpened():
+            self._configure(cap)
+        return cap
+
     def _loop(self) -> None:
         while not self._stop.is_set():
-            ok, frame = self._cap.read()
+            ok = False
+            frame = None
+            try:
+                ok, frame = self._cap.read()
+            except Exception:
+                ok = False
             if ok and frame is not None:
                 with self._lock:
                     self._frame = frame
+                self._last_ok = time.monotonic()
             else:
                 self._stop.wait(0.02)
+                if time.monotonic() - self._last_ok > CAMERA_STALL_REOPEN_SECONDS:
+                    logger.warning("Gesture camera stalled — reopening")
+                    try:
+                        self._cap.release()
+                    except Exception:
+                        pass
+                    self._cap = self._open()
+                    self._last_ok = time.monotonic()
 
     def latest(self):
         with self._lock:
@@ -80,7 +108,10 @@ class _CameraReader:
     def stop(self) -> None:
         self._stop.set()
         self._thread.join(timeout=2)
-        self._cap.release()
+        try:
+            self._cap.release()
+        except Exception:
+            pass
 
 
 def _looks_like_hand(landmarks: Landmarks) -> bool:
@@ -157,6 +188,10 @@ class HandTracker:
             OneEuroFilter(min_cutoff),
         ]
         self._last_seen_frame = None
+        self._last_frame = None
+        self._last_full_hands: list[Landmarks] | None = None
+        self._last_raw_tips: list[tuple[float, float]] = []
+        self._last_brightness = -1.0
         # Diagnostics (§1): rolling processing FPS + last detect latency.
         self._diag_frames = 0
         self._diag_since = time.monotonic()
@@ -169,31 +204,36 @@ class HandTracker:
         from mediapipe.tasks import python as mp_python  # type: ignore[import-untyped]
         from mediapipe.tasks.python import vision as mp_vision  # type: ignore[import-untyped]
 
-        cap = self._cv2.VideoCapture(self._camera_index)
-        if not cap.isOpened():
+        def _configure(cap) -> None:
+            try:
+                cap.set(self._cv2.CAP_PROP_FOURCC, self._cv2.VideoWriter_fourcc(*CAMERA_FOURCC))
+            except Exception:
+                logger.debug("Camera FOURCC set failed", exc_info=True)
+            cap.set(self._cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+            cap.set(self._cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+            cap.set(self._cv2.CAP_PROP_FPS, CAMERA_FPS)
+            try:
+                cap.set(self._cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
+
+        probe = self._cv2.VideoCapture(self._camera_index)
+        if not probe.isOpened():
+            probe.release()
             raise RuntimeError(
                 f"Не удалось открыть камеру {self._camera_index} — занята другим приложением или недоступна."
             )
-        try:
-            cap.set(self._cv2.CAP_PROP_FOURCC, self._cv2.VideoWriter_fourcc(*CAMERA_FOURCC))
-        except Exception:
-            logger.debug("Camera FOURCC set failed", exc_info=True)
-        cap.set(self._cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-        cap.set(self._cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-        cap.set(self._cv2.CAP_PROP_FPS, CAMERA_FPS)
-        try:
-            cap.set(self._cv2.CAP_PROP_BUFFERSIZE, 1)  # tiny buffer = act on the freshest frame
-        except Exception:
-            pass
-        self._capture = cap
-        actual_w = int(cap.get(self._cv2.CAP_PROP_FRAME_WIDTH))
-        actual_h = int(cap.get(self._cv2.CAP_PROP_FRAME_HEIGHT))
-        actual_fps = cap.get(self._cv2.CAP_PROP_FPS)
+        _configure(probe)
         logger.info(
             "Gesture camera: requested %dx%d@%d %s, driver granted %dx%d@%.0f",
-            CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS, CAMERA_FOURCC, actual_w, actual_h, actual_fps,
+            CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS, CAMERA_FOURCC,
+            int(probe.get(self._cv2.CAP_PROP_FRAME_WIDTH)),
+            int(probe.get(self._cv2.CAP_PROP_FRAME_HEIGHT)),
+            probe.get(self._cv2.CAP_PROP_FPS),
         )
-        self._reader = _CameraReader(self._cv2, cap)
+        probe.release()
+        self._reader = _CameraReader(self._cv2, self._camera_index, _configure)
+        self._capture = True  # sentinel: camera is owned by the reader thread
 
         def _make_options(delegate):
             return mp_vision.HandLandmarkerOptions(
@@ -237,55 +277,77 @@ class HandTracker:
     def read(self) -> FrameResult | None:
         if self._reader is None or self._landmarker is None:
             return None
-        frame = self._reader.latest()
-        if frame is None or frame is self._last_seen_frame:
-            return None  # camera hasn't delivered a new frame since last call
-        self._last_seen_frame = frame
+        raw = self._reader.latest()
+        if raw is None:
+            return None
+        new_frame = raw is not self._last_seen_frame
+        self._last_seen_frame = raw
+        timestamp_s = time.monotonic() - self._epoch
 
-        # Mirror horizontally so moving your hand right moves the cursor
-        # right — a raw webcam frame is un-mirrored, which the user reported
-        # as "право и лево перепутаны".
-        frame = self._cv2.flip(frame, 1)
-        rgb = self._cv2.cvtColor(frame, self._cv2.COLOR_BGR2RGB)
-        mp_image = self._mp_image_cls(image_format=self._mp_image_format, data=rgb)
-        timestamp_ms = int((time.monotonic() - self._epoch) * 1000)
-        if timestamp_ms <= self._last_timestamp_ms:
-            timestamp_ms = self._last_timestamp_ms + 1
-        self._last_timestamp_ms = timestamp_ms
+        if new_frame:
+            # Mirror horizontally so moving your hand right moves the cursor
+            # right — a raw webcam frame is un-mirrored.
+            frame = self._cv2.flip(raw, 1)
+            try:
+                self._last_brightness = float(frame.mean())
+            except Exception:
+                self._last_brightness = -1.0
+            rgb = self._cv2.cvtColor(frame, self._cv2.COLOR_BGR2RGB)
+            mp_image = self._mp_image_cls(image_format=self._mp_image_format, data=rgb)
+            timestamp_ms = int(timestamp_s * 1000)
+            if timestamp_ms <= self._last_timestamp_ms:
+                timestamp_ms = self._last_timestamp_ms + 1
+            self._last_timestamp_ms = timestamp_ms
 
-        detect_start = time.perf_counter()
-        result = self._landmarker.detect_for_video(mp_image, timestamp_ms)
-        self._diag_detect_ms = (time.perf_counter() - detect_start) * 1000.0
+            detect_start = time.perf_counter()
+            result = self._landmarker.detect_for_video(mp_image, timestamp_ms)
+            self._diag_detect_ms = (time.perf_counter() - detect_start) * 1000.0
 
-        landmark_sets = getattr(result, "hand_landmarks", []) or []
-        handedness_sets = getattr(result, "handedness", []) or []
-        hands: list[Landmarks] = []
-        for i, hand in enumerate(landmark_sets):
-            score = 1.0
-            if i < len(handedness_sets) and handedness_sets[i]:
-                score = getattr(handedness_sets[i][0], "score", 1.0)
-            if score < HAND_MIN_HANDEDNESS_SCORE:
-                if GESTURE_DEBUG:
-                    logger.debug("hand %d rejected: handedness score %.2f", i, score)
-                continue
-            points: Landmarks = [(lm.x, lm.y) for lm in hand]
-            if not _looks_like_hand(points):
-                if GESTURE_DEBUG:
-                    logger.debug("hand %d rejected: geometry (bbox/knuckles)", i)
-                continue
-            hands.append(points)
-        hands.sort(key=lambda h: h[0][0])
+            landmark_sets = getattr(result, "hand_landmarks", []) or []
+            handedness_sets = getattr(result, "handedness", []) or []
+            hands = []
+            for i, hand in enumerate(landmark_sets):
+                score = 1.0
+                if i < len(handedness_sets) and handedness_sets[i]:
+                    score = getattr(handedness_sets[i][0], "score", 1.0)
+                if score < HAND_MIN_HANDEDNESS_SCORE:
+                    if GESTURE_DEBUG:
+                        logger.debug("hand %d rejected: handedness score %.2f", i, score)
+                    continue
+                points: Landmarks = [(lm.x, lm.y) for lm in hand]
+                if not _looks_like_hand(points):
+                    if GESTURE_DEBUG:
+                        logger.debug("hand %d rejected: geometry (bbox/knuckles)", i)
+                    continue
+                hands.append(points)
+            hands.sort(key=lambda h: h[0][0])
+            self._log_diagnostics(len(landmark_sets), hands, frame)
 
-        self._log_diagnostics(len(landmark_sets), hands, frame)
+            self._last_frame = frame
+            self._last_full_hands = [list(h) for h in hands]
+            self._last_raw_tips = [h[8] for h in hands[:2]]
+        elif self._last_full_hands is None:
+            return None  # no detection has happened yet
+        else:
+            # No new camera frame: re-emit the last detection so the worker
+            # can keep easing the cursor toward it at the full tick rate
+            # instead of hard-stepping at the (possibly low) camera fps.
+            frame = self._last_frame
+            hands = [list(h) for h in self._last_full_hands]
 
-        timestamp_s = timestamp_ms / 1000.0
-        raw_index_tips = [hand[8] for hand in hands[:2]]
-        for i, hand in enumerate(hands[:2]):
-            hand[8] = self._smoothers[i].update(hand[8], timestamp_s)
+        raw_index_tips = list(self._last_raw_tips)
+        for i in range(min(len(hands), 2)):
+            hands[i][8] = self._smoothers[i].update(raw_index_tips[i], timestamp_s)
         for i in range(len(hands), 2):
             self._smoothers[i].reset()
 
-        return FrameResult(frame=frame, hands=hands, raw_index_tips=raw_index_tips)
+        return FrameResult(
+            frame=frame,
+            hands=hands,
+            raw_index_tips=raw_index_tips,
+            fresh=new_frame,
+            brightness=self._last_brightness,
+        )
 
     def _log_diagnostics(self, raw_count: int, hands: list[Landmarks], frame) -> None:
         self._diag_frames += 1

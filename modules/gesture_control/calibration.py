@@ -16,6 +16,8 @@ from modules.gesture_control.config import (
     GESTURE_PINCH_THRESHOLD_KEY,
     GESTURE_SWIPE_MIN_DX_KEY,
     GESTURE_ZONE_KEY,
+    CALIBRATION_MAX_DARK_FRACTION,
+    CALIBRATION_MIN_BRIGHTNESS,
     CORNER_CALIBRATION_SAMPLES,
     CORNER_ZONE_MIN_SPAN,
     CORNER_ZONE_PAD,
@@ -74,6 +76,7 @@ class CalibrationFrame:
     open_palm_score: float
     raw_tip: tuple[float, float]
     palm_centre: tuple[float, float]
+    brightness: float = -1.0  # mean pixel value of the source frame, -1 if unknown
 
 
 @dataclass(frozen=True)
@@ -204,6 +207,10 @@ class CalibrationSession:
     _corner_pts: list[tuple[float, float]] = field(default_factory=list)
 
     done: bool = False
+    aborted: bool = False
+    abort_reason: str = ""
+    _dark_frames: int = 0
+    _total_frames: int = 0
     deadzone_px: int | None = None
     min_cutoff: float | None = None
     pinch_threshold: float | None = None
@@ -246,6 +253,9 @@ class CalibrationSession:
     def observe(self, frame: CalibrationFrame) -> None:
         if self.done:
             return
+        self._total_frames += 1
+        if 0 <= frame.brightness < CALIBRATION_MIN_BRIGHTNESS:
+            self._dark_frames += 1
         if self._phase == _PHASE_STEADY:
             self._observe_steady(frame.raw_tip)
         elif self._phase == _PHASE_PINCH:
@@ -261,9 +271,19 @@ class CalibrationSession:
         elif self._phase == _PHASE_CORNERS:
             self._observe_corners(frame.raw_tip)
 
+    def _abort(self, reason: str) -> None:
+        self.aborted = True
+        self.abort_reason = reason
+        self._pending = f"Калибровка отменена: {reason}."
+        self._phase = _PHASE_DONE
+        self.done = True
+
     def _observe_steady(self, point: tuple[float, float]) -> None:
         self._steady_points.append(point)
         if len(self._steady_points) < STEADY_CALIBRATION_SAMPLES:
+            return
+        if self._total_frames and self._dark_frames / self._total_frames > CALIBRATION_MAX_DARK_FRACTION:
+            self._abort("слишком темно, добавьте света и повторите")
             return
         n = len(self._steady_points)
         mean_x = sum(p[0] for p in self._steady_points) / n
@@ -381,6 +401,11 @@ class CalibrationSession:
             swipe_min_dx=self.swipe_min_dx if self.swipe_min_dx is not None else SWIPE_MIN_DX,
             zone_bounds=self.zone_bounds,
         )
+        # An aborted (e.g. too-dark) run keeps the current defaults rather
+        # than writing garbage that then poisons every later session.
+        if self.aborted:
+            logger.warning("Calibration aborted (%s) — nothing stored", self.abort_reason)
+            return applied
         _set_fact(GESTURE_PINCH_THRESHOLD_KEY, f"{applied.pinch_threshold:.4f}")
         _set_fact(GESTURE_DEADZONE_PX_KEY, str(applied.deadzone_px))
         _set_fact(GESTURE_MIN_CUTOFF_KEY, f"{applied.min_cutoff:.3f}")

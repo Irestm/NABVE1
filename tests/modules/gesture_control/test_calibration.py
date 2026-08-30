@@ -17,8 +17,10 @@ from modules.gesture_control.config import (
 _REPS = calibration._REQUIRED_REPS  # 5
 
 
-def _frame(pinch=1.0, palm=1.0, tip=(0.5, 0.5), centre=(0.5, 0.5)) -> CalibrationFrame:
-    return CalibrationFrame(pinch_ratio=pinch, open_palm_score=palm, raw_tip=tip, palm_centre=centre)
+def _frame(pinch=1.0, palm=1.0, tip=(0.5, 0.5), centre=(0.5, 0.5), brightness=120.0) -> CalibrationFrame:
+    return CalibrationFrame(
+        pinch_ratio=pinch, open_palm_score=palm, raw_tip=tip, palm_centre=centre, brightness=brightness
+    )
 
 
 def _do_steady(session: calibration.CalibrationSession, jitter: float = 0.002) -> None:
@@ -103,6 +105,25 @@ def test_progress_reports_phase_and_dots() -> None:
     _do_corners(s)
     done = s.progress()
     assert done.done is True and done.reps_done == _REPS
+
+
+def test_dark_input_aborts_and_persists_nothing(monkeypatch) -> None:
+    written: dict[str, str] = {}
+    monkeypatch.setattr(
+        calibration.profile_service_layer,
+        "set_fact",
+        lambda uow, key, value, **kw: written.__setitem__(key, value),
+    )
+    s = calibration.CalibrationSession(px_per_norm=1000.0)
+    s.take_announcement()  # drain the opening prompt
+    for i in range(STEADY_CALIBRATION_SAMPLES):
+        off = 0.002 if i % 2 == 0 else -0.002
+        s.observe(_frame(tip=(0.5 + off, 0.5), brightness=10.0))  # near-black frames
+    assert s.aborted is True and s.done is True
+    assert "темно" in s.abort_reason
+    assert "отменена" in (s.take_announcement() or "")
+    s.persist()
+    assert written == {}
 
 
 def test_steady_phase_sets_deadzone_and_min_cutoff() -> None:

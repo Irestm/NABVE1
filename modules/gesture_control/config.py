@@ -48,8 +48,11 @@ DEADZONE_PX_MAX = 40
 # not a setting. Was 2x, dialled back to 1.5 ("меньше ещё курсор сделай").
 CURSOR_SCALE = 1.5
 
-# Processing rate — enough for a responsive cursor without pinning a core.
-PROCESSING_FPS = 24
+# Worker tick rate. Deliberately higher than the camera fps: on every tick
+# the One-Euro filter takes another sub-step toward the last known hand
+# point, so the cursor glides smoothly between (possibly sparse) camera
+# frames instead of hard-stepping at the camera's rate.
+PROCESSING_FPS = 50
 CAMERA_INDEX = 0
 # 720p capture over MJPG (many UVC cams cap 720p at ~10 fps on raw YUYV but
 # allow 30 fps compressed). A dedicated reader thread keeps the newest frame
@@ -67,8 +70,8 @@ CAMERA_FOURCC = "MJPG"
 # steadier, more lag; ONE_EURO_BETA raises the cutoff with hand speed so a
 # deliberate move barely lags. The correct MediaPipe timestamp (fixed) is
 # what makes a real 1€ filter possible now.
-ONE_EURO_MIN_CUTOFF = 1.2
-ONE_EURO_BETA = 2.5
+ONE_EURO_MIN_CUTOFF = 0.9
+ONE_EURO_BETA = 1.6
 ONE_EURO_D_CUTOFF = 1.0
 
 # "Калибровка дрожания" personalises the resting cutoff: it measures the
@@ -84,6 +87,19 @@ MIN_CUTOFF_CEIL = 1.6
 STEADY_CALIBRATION_SAMPLES = 60
 JITTER_LOW_PX = 1.5
 JITTER_HIGH_PX = 9.0
+
+# Calibration refuses to store a threshold learned from a bad feed: a frame
+# darker than this (mean 0-255) can't be trusted, and if more than
+# CALIBRATION_MAX_DARK_FRACTION of a phase's frames are dark the wizard
+# aborts instead of persisting garbage (a dark session once wrote the
+# deadzone/pinch clamps to their extremes and broke everything).
+CALIBRATION_MIN_BRIGHTNESS = 45.0
+CALIBRATION_MAX_DARK_FRACTION = 0.4
+
+# If read() gets no fresh camera frame for this long (a driver stall, e.g.
+# an abrupt lighting change forcing an exposure renegotiation), the reader
+# thread reopens the camera rather than wedging the cursor forever.
+CAMERA_STALL_REOPEN_SECONDS = 2.5
 
 # Corner-tracing phase: sweep the hand around the four screen corners for
 # this many frames; the min/max x/y (padded inward) become the personal

@@ -283,40 +283,80 @@ class GestureController:
                 ratio_raw = pinch_ratio(primary)
 
                 if session is not None and not session.done:
-                    session.observe(
-                        calibration.CalibrationFrame(
-                            pinch_ratio=ratio_raw,
-                            open_palm_score=open_palm_score(primary),
-                            raw_tip=raw_tip,
-                            palm_centre=hand_centre(primary),
+                    if result.fresh:
+                        session.observe(
+                            calibration.CalibrationFrame(
+                                pinch_ratio=ratio_raw,
+                                open_palm_score=open_palm_score(primary),
+                                raw_tip=raw_tip,
+                                palm_centre=hand_centre(primary),
+                                brightness=result.brightness,
+                            )
                         )
-                    )
-                    self._drain_calibration_prompt(session)
-                    overlay_state.set_calibration(session.progress())
+                        self._drain_calibration_prompt(session)
+                        overlay_state.set_calibration(session.progress())
                     if session.done:
                         applied = session.persist()
-                        threshold = applied.pinch_threshold
-                        deadzone_px = applied.deadzone_px
-                        open_palm_ratio = applied.open_palm_ratio
-                        swipe_min_dx = applied.swipe_min_dx
-                        if applied.zone_bounds is not None:
-                            bounds = applied.zone_bounds
-                        tracker.set_min_cutoff(applied.min_cutoff)
+                        if not session.aborted:
+                            threshold = applied.pinch_threshold
+                            deadzone_px = applied.deadzone_px
+                            open_palm_ratio = applied.open_palm_ratio
+                            swipe_min_dx = applied.swipe_min_dx
+                            if applied.zone_bounds is not None:
+                                bounds = applied.zone_bounds
+                            tracker.set_min_cutoff(applied.min_cutoff)
                         session = None
                         overlay_state.set_calibration(None)
                     self._pace(loop_start, frame_interval)
                     continue
 
-                hand_seen_streak = min(hand_seen_streak + 1, warmup_cap)
+                if result.fresh:
+                    hand_seen_streak = min(hand_seen_streak + 1, warmup_cap)
                 if hand_seen_streak < HAND_WARMUP_FRAMES:
                     cursor.sync_last_set()
                     prev_tip = tip
                     self._pace(loop_start, frame_interval)
                     continue
 
-                if not announced_ready:
+                if not announced_ready and result.fresh:
                     announced_ready = True
                     self._announce("Режим жестов включён.")
+
+                def _move_toward(point: tuple[float, float]) -> None:
+                    nonlocal prev_tip, dwell_anchor, dwell_frames
+                    if prev_tip is None:
+                        prev_tip = point
+                    speed = math.hypot(point[0] - prev_tip[0], point[1] - prev_tip[1])
+                    prev_tip = point
+                    tgt = map_hand_to_screen(point, cursor.screen_size, bounds)
+                    px, py = cursor.current_pos()
+                    g = _precision_gain(speed)
+                    ez = (px + (tgt[0] - px) * g, py + (tgt[1] - py) * g)
+                    if dwell_anchor is None or math.hypot(
+                        ez[0] - dwell_anchor[0], ez[1] - dwell_anchor[1]
+                    ) > DWELL_RADIUS_PX:
+                        dwell_anchor = ez
+                        dwell_frames = 0
+                    else:
+                        dwell_frames += 1
+                    is_frozen = dwell_frames >= DWELL_FRAMES and math.hypot(
+                        tgt[0] - dwell_anchor[0], tgt[1] - dwell_anchor[1]
+                    ) <= DWELL_BREAK_PX
+                    if not is_frozen:
+                        ix, iy = int(round(ez[0])), int(round(ez[1]))
+                        if abs(ix - px) >= deadzone_px or abs(iy - py) >= deadzone_px:
+                            cursor.move_cursor(ix, iy)
+
+                # No new camera frame — keep gliding the cursor toward the
+                # last known point (smooth motion between sparse frames), but
+                # don't advance any gesture state machine off a stale frame.
+                if not result.fresh:
+                    if swipe_cooldown > 0 or open_palm_streak >= SWIPE_OPEN_STREAK_FRAMES:
+                        cursor.sync_last_set()  # swipe mode freezes the pointer
+                    else:
+                        _move_toward(tip)  # keeps a drag following too
+                    self._pace(loop_start, frame_interval)
+                    continue
 
                 # "Catch fast, release slow": engage on the best (min) of the
                 # last few raw ratios, release only when the median has
@@ -368,31 +408,7 @@ class GestureController:
                     continue
 
                 # --- pointing mode: cursor + pinch + two-hand zoom ---
-                if prev_tip is None:
-                    prev_tip = tip
-                hand_speed = math.hypot(tip[0] - prev_tip[0], tip[1] - prev_tip[1])
-                prev_tip = tip
-
-                target = map_hand_to_screen(tip, cursor.screen_size, bounds)
-                cx, cy = cursor.current_pos()
-                gain = _precision_gain(hand_speed)
-                eased = (cx + (target[0] - cx) * gain, cy + (target[1] - cy) * gain)
-
-                if dwell_anchor is None or math.hypot(
-                    eased[0] - dwell_anchor[0], eased[1] - dwell_anchor[1]
-                ) > DWELL_RADIUS_PX:
-                    dwell_anchor = eased
-                    dwell_frames = 0
-                else:
-                    dwell_frames += 1
-
-                frozen = dwell_frames >= DWELL_FRAMES and math.hypot(
-                    target[0] - dwell_anchor[0], target[1] - dwell_anchor[1]
-                ) <= DWELL_BREAK_PX
-                if not frozen:
-                    ex, ey = int(round(eased[0])), int(round(eased[1]))
-                    if abs(ex - cx) >= deadzone_px or abs(ey - cy) >= deadzone_px:
-                        cursor.move_cursor(ex, ey)
+                _move_toward(tip)
 
                 # Pinch: near-instant engage, debounced + hysteresis release
                 # so a drag never drops on one bad frame.
