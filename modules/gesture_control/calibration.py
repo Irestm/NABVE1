@@ -9,11 +9,11 @@ from modules.gesture_control.config import (
     DEADZONE_PX_MAX,
     DEADZONE_PX_MIN,
     DEFAULT_OPEN_PALM_RATIO,
-    DEFAULT_PINCH_RATIO,
+    DEFAULT_FIST_RATIO,
     GESTURE_DEADZONE_PX_KEY,
     GESTURE_MIN_CUTOFF_KEY,
     GESTURE_OPEN_PALM_RATIO_KEY,
-    GESTURE_PINCH_THRESHOLD_KEY,
+    GESTURE_FIST_THRESHOLD_KEY,
     GESTURE_SWIPE_MIN_DX_KEY,
     GESTURE_ZONE_KEY,
     CALIBRATION_MAX_DARK_FRACTION,
@@ -43,7 +43,7 @@ logger = get_logger(__name__)
 _REQUIRED_REPS = 5
 
 _PHASE_STEADY = "steady"
-_PHASE_PINCH = "pinch"
+_PHASE_FIST = "fist"
 _PHASE_OPEN_PALM = "open_palm"
 _PHASE_SWIPE = "swipe"
 _PHASE_CORNERS = "corners"
@@ -53,7 +53,7 @@ _TOTAL_PHASES = 5
 
 _PROMPTS = {
     _PHASE_STEADY: "Калибровка. Держите руку неподвижно перед камерой пару секунд.",
-    _PHASE_PINCH: "Теперь пять раз медленно сожмите и разожмите большой и указательный пальцы.",
+    _PHASE_FIST: "Теперь пять раз медленно сожмите руку в кулак и разожмите.",
     _PHASE_OPEN_PALM: "Теперь пять раз раскройте всю ладонь и снова сожмите в кулак.",
     _PHASE_SWIPE: "Теперь пять раз проведите открытой ладонью влево и вправо.",
     _PHASE_CORNERS: "Теперь медленно обведите рукой четыре угла экрана.",
@@ -63,7 +63,7 @@ _PROMPTS = {
 # (phase_index, short label, short on-screen instruction)
 _PHASE_META = {
     _PHASE_STEADY: (1, "Неподвижная рука", "Держите руку неподвижно перед камерой"),
-    _PHASE_PINCH: (2, "Щипок", "Сожмите и разожмите большой и указательный пальцы"),
+    _PHASE_FIST: (2, "Кулак", "Сожмите руку в кулак и разожмите"),
     _PHASE_OPEN_PALM: (3, "Ладонь", "Раскройте всю ладонь и снова сожмите в кулак"),
     _PHASE_SWIPE: (4, "Взмах ладонью", "Проведите открытой ладонью влево и вправо"),
     _PHASE_CORNERS: (5, "Углы экрана", "Медленно обведите рукой четыре угла экрана"),
@@ -72,7 +72,7 @@ _PHASE_META = {
 
 @dataclass(frozen=True)
 class CalibrationFrame:
-    pinch_ratio: float
+    fist_score: float
     open_palm_score: float
     raw_tip: tuple[float, float]
     palm_centre: tuple[float, float]
@@ -92,7 +92,7 @@ class CalibrationProgress:
 
 @dataclass(frozen=True)
 class AppliedCalibration:
-    pinch_threshold: float
+    fist_threshold: float
     deadzone_px: int
     min_cutoff: float
     open_palm_ratio: float
@@ -128,8 +128,8 @@ class _RepCounter:
     and a high state, and records the extreme reached on each side. A rep =
     the value crosses the midpoint of its observed range into the gesture
     side and back out (with a hysteresis band). `active_high` picks which
-    side is the gesture — pinch drives the ratio low, open palm the score
-    high."""
+    side is the gesture — a fist drives the score low, an open palm drives
+    it high."""
 
     def __init__(self, active_high: bool, min_span: float) -> None:
         self._active_high = active_high
@@ -182,7 +182,7 @@ class _RepCounter:
 
 @dataclass
 class CalibrationSession:
-    """The gesture wizard: STEADY (jitter) -> PINCH -> OPEN_PALM -> SWIPE,
+    """The gesture wizard: STEADY (jitter) -> FIST -> OPEN_PALM -> SWIPE -> CORNERS,
     each gesture demonstrated five times, each deriving its own personal
     threshold. Feed it a CalibrationFrame every frame; drain
     take_announcement() for the spoken prompts and progress() for the
@@ -194,8 +194,8 @@ class CalibrationSession:
     _pending: str | None = _PROMPTS[_PHASE_STEADY]
 
     _steady_points: list[tuple[float, float]] = field(default_factory=list)
-    _pinch: _RepCounter = field(
-        default_factory=lambda: _RepCounter(active_high=False, min_span=0.25)
+    _fist: _RepCounter = field(
+        default_factory=lambda: _RepCounter(active_high=False, min_span=0.4)
     )
     _open_palm: _RepCounter = field(
         default_factory=lambda: _RepCounter(active_high=True, min_span=0.12)
@@ -213,7 +213,7 @@ class CalibrationSession:
     _total_frames: int = 0
     deadzone_px: int | None = None
     min_cutoff: float | None = None
-    pinch_threshold: float | None = None
+    fist_threshold: float | None = None
     open_palm_ratio: float | None = None
     swipe_min_dx: float | None = None
     zone_bounds: tuple[float, float, float, float] | None = None
@@ -231,8 +231,8 @@ class CalibrationSession:
         index, label, instruction = _PHASE_META[self._phase]
         if self._phase == _PHASE_STEADY:
             done = len(self._steady_points) * _REQUIRED_REPS // max(STEADY_CALIBRATION_SAMPLES, 1)
-        elif self._phase == _PHASE_PINCH:
-            done = self._pinch.reps
+        elif self._phase == _PHASE_FIST:
+            done = self._fist.reps
         elif self._phase == _PHASE_OPEN_PALM:
             done = self._open_palm.reps
         elif self._phase == _PHASE_SWIPE:
@@ -258,10 +258,10 @@ class CalibrationSession:
             self._dark_frames += 1
         if self._phase == _PHASE_STEADY:
             self._observe_steady(frame.raw_tip)
-        elif self._phase == _PHASE_PINCH:
-            self._pinch.observe(frame.pinch_ratio)
-            if self._pinch.reps >= _REQUIRED_REPS:
-                self._finish_pinch()
+        elif self._phase == _PHASE_FIST:
+            self._fist.observe(frame.fist_score)
+            if self._fist.reps >= _REQUIRED_REPS:
+                self._finish_fist()
         elif self._phase == _PHASE_OPEN_PALM:
             self._open_palm.observe(frame.open_palm_score)
             if self._open_palm.reps >= _REQUIRED_REPS:
@@ -300,20 +300,20 @@ class CalibrationSession:
             self.deadzone_px,
             self.min_cutoff,
         )
-        self._advance(_PHASE_PINCH)
+        self._advance(_PHASE_FIST)
 
-    def _finish_pinch(self) -> None:
-        tight = self._pinch.gesture_level()  # trimmed mean of per-squeeze minima
-        wide = self._pinch.rest_level()  # trimmed mean of the open-hand ratio
-        span = wide - tight
-        value = tight + span * 0.45 if span > 1e-3 else DEFAULT_PINCH_RATIO
-        self.pinch_threshold = round(_clamp(value, 0.2, 0.75), 4)
+    def _finish_fist(self) -> None:
+        closed = self._fist.gesture_level()  # trimmed mean of per-fist minima
+        open_ = self._fist.rest_level()  # trimmed mean of the open-hand score
+        span = open_ - closed
+        value = closed + span * 0.4 if span > 1e-3 else DEFAULT_FIST_RATIO
+        self.fist_threshold = round(_clamp(value, 0.7, 1.5), 4)
         logger.info(
-            "Calibration PINCH: squeezed=%.3f open=%.3f threshold=%.3f (%d reps)",
-            tight,
-            wide,
-            self.pinch_threshold,
-            self._pinch.reps,
+            "Calibration FIST: closed=%.3f open=%.3f threshold=%.3f (%d reps)",
+            closed,
+            open_,
+            self.fist_threshold,
+            self._fist.reps,
         )
         self._advance(_PHASE_OPEN_PALM)
 
@@ -390,9 +390,9 @@ class CalibrationSession:
 
     def persist(self) -> AppliedCalibration:
         applied = AppliedCalibration(
-            pinch_threshold=self.pinch_threshold
-            if self.pinch_threshold is not None
-            else DEFAULT_PINCH_RATIO,
+            fist_threshold=self.fist_threshold
+            if self.fist_threshold is not None
+            else DEFAULT_FIST_RATIO,
             deadzone_px=self.deadzone_px if self.deadzone_px is not None else CURSOR_DEADZONE_PX,
             min_cutoff=self.min_cutoff if self.min_cutoff is not None else ONE_EURO_MIN_CUTOFF,
             open_palm_ratio=self.open_palm_ratio
@@ -406,7 +406,7 @@ class CalibrationSession:
         if self.aborted:
             logger.warning("Calibration aborted (%s) — nothing stored", self.abort_reason)
             return applied
-        _set_fact(GESTURE_PINCH_THRESHOLD_KEY, f"{applied.pinch_threshold:.4f}")
+        _set_fact(GESTURE_FIST_THRESHOLD_KEY, f"{applied.fist_threshold:.4f}")
         _set_fact(GESTURE_DEADZONE_PX_KEY, str(applied.deadzone_px))
         _set_fact(GESTURE_MIN_CUTOFF_KEY, f"{applied.min_cutoff:.3f}")
         _set_fact(GESTURE_OPEN_PALM_RATIO_KEY, f"{applied.open_palm_ratio:.3f}")
@@ -428,8 +428,8 @@ def _load_fact_float(key: str, default: float) -> float:
         return default
 
 
-def load_threshold() -> float:
-    return _load_fact_float(GESTURE_PINCH_THRESHOLD_KEY, DEFAULT_PINCH_RATIO)
+def load_fist_threshold() -> float:
+    return _load_fact_float(GESTURE_FIST_THRESHOLD_KEY, DEFAULT_FIST_RATIO)
 
 
 def load_deadzone_px() -> int:

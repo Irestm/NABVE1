@@ -65,7 +65,7 @@ class _FakeCursor:
 def _no_profile_db(monkeypatch):
     monkeypatch.setattr(gd.profile_service_layer, "get_fact", lambda uow, key: None)
     monkeypatch.setattr(gd.profile_service_layer, "set_fact", lambda *a, **k: None)
-    monkeypatch.setattr(gd.calibration, "load_threshold", lambda: 0.05)
+    monkeypatch.setattr(gd.calibration, "load_fist_threshold", lambda: 1.0)
     monkeypatch.setattr(gd.calibration, "load_deadzone_px", lambda: 3)
     monkeypatch.setattr(gd.calibration, "load_min_cutoff", lambda: 1.2)
     monkeypatch.setattr(gd.calibration, "load_open_palm_ratio", lambda: 1.12)

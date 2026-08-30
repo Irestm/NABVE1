@@ -8,7 +8,7 @@ from modules.gesture_control.config import (
     CORNER_CALIBRATION_SAMPLES,
     CURSOR_DEADZONE_PX,
     DEFAULT_OPEN_PALM_RATIO,
-    DEFAULT_PINCH_RATIO,
+    DEFAULT_FIST_RATIO,
     ONE_EURO_MIN_CUTOFF,
     STEADY_CALIBRATION_SAMPLES,
     SWIPE_MIN_DX,
@@ -17,9 +17,9 @@ from modules.gesture_control.config import (
 _REPS = calibration._REQUIRED_REPS  # 5
 
 
-def _frame(pinch=1.0, palm=1.0, tip=(0.5, 0.5), centre=(0.5, 0.5), brightness=120.0) -> CalibrationFrame:
+def _frame(fist=1.6, palm=1.0, tip=(0.5, 0.5), centre=(0.5, 0.5), brightness=120.0) -> CalibrationFrame:
     return CalibrationFrame(
-        pinch_ratio=pinch, open_palm_score=palm, raw_tip=tip, palm_centre=centre, brightness=brightness
+        fist_score=fist, open_palm_score=palm, raw_tip=tip, palm_centre=centre, brightness=brightness
     )
 
 
@@ -29,10 +29,10 @@ def _do_steady(session: calibration.CalibrationSession, jitter: float = 0.002) -
         session.observe(_frame(tip=(0.5 + offset, 0.5)))
 
 
-def _do_pinch(session: calibration.CalibrationSession) -> None:
+def _do_fist(session: calibration.CalibrationSession) -> None:
     for _ in range(_REPS + 1):
-        session.observe(_frame(pinch=1.2))  # open
-        session.observe(_frame(pinch=0.30))  # squeezed
+        session.observe(_frame(fist=2.0))  # open hand
+        session.observe(_frame(fist=0.6))  # closed fist
 
 
 def _do_open_palm(session: calibration.CalibrationSession) -> None:
@@ -59,7 +59,7 @@ def _do_corners(session: calibration.CalibrationSession) -> None:
 
 def _do_all(session: calibration.CalibrationSession) -> None:
     _do_steady(session)
-    _do_pinch(session)
+    _do_fist(session)
     _do_open_palm(session)
     _do_swipe(session)
     _do_corners(session)
@@ -70,7 +70,7 @@ def test_phase_order_and_prompts() -> None:
     assert "неподвижно" in s.take_announcement()
     _do_steady(s)
     assert "сожмите" in s.take_announcement().lower()
-    _do_pinch(s)
+    _do_fist(s)
     assert "ладонь" in s.take_announcement().lower()
     _do_open_palm(s)
     assert "влево" in s.take_announcement().lower()
@@ -89,16 +89,16 @@ def test_progress_reports_phase_and_dots() -> None:
 
     _do_steady(s)
     p1 = s.progress()
-    assert p1.phase_index == 2 and "Щипок" in p1.label and p1.reps_done == 0
+    assert p1.phase_index == 2 and "Кулак" in p1.label and p1.reps_done == 0
 
     # squeeze cycles fill dots one at a time (a rep completes on release)
     for _ in range(3):
-        s.observe(_frame(pinch=1.2))
-        s.observe(_frame(pinch=0.30))
-        s.observe(_frame(pinch=1.2))
+        s.observe(_frame(fist=2.0))
+        s.observe(_frame(fist=0.6))
+        s.observe(_frame(fist=2.0))
     assert 1 <= s.progress().reps_done <= 3
 
-    _do_pinch(s)
+    _do_fist(s)
     _do_open_palm(s)
     _do_swipe(s)
     assert s.progress().phase_index == 5  # corners phase
@@ -133,18 +133,18 @@ def test_steady_phase_sets_deadzone_and_min_cutoff() -> None:
     assert s.min_cutoff is not None
 
 
-def test_pinch_phase_threshold_between_squeezed_and_open() -> None:
+def test_fist_phase_threshold_between_closed_and_open() -> None:
     s = calibration.CalibrationSession(px_per_norm=1000.0)
     _do_steady(s)
-    _do_pinch(s)
-    assert s.pinch_threshold is not None
-    assert 0.30 < s.pinch_threshold < 1.2
+    _do_fist(s)
+    assert s.fist_threshold is not None
+    assert 0.7 < s.fist_threshold < 1.5
 
 
 def test_open_palm_phase_threshold_between_fist_and_spread() -> None:
     s = calibration.CalibrationSession(px_per_norm=1000.0)
     _do_steady(s)
-    _do_pinch(s)
+    _do_fist(s)
     _do_open_palm(s)
     assert s.open_palm_ratio is not None
     assert 1.0 < s.open_palm_ratio < 1.5
@@ -153,7 +153,7 @@ def test_open_palm_phase_threshold_between_fist_and_spread() -> None:
 def test_swipe_phase_learns_a_travel_below_the_users_swing() -> None:
     s = calibration.CalibrationSession(px_per_norm=1000.0)
     _do_steady(s)
-    _do_pinch(s)
+    _do_fist(s)
     _do_open_palm(s)
     _do_swipe(s)
     assert s.swipe_min_dx is not None
@@ -181,14 +181,14 @@ def test_persist_writes_all_facts_including_zone(monkeypatch) -> None:
     applied = s.persist()
 
     assert set(written) == {
-        "gesture_pinch_threshold",
+        "gesture_fist_threshold",
         "gesture_deadzone_px",
         "gesture_min_cutoff",
         "gesture_open_palm_ratio",
         "gesture_swipe_min_dx",
         "gesture_zone_bounds",
     }
-    assert abs(float(written["gesture_pinch_threshold"]) - applied.pinch_threshold) < 1e-4
+    assert abs(float(written["gesture_fist_threshold"]) - applied.fist_threshold) < 1e-4
     assert applied.zone_bounds is not None
 
 
@@ -196,7 +196,7 @@ def test_persist_falls_back_to_defaults_when_unfinished(monkeypatch) -> None:
     monkeypatch.setattr(calibration.profile_service_layer, "set_fact", lambda *a, **k: None)
     s = calibration.CalibrationSession(px_per_norm=1000.0)
     applied = s.persist()
-    assert applied.pinch_threshold == DEFAULT_PINCH_RATIO
+    assert applied.fist_threshold == DEFAULT_FIST_RATIO
     assert applied.deadzone_px == CURSOR_DEADZONE_PX
     assert applied.min_cutoff == ONE_EURO_MIN_CUTOFF
     assert applied.open_palm_ratio == DEFAULT_OPEN_PALM_RATIO
@@ -206,7 +206,7 @@ def test_persist_falls_back_to_defaults_when_unfinished(monkeypatch) -> None:
 
 def test_loaders_fall_back_to_defaults(monkeypatch) -> None:
     monkeypatch.setattr(calibration.profile_service_layer, "get_fact", lambda uow, key: None)
-    assert calibration.load_threshold() == DEFAULT_PINCH_RATIO
+    assert calibration.load_fist_threshold() == DEFAULT_FIST_RATIO
     assert calibration.load_deadzone_px() == CURSOR_DEADZONE_PX
     assert calibration.load_min_cutoff() == ONE_EURO_MIN_CUTOFF
     assert calibration.load_open_palm_ratio() == DEFAULT_OPEN_PALM_RATIO
@@ -230,7 +230,7 @@ def test_load_zone_bounds_parses_and_guards(monkeypatch, stored, expected) -> No
 
 def test_loaders_read_stored_values(monkeypatch) -> None:
     stored = {
-        "gesture_pinch_threshold": "0.41",
+        "gesture_fist_threshold": "0.41",
         "gesture_deadzone_px": "12",
         "gesture_min_cutoff": "0.9",
         "gesture_open_palm_ratio": "1.28",
@@ -239,7 +239,7 @@ def test_loaders_read_stored_values(monkeypatch) -> None:
     monkeypatch.setattr(
         calibration.profile_service_layer, "get_fact", lambda uow, key: stored.get(key)
     )
-    assert calibration.load_threshold() == pytest.approx(0.41)
+    assert calibration.load_fist_threshold() == pytest.approx(0.41)
     assert calibration.load_deadzone_px() == 12
     assert calibration.load_min_cutoff() == pytest.approx(0.9)
     assert calibration.load_open_palm_ratio() == pytest.approx(1.28)

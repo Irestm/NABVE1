@@ -60,23 +60,29 @@ class _CameraReader:
     renegotiation) it releases and reopens the camera instead of wedging
     the cursor forever."""
 
-    def __init__(self, cv2, camera_index: int, configure) -> None:
+    def __init__(self, cv2, camera_index: int, configure, capture) -> None:
         self._cv2 = cv2
         self._camera_index = camera_index
         self._configure = configure  # (cap) -> None, applies fourcc/res/fps
-        self._cap = self._open()
+        self._cap = capture  # already opened + configured by HandTracker.open()
         self._lock = threading.Lock()
         self._frame = None
         self._stop = threading.Event()
         self._last_ok = time.monotonic()
+        self._ever_ok = False
         self._thread = threading.Thread(target=self._loop, name="gesture-camera", daemon=True)
         self._thread.start()
 
-    def _open(self):
+    def _reopen(self):
+        try:
+            self._cap.release()
+        except Exception:
+            pass
         cap = self._cv2.VideoCapture(self._camera_index)
         if cap.isOpened():
             self._configure(cap)
-        return cap
+        self._cap = cap
+        self._last_ok = time.monotonic()
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -90,16 +96,14 @@ class _CameraReader:
                 with self._lock:
                     self._frame = frame
                 self._last_ok = time.monotonic()
+                self._ever_ok = True
             else:
-                self._stop.wait(0.02)
-                if time.monotonic() - self._last_ok > CAMERA_STALL_REOPEN_SECONDS:
+                self._stop.wait(0.03)
+                # Only treat a gap as a stall if frames were flowing before —
+                # a merely slow (few-fps) feed must not trigger a reopen loop.
+                if self._ever_ok and time.monotonic() - self._last_ok > CAMERA_STALL_REOPEN_SECONDS:
                     logger.warning("Gesture camera stalled — reopening")
-                    try:
-                        self._cap.release()
-                    except Exception:
-                        pass
-                    self._cap = self._open()
-                    self._last_ok = time.monotonic()
+                    self._reopen()
 
     def latest(self):
         with self._lock:
@@ -217,22 +221,24 @@ class HandTracker:
             except Exception:
                 pass
 
-        probe = self._cv2.VideoCapture(self._camera_index)
-        if not probe.isOpened():
-            probe.release()
+        cap = self._cv2.VideoCapture(self._camera_index)
+        if not cap.isOpened():
+            cap.release()
             raise RuntimeError(
                 f"Не удалось открыть камеру {self._camera_index} — занята другим приложением или недоступна."
             )
-        _configure(probe)
+        _configure(cap)
         logger.info(
             "Gesture camera: requested %dx%d@%d %s, driver granted %dx%d@%.0f",
             CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS, CAMERA_FOURCC,
-            int(probe.get(self._cv2.CAP_PROP_FRAME_WIDTH)),
-            int(probe.get(self._cv2.CAP_PROP_FRAME_HEIGHT)),
-            probe.get(self._cv2.CAP_PROP_FPS),
+            int(cap.get(self._cv2.CAP_PROP_FRAME_WIDTH)),
+            int(cap.get(self._cv2.CAP_PROP_FRAME_HEIGHT)),
+            cap.get(self._cv2.CAP_PROP_FPS),
         )
-        probe.release()
-        self._reader = _CameraReader(self._cv2, self._camera_index, _configure)
+        # The reader thread owns this single, already-configured capture —
+        # opening the camera twice (probe + reader) left some UVC drivers
+        # renegotiating and dropped the real fps to near zero.
+        self._reader = _CameraReader(self._cv2, self._camera_index, _configure, cap)
         self._capture = True  # sentinel: camera is owned by the reader thread
 
         def _make_options(delegate):

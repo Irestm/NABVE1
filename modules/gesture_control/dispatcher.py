@@ -19,11 +19,11 @@ from modules.gesture_control.config import (
     HAND_WARMUP_FRAMES,
     PHYSICAL_MOUSE_OVERRIDE_SECONDS,
     PHYSICAL_MOUSE_THRESHOLD_PX,
-    PINCH_ENGAGE_DEBOUNCE_FRAMES,
-    PINCH_LOST_GRACE_FRAMES,
-    PINCH_RATIO_MEDIAN,
-    PINCH_RELEASE_DEBOUNCE_FRAMES,
-    PINCH_RELEASE_MULT,
+    FIST_ENGAGE_DEBOUNCE_FRAMES,
+    FIST_LOST_GRACE_FRAMES,
+    FIST_RATIO_MEDIAN,
+    FIST_RELEASE_DEBOUNCE_FRAMES,
+    FIST_RELEASE_MULT,
     PRECISION_GAIN_MIN,
     PRECISION_SPEED_HIGH,
     PRECISION_SPEED_LOW,
@@ -47,7 +47,7 @@ from modules.gesture_control.gesture_recognizer import (
     is_open_palm,
     median,
     open_palm_score,
-    pinch_ratio,
+    fist_score,
     swipe_direction,
     two_hand_spread_delta,
 )
@@ -185,7 +185,7 @@ class GestureController:
         # surprise prompt annoying, and an un-finished session used to
         # freeze the cursor). The stored / default values work out of the
         # box; calibration runs only when "Калибровка" asks for it.
-        threshold = calibration.load_threshold()
+        threshold = calibration.load_fist_threshold()
         session: calibration.CalibrationSession | None = None
         if self._recalibrate:
             self._recalibrate = False
@@ -197,10 +197,10 @@ class GestureController:
         warmup_cap = HAND_WARMUP_FRAMES + 2
         prev_spread: float | None = None
         zoom_cooldown = 0
-        pinch_state = False
-        pinch_streak = 0
-        pinch_lost_grace = 0
-        ratio_buf: list[float] = []
+        fist_state = False
+        fist_streak = 0
+        fist_lost_grace = 0
+        fist_buf: list[float] = []
         override_until = 0.0
         announced_ready = False
         hand_seen_streak = 0
@@ -212,12 +212,12 @@ class GestureController:
         dwell_anchor: tuple[float, float] | None = None
         dwell_frames = 0
 
-        def _release_pinch() -> None:
-            nonlocal pinch_state, pinch_streak
-            if pinch_state:
+        def _release_grab() -> None:
+            nonlocal fist_state, fist_streak
+            if fist_state:
                 cursor.click_up()
-            pinch_state = False
-            pinch_streak = 0
+            fist_state = False
+            fist_streak = 0
 
         try:
             while not self._stop_event.is_set():
@@ -241,9 +241,9 @@ class GestureController:
                 # away from where we left it, yield for a short cooldown.
                 if cursor.physical_mouse_moved(PHYSICAL_MOUSE_THRESHOLD_PX):
                     override_until = loop_start + PHYSICAL_MOUSE_OVERRIDE_SECONDS
-                    _release_pinch()
+                    _release_grab()
                 if loop_start < override_until:
-                    _release_pinch()
+                    _release_grab()
                     cursor.sync_last_set()
                     prev_tip = None
                     dwell_anchor = None
@@ -252,20 +252,19 @@ class GestureController:
                     continue
 
                 if not result.hands:
-                    # A pinch often makes MediaPipe drop the hand for a frame
-                    # or two (thumb and index tips occlude) — hold the click
-                    # through a short gap instead of releasing it.
-                    if pinch_state and pinch_lost_grace < PINCH_LOST_GRACE_FRAMES:
-                        pinch_lost_grace += 1
+                    # MediaPipe sometimes drops the hand for a frame or two —
+                    # hold the click through a short gap instead of releasing it.
+                    if fist_state and fist_lost_grace < FIST_LOST_GRACE_FRAMES:
+                        fist_lost_grace += 1
                         prev_spread = None
                         self._pace(loop_start, frame_interval)
                         continue
-                    _release_pinch()
+                    _release_grab()
                     prev_spread = None
                     # decay, don't reset — a one-frame tracking gap shouldn't
                     # restart the warmup.
                     hand_seen_streak = max(0, hand_seen_streak - 1)
-                    ratio_buf.clear()
+                    fist_buf.clear()
                     swipe_x.clear()
                     swipe_y.clear()
                     open_palm_streak = 0
@@ -275,18 +274,18 @@ class GestureController:
                     self._pace(loop_start, frame_interval)
                     continue
 
-                pinch_lost_grace = 0
+                fist_lost_grace = 0
 
                 primary = result.hands[0]
                 tip = primary[8]
                 raw_tip = result.raw_primary_tip or tip
-                ratio_raw = pinch_ratio(primary)
+                fist_raw = fist_score(primary)
 
                 if session is not None and not session.done:
                     if result.fresh:
                         session.observe(
                             calibration.CalibrationFrame(
-                                pinch_ratio=ratio_raw,
+                                fist_score=fist_raw,
                                 open_palm_score=open_palm_score(primary),
                                 raw_tip=raw_tip,
                                 palm_centre=hand_centre(primary),
@@ -298,7 +297,7 @@ class GestureController:
                     if session.done:
                         applied = session.persist()
                         if not session.aborted:
-                            threshold = applied.pinch_threshold
+                            threshold = applied.fist_threshold
                             deadzone_px = applied.deadzone_px
                             open_palm_ratio = applied.open_palm_ratio
                             swipe_min_dx = applied.swipe_min_dx
@@ -358,21 +357,20 @@ class GestureController:
                     self._pace(loop_start, frame_interval)
                     continue
 
-                # "Catch fast, release slow": engage on the best (min) of the
-                # last few raw ratios, release only when the median has
-                # clearly climbed back. Landmark noise + the tip occlusion of
-                # a real pinch made a stricter test miss most clicks.
-                ratio_buf.append(ratio_raw)
-                if len(ratio_buf) > PINCH_RATIO_MEDIAN:
-                    ratio_buf.pop(0)
-                release_threshold = threshold * PINCH_RELEASE_MULT
-                if pinch_state:
-                    pinching_now = median(ratio_buf) <= release_threshold
+                # Fist = click/drag. "Catch fast, release slow": engage on the
+                # best (min) of the last few raw scores, release only once the
+                # median has clearly climbed back (hand opened).
+                fist_buf.append(fist_raw)
+                if len(fist_buf) > FIST_RATIO_MEDIAN:
+                    fist_buf.pop(0)
+                release_threshold = threshold * FIST_RELEASE_MULT
+                if fist_state:
+                    fisting_now = median(fist_buf) <= release_threshold
                 else:
-                    pinching_now = min(ratio_buf) <= threshold
+                    fisting_now = min(fist_buf) <= threshold
 
-                # --- swipe mode: a whole open palm, not pinching ---
-                if not pinching_now and not pinch_state and is_open_palm(primary, open_palm_ratio):
+                # --- swipe mode: a whole open palm, not a fist ---
+                if not fisting_now and not fist_state and is_open_palm(primary, open_palm_ratio):
                     open_palm_streak += 1
                 else:
                     open_palm_streak = 0
@@ -407,24 +405,24 @@ class GestureController:
                     self._pace(loop_start, frame_interval)
                     continue
 
-                # --- pointing mode: cursor + pinch + two-hand zoom ---
+                # --- pointing mode: cursor + fist-click + two-hand zoom ---
                 _move_toward(tip)
 
-                # Pinch: near-instant engage, debounced + hysteresis release
+                # Fist: near-instant engage, debounced + hysteresis release
                 # so a drag never drops on one bad frame.
-                if pinching_now != pinch_state:
-                    pinch_streak += 1
+                if fisting_now != fist_state:
+                    fist_streak += 1
                     need = (
-                        PINCH_ENGAGE_DEBOUNCE_FRAMES
-                        if pinching_now
-                        else PINCH_RELEASE_DEBOUNCE_FRAMES
+                        FIST_ENGAGE_DEBOUNCE_FRAMES
+                        if fisting_now
+                        else FIST_RELEASE_DEBOUNCE_FRAMES
                     )
-                    if pinch_streak >= need:
-                        pinch_state = pinching_now
-                        pinch_streak = 0
-                        cursor.click_down() if pinch_state else cursor.click_up()
+                    if fist_streak >= need:
+                        fist_state = fisting_now
+                        fist_streak = 0
+                        cursor.click_down() if fist_state else cursor.click_up()
                 else:
-                    pinch_streak = 0
+                    fist_streak = 0
 
                 if len(result.hands) >= 2:
                     prev_spread, delta = two_hand_spread_delta(

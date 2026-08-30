@@ -18,7 +18,7 @@ GESTURE_TRY_GPU = os.environ.get("NABVE_GESTURE_GPU", "1").strip() not in ("0", 
 # (calibration.CalibrationSession): one phase per gesture, each done 3x, each
 # deriving its own threshold. The tracking-zone override is optional and set
 # by hand, not calibrated.
-GESTURE_PINCH_THRESHOLD_KEY = "gesture_pinch_threshold"
+GESTURE_FIST_THRESHOLD_KEY = "gesture_fist_threshold"
 GESTURE_DEADZONE_PX_KEY = "gesture_deadzone_px"
 GESTURE_MIN_CUTOFF_KEY = "gesture_min_cutoff"
 GESTURE_OPEN_PALM_RATIO_KEY = "gesture_open_palm_ratio"
@@ -29,11 +29,11 @@ GESTURE_TRACKING_ZONE_KEY = "gesture_tracking_zone"
 # DEFAULT_TRACKING_ZONE when present.
 GESTURE_ZONE_KEY = "gesture_zone_bounds"
 
-# Pinch detection is scale-invariant: dist(thumb_tip, index_tip) divided by
-# hand span dist(wrist, index_mcp). ~0.35 when the fingers touch, ~1.0+ when
-# the hand is open — so it doesn't drift with camera distance / hand size.
-# Calibration tunes this per user; this default works without calibrating.
-DEFAULT_PINCH_RATIO = 0.5
+# Fist = click/drag. gesture_recognizer.fist_score is the largest of the
+# four finger tip/PIP ratios (scale-invariant) — a tight fist is ~0.8 or
+# below, a relaxed/pointing hand ~1.4+. fist_score <= threshold means
+# "closed". Calibration personalises it; this default works without.
+DEFAULT_FIST_RATIO = 1.0
 DEFAULT_TRACKING_ZONE = 0.70  # central fraction of the camera frame that maps to the whole screen
 
 # Ignore final on-screen cursor moves smaller than this — kills the last of
@@ -48,19 +48,20 @@ DEADZONE_PX_MAX = 40
 # not a setting. Was 2x, dialled back to 1.5 ("меньше ещё курсор сделай").
 CURSOR_SCALE = 1.5
 
-# Worker tick rate. Deliberately higher than the camera fps: on every tick
-# the One-Euro filter takes another sub-step toward the last known hand
-# point, so the cursor glides smoothly between (possibly sparse) camera
-# frames instead of hard-stepping at the camera's rate.
-PROCESSING_FPS = 50
+# Worker tick rate — a bit above the camera fps so the One-Euro filter takes
+# extra sub-steps toward the last known point and the cursor glides smoothly
+# between (often sparse) camera frames. Not too high: a faster tick just
+# starves the camera-reader thread of the GIL and lowers real fps.
+PROCESSING_FPS = 30
 CAMERA_INDEX = 0
-# 720p capture over MJPG (many UVC cams cap 720p at ~10 fps on raw YUYV but
-# allow 30 fps compressed). A dedicated reader thread keeps the newest frame
-# so MediaPipe never blocks on the camera. The worker logs the resolution,
-# fps and mean brightness the driver actually delivered — a dark or slow
-# feed is the usual reason gesture tracking "работает плохо".
-CAMERA_WIDTH = 1280
-CAMERA_HEIGHT = 720
+# 640x480 MJPG. Measured: this webcam delivers the same fps at 720p and
+# 480p (it's exposure/lighting-bound, not resolution-bound), so the smaller
+# frame is chosen for cheaper decode/copy per frame. A dedicated reader
+# thread keeps the newest frame so MediaPipe never blocks on the camera;
+# the worker logs resolution, fps and mean brightness — a dark/slow feed is
+# the usual reason tracking "работает плохо".
+CAMERA_WIDTH = 640
+CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
 CAMERA_FOURCC = "MJPG"
 
@@ -96,10 +97,11 @@ JITTER_HIGH_PX = 9.0
 CALIBRATION_MIN_BRIGHTNESS = 45.0
 CALIBRATION_MAX_DARK_FRACTION = 0.4
 
-# If read() gets no fresh camera frame for this long (a driver stall, e.g.
-# an abrupt lighting change forcing an exposure renegotiation), the reader
-# thread reopens the camera rather than wedging the cursor forever.
-CAMERA_STALL_REOPEN_SECONDS = 2.5
+# If the reader had frames flowing and then gets nothing for this long (a
+# real driver stall, e.g. an abrupt lighting change forcing an exposure
+# renegotiation), it reopens the camera rather than wedging the cursor.
+# Generous so a merely slow (a few fps) feed is never mistaken for a stall.
+CAMERA_STALL_REOPEN_SECONDS = 8.0
 
 # Corner-tracing phase: sweep the hand around the four screen corners for
 # this many frames; the min/max x/y (padded inward) become the personal
@@ -108,18 +110,17 @@ CORNER_CALIBRATION_SAMPLES = 90
 CORNER_ZONE_PAD = 0.04
 CORNER_ZONE_MIN_SPAN = 0.18
 
-# Pinch = click. "Catch fast, release slow": engage when the *best* (min) of
-# the last PINCH_RATIO_MEDIAN raw ratios dips under the threshold for
-# PINCH_ENGAGE_DEBOUNCE_FRAMES frames; release only when the *median* climbs
-# past PINCH_RELEASE_MULT x threshold and holds for PINCH_RELEASE_DEBOUNCE_
-# FRAMES. And when the thumb and index tips touch, MediaPipe often loses the
-# whole hand for a frame or two — PINCH_LOST_GRACE_FRAMES keeps the click
-# held through that gap instead of dropping it ("щипок на раз пятый").
-PINCH_RATIO_MEDIAN = 3
-PINCH_RELEASE_MULT = 1.6
-PINCH_ENGAGE_DEBOUNCE_FRAMES = 2
-PINCH_RELEASE_DEBOUNCE_FRAMES = 3
-PINCH_LOST_GRACE_FRAMES = 4
+# Fist = click / drag. "Catch fast, release slow": engage when the *best*
+# (min) of the last FIST_RATIO_MEDIAN raw scores dips under the threshold
+# for FIST_ENGAGE_DEBOUNCE_FRAMES frames; release only when the *median*
+# climbs past FIST_RELEASE_MULT x threshold and holds for
+# FIST_RELEASE_DEBOUNCE_FRAMES. If MediaPipe drops the hand for a frame or
+# two, FIST_LOST_GRACE_FRAMES keeps the click held through the gap.
+FIST_RATIO_MEDIAN = 3
+FIST_RELEASE_MULT = 1.4
+FIST_ENGAGE_DEBOUNCE_FRAMES = 2
+FIST_RELEASE_DEBOUNCE_FRAMES = 3
+FIST_LOST_GRACE_FRAMES = 4
 
 # Precision hover: the cursor eases toward the mapped hand position with a
 # gain that scales with hand speed. Fast hand -> gain 1.0 (1:1, cross the
@@ -131,8 +132,8 @@ PRECISION_GAIN_MIN = 0.35
 
 # Dwell freeze: once the cursor has stayed within DWELL_RADIUS_PX for
 # DWELL_FRAMES it locks in place (ignores sub-DWELL_BREAK_PX hand motion)
-# until the hand moves clearly away or a pinch happens — so a hovered small
-# target stays under the pointer while you pinch to click it.
+# until the hand moves clearly away or a fist happens — so a hovered small
+# target stays under the pointer while you close your hand to click it.
 DWELL_RADIUS_PX = 14
 DWELL_FRAMES = 7
 DWELL_BREAK_PX = 45

@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import math
 
-from modules.gesture_control.config import DEFAULT_OPEN_PALM_RATIO
+from modules.gesture_control.config import DEFAULT_FIST_RATIO, DEFAULT_OPEN_PALM_RATIO
 from modules.gesture_control.hand_tracker import Landmarks
 
 # MediaPipe hand landmark indices.
-_THUMB_TIP = 4
-_INDEX_MCP = 5  # base knuckle of the index finger
-_INDEX_TIP = 8
 _WRIST = 0
 _MIDDLE_MCP = 9  # base of the middle finger — a stable "hand centre" proxy
 
@@ -26,34 +23,34 @@ def median(values: list[float]) -> float:
     return sorted(values)[len(values) // 2]
 
 
-def _hand_span(hand: Landmarks) -> float:
-    """A per-hand length scale (wrist -> index knuckle) used to make the
-    pinch measure independent of how big the hand looks in frame."""
-    return max(_distance(hand[_WRIST], hand[_INDEX_MCP]), 1e-4)
-
-
-def pinch_ratio(hand: Landmarks) -> float:
-    """Thumb-tip↔index-tip distance as a fraction of the hand span. ~0.35
-    when the fingers touch, ~1.0+ when the hand is open — scale-invariant,
-    so it doesn't drift as the hand moves nearer/farther from the camera."""
-    return _distance(hand[_THUMB_TIP], hand[_INDEX_TIP]) / _hand_span(hand)
-
-
-def is_pinching(ratio: float, threshold: float) -> bool:
-    return ratio <= threshold
-
-
-def open_palm_score(hand: Landmarks) -> float:
-    """How open the hand is: for each non-thumb finger, tip-distance-from-
-    wrist over PIP-distance-from-wrist (>1 = extended). Returns the 3rd
-    largest ratio — i.e. the value at/above which at least three fingers
-    are extended. A fist is ~1.0 or below, a spread palm ~1.3+."""
+def _finger_ratios(hand: Landmarks) -> list[float]:
+    """Per non-thumb finger: tip-distance-from-wrist over PIP-distance-from-
+    wrist. >1 = extended, <1 = curled in. Scale-invariant."""
     wrist = hand[_WRIST]
-    ratios = sorted(
+    return sorted(
         _distance(hand[tip], wrist) / max(_distance(hand[pip], wrist), 1e-4)
         for tip, pip in _FINGERS
     )
-    return ratios[1]  # 4 fingers -> index 1 is the 3rd largest
+
+
+def fist_score(hand: Landmarks) -> float:
+    """How closed the hand is: the *largest* of the four finger ratios —
+    i.e. how extended the least-curled finger is. A tight fist is ~0.8 or
+    below (every finger curled), a relaxed/pointing hand ~1.4+, a spread
+    palm ~2. Replaces the old thumb-index pinch, which was too small to
+    read reliably ("жест пальцами слишком мелкий")."""
+    return _finger_ratios(hand)[-1]
+
+
+def is_fist(hand: Landmarks, threshold: float = DEFAULT_FIST_RATIO) -> bool:
+    return fist_score(hand) <= threshold
+
+
+def open_palm_score(hand: Landmarks) -> float:
+    """How open the hand is: the 3rd-largest finger ratio — the value at/
+    above which at least three fingers are extended. Fist ~1.0 or below,
+    spread palm ~1.3+."""
+    return _finger_ratios(hand)[1]
 
 
 def is_open_palm(hand: Landmarks, ratio_threshold: float = DEFAULT_OPEN_PALM_RATIO) -> bool:
