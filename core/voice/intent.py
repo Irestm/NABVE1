@@ -670,9 +670,8 @@ _SHUTDOWN_PHRASES: dict[str, set[str]] = {
 # Checked before _SHUTDOWN_PHRASES in interpret(): "заблокируй компьютер"
 # and "lock the computer" both fuzzily match a shutdown trigger ("выключи
 # компьютер" / "shut down the computer") and must be claimed as a lock
-# first. Locking is trivially reversible but still routed through the
-# dispatcher's spoken-confirmation flow (dangerous=True), same as
-# shutdown/restart, per the task spec. Phrases here are kept deliberately
+# first. Locking fires immediately (dangerous=False — see core/dispatcher.py)
+# since it's trivially reversible by typing the password. Phrases here are kept deliberately
 # clear of the volume/brightness device-filler shapes checked later in
 # interpret() ("...громкость на компьютере...", "...the screen brightness...")
 # — a bare "lock the screen"/"залочь ..." collided with those at the 0.75

@@ -36,23 +36,19 @@ def test_handle_lock_screen_calls_adapter(monkeypatch: pytest.MonkeyPatch) -> No
     assert result["message"] == "Экран заблокирован."
 
 
-def test_lock_screen_is_registered_as_dangerous() -> None:
+def test_lock_screen_is_registered_without_confirmation() -> None:
     dispatcher = dispatcher_module.build_dispatcher()
     commands = {c.name: c for c in dispatcher.list_commands()}
     assert "lock_screen" in commands
-    assert commands["lock_screen"].dangerous is True
+    assert commands["lock_screen"].dangerous is False
 
 
-def test_lock_screen_dispatch_requires_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lock_screen_dispatch_executes_immediately(monkeypatch: pytest.MonkeyPatch) -> None:
     adapter = _install(monkeypatch)
     dispatcher = dispatcher_module.build_dispatcher()
 
     response = asyncio.run(dispatcher.dispatch("lock_screen", {}))
 
-    assert response.status == CommandStatus.CONFIRMATION_REQUIRED
-    assert response.token
-    assert adapter.locked is False
-
-    approved = asyncio.run(dispatcher.confirm(response.token, approved=True))
-    assert approved.status == CommandStatus.EXECUTED
+    assert response.status == CommandStatus.EXECUTED
+    assert response.token is None
     assert adapter.locked is True

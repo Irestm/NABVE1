@@ -38,10 +38,9 @@ GROUP_LABELS: dict[str, str] = {
     "windows": "Окна и вкладки",
     "files": "Файлы",
     "time_lang": "Время и язык",
-    "games": "Игры",
     "modes": "Режимы",
 }
-GROUP_ORDER: tuple[str, ...] = ("power", "sound", "windows", "files", "time_lang", "games", "modes")
+GROUP_ORDER: tuple[str, ...] = ("power", "sound", "windows", "files", "time_lang", "modes")
 
 
 # UI-facing subset of core/dispatcher.py's registered commands — the ones
@@ -116,10 +115,10 @@ COMMAND_UI_METADATA: dict[str, CommandUIMeta] = {
     # multi-choice command already uses (see switch_keyboard_layout above),
     # instead of a dedicated button per game.
     "start_board_game": CommandUIMeta(
-        "Игры",
+        "Режим игры",
         "Gamepad2",
         (ParamField("game", "select", "Игра", options=("Шахматы", "Шашки")),),
-        group="games",
+        group="modes",
     ),
     # Signals the running mic loop into modules/discussion_mode — no params;
     # exit is by voice ("выйди из режима дискуссии"). See

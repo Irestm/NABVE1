@@ -525,7 +525,9 @@ def build_dispatcher(confirmation_ttl_seconds: int = 60) -> CommandDispatcher:
     dispatcher.register(
         "lock_screen",
         _handle_lock_screen,
-        dangerous=True,
+        # Not dangerous: locking is trivially reversible (type your password)
+        # and the user asked for it to fire without a spoken confirmation.
+        dangerous=False,
         description="Lock the desktop session (password required to return) — nothing is closed.",
     )
     dispatcher.register(
