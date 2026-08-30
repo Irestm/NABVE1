@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { Check, Crosshair, Hand, X } from "lucide-react";
-import { getStatus, runCommand } from "../api/client";
+import { Check, Crosshair, Eye, Hand, X } from "lucide-react";
+import { getStatus, gesturePreviewUrl, runCommand, setGesturePreview } from "../api/client";
 import type { GestureCalibration } from "../types";
 import "./GestureModeControl.css";
 
@@ -19,6 +19,8 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
   const [active, setActive] = useState(false);
   const [calibration, setCalibration] = useState<GestureCalibration | null>(null);
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState(false);
+  const [previewSrc, setPreviewSrc] = useState("");
   const busyRef = useRef(false);
   const calibratingRef = useRef(false);
 
@@ -46,6 +48,22 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
     timer = window.setTimeout(tick, POLL_INTERVAL_MS);
     return () => window.clearTimeout(timer);
   }, []);
+
+  // Turn the backend preview producer on only while the checkbox is on and
+  // the mode is active; poll the JPEG a few times a second.
+  useEffect(() => {
+    const on = preview && active;
+    void setGesturePreview(on).catch(() => undefined);
+    if (!on) {
+      setPreviewSrc("");
+      return;
+    }
+    const timer = window.setInterval(() => setPreviewSrc(gesturePreviewUrl()), 150);
+    return () => {
+      window.clearInterval(timer);
+      void setGesturePreview(false).catch(() => undefined);
+    };
+  }, [preview, active]);
 
   async function run(command: string): Promise<void> {
     setBusy(true);
@@ -139,6 +157,18 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
           </li>
         </ul>
       )}
+
+      <button
+        type="button"
+        className={"gesture-mode__action" + (preview ? " gesture-mode__action--on" : "")}
+        onClick={() => setPreview((v) => !v)}
+      >
+        <Eye size={15} />
+        {preview ? "Скрыть превью камеры" : "Показать превью камеры"}
+      </button>
+      {preview && previewSrc ? (
+        <img className="gesture-mode__preview" src={previewSrc} alt="Превью камеры с landmarks" />
+      ) : null}
 
       <div className="gesture-mode__actions">
         <button

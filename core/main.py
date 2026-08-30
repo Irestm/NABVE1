@@ -278,6 +278,22 @@ async def get_status() -> StatusResponse:
     )
 
 
+@app.post("/api/gesture/preview_enabled")
+async def set_gesture_preview(request: Request) -> dict[str, bool]:
+    body = await request.json()
+    enabled = bool(body.get("enabled", False))
+    gesture_controller.set_preview_enabled(enabled)
+    return {"enabled": enabled}
+
+
+@app.get("/api/gesture/preview")
+async def gesture_preview() -> Response:
+    jpeg = await asyncio.to_thread(gesture_controller.render_preview_jpeg)
+    if jpeg is None:
+        return Response(status_code=204)
+    return Response(content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/commands", response_model=list[CommandDescriptor])
 async def list_commands() -> list[CommandDescriptor]:
     return dispatcher.list_commands()

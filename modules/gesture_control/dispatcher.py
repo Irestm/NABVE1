@@ -35,7 +35,11 @@ from modules.gesture_control.config import (
     ZOOM_COOLDOWN_FRAMES,
     ZOOM_DELTA_THRESHOLD,
 )
-from modules.gesture_control.cursor_controller import CursorController, map_hand_to_screen
+from modules.gesture_control.cursor_controller import (
+    CursorController,
+    bounds_from_zone,
+    map_hand_to_screen,
+)
 from modules.gesture_control.cursor_zoom import cursor_zoom
 from modules.gesture_control.events import GestureAnnouncement
 from modules.gesture_control.gesture_recognizer import (
@@ -86,6 +90,12 @@ class GestureController:
         self._thread: threading.Thread | None = None
         self._recalibrate = False
         self._last_error: str | None = None
+        # Optional diagnostic camera preview (§1). The worker only snapshots
+        # the frame + landmarks while _preview_enabled; the drawing + JPEG
+        # encode happen on demand in render_preview_jpeg(), off the hot path.
+        self._preview_enabled = False
+        self._preview_lock = threading.Lock()
+        self._preview_source: tuple[object, list] | None = None
 
     # --- public API (called from command handlers / API) ---
 
@@ -94,6 +104,23 @@ class GestureController:
 
     def last_error(self) -> str | None:
         return self._last_error
+
+    def set_preview_enabled(self, enabled: bool) -> None:
+        self._preview_enabled = bool(enabled)
+        if not enabled:
+            with self._preview_lock:
+                self._preview_source = None
+
+    def render_preview_jpeg(self) -> bytes | None:
+        if not self._preview_enabled:
+            return None
+        with self._preview_lock:
+            source = self._preview_source
+        if source is None:
+            return None
+        from modules.gesture_control import preview
+
+        return preview.render_jpeg(source[0], source[1])
 
     def start(self) -> bool:
         with self._lock:
@@ -133,6 +160,7 @@ class GestureController:
 
     def _run(self) -> None:
         zone = _load_float(GESTURE_TRACKING_ZONE_KEY, DEFAULT_TRACKING_ZONE)
+        bounds = calibration.load_zone_bounds() or bounds_from_zone(zone)
         min_cutoff = calibration.load_min_cutoff()
         deadzone_px = calibration.load_deadzone_px()
         open_palm_ratio = calibration.load_open_palm_ratio()
@@ -152,7 +180,7 @@ class GestureController:
 
         overlay_state.set(active=True)
         cursor_zoom.enlarge()
-        px_per_norm = cursor.screen_size[0] / max(zone, 1e-6)
+        px_per_norm = cursor.screen_size[0] / max(bounds[1] - bounds[0], 1e-6)
         # No forced calibration on first activation (the user found the
         # surprise prompt annoying, and an un-finished session used to
         # freeze the cursor). The stored / default values work out of the
@@ -204,6 +232,10 @@ class GestureController:
                 if result is None:
                     self._stop_event.wait(frame_interval)
                     continue
+
+                if self._preview_enabled:
+                    with self._preview_lock:
+                        self._preview_source = (result.frame, [list(h) for h in result.hands])
 
                 # The physical mouse always wins: if the OS cursor moved
                 # away from where we left it, yield for a short cooldown.
@@ -267,6 +299,8 @@ class GestureController:
                         deadzone_px = applied.deadzone_px
                         open_palm_ratio = applied.open_palm_ratio
                         swipe_min_dx = applied.swipe_min_dx
+                        if applied.zone_bounds is not None:
+                            bounds = applied.zone_bounds
                         tracker.set_min_cutoff(applied.min_cutoff)
                         session = None
                         overlay_state.set_calibration(None)
@@ -339,7 +373,7 @@ class GestureController:
                 hand_speed = math.hypot(tip[0] - prev_tip[0], tip[1] - prev_tip[1])
                 prev_tip = tip
 
-                target = map_hand_to_screen(tip, cursor.screen_size, zone)
+                target = map_hand_to_screen(tip, cursor.screen_size, bounds)
                 cx, cy = cursor.current_pos()
                 gain = _precision_gain(hand_speed)
                 eased = (cx + (target[0] - cx) * gain, cy + (target[1] - cy) * gain)
@@ -400,6 +434,8 @@ class GestureController:
             tracker.close()
             cursor_zoom.restore()
             overlay_state.set(active=False)
+            with self._preview_lock:
+                self._preview_source = None
 
     def _drain_calibration_prompt(self, session: calibration.CalibrationSession) -> None:
         message = session.take_announcement()

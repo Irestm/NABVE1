@@ -95,6 +95,18 @@
   border-color: var(--accent-green);
 }
 
+.gesture-mode__action--on {
+  border-color: var(--item-accent, var(--accent-green));
+  color: var(--item-accent, var(--accent-green));
+}
+
+.gesture-mode__preview {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  display: block;
+}
+
 .gesture-mode__badge {
   font-size: 10px;
   font-weight: 700;

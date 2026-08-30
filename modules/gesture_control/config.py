@@ -24,6 +24,10 @@ GESTURE_MIN_CUTOFF_KEY = "gesture_min_cutoff"
 GESTURE_OPEN_PALM_RATIO_KEY = "gesture_open_palm_ratio"
 GESTURE_SWIPE_MIN_DX_KEY = "gesture_swipe_min_dx"
 GESTURE_TRACKING_ZONE_KEY = "gesture_tracking_zone"
+# Personal tracking rectangle in normalized frame coords "x0,x1,y0,y1",
+# from the "обведите углы экрана" calibration phase. Overrides the symmetric
+# DEFAULT_TRACKING_ZONE when present.
+GESTURE_ZONE_KEY = "gesture_zone_bounds"
 
 # Pinch detection is scale-invariant: dist(thumb_tip, index_tip) divided by
 # hand span dist(wrist, index_mcp). ~0.35 when the fingers touch, ~1.0+ when
@@ -77,6 +81,13 @@ MIN_CUTOFF_CEIL = 1.6
 STEADY_CALIBRATION_SAMPLES = 60
 JITTER_LOW_PX = 1.5
 JITTER_HIGH_PX = 9.0
+
+# Corner-tracing phase: sweep the hand around the four screen corners for
+# this many frames; the min/max x/y (padded inward) become the personal
+# tracking rectangle. Guardrail: each axis span must be at least this wide.
+CORNER_CALIBRATION_SAMPLES = 90
+CORNER_ZONE_PAD = 0.04
+CORNER_ZONE_MIN_SPAN = 0.18
 
 # Pinch = click. "Catch fast, release slow": engage when the *best* (min) of
 # the last PINCH_RATIO_MEDIAN raw ratios dips under the threshold for

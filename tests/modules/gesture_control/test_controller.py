@@ -70,6 +70,7 @@ def _no_profile_db(monkeypatch):
     monkeypatch.setattr(gd.calibration, "load_min_cutoff", lambda: 1.2)
     monkeypatch.setattr(gd.calibration, "load_open_palm_ratio", lambda: 1.12)
     monkeypatch.setattr(gd.calibration, "load_swipe_min_dx", lambda: 0.2)
+    monkeypatch.setattr(gd.calibration, "load_zone_bounds", lambda: None)
     monkeypatch.setattr(gd.calibration.profile_service_layer, "set_fact", lambda *a, **k: None)
     # Never touch the real desktop cursor size from a test run.
     monkeypatch.setattr(gd.cursor_zoom, "enlarge", lambda: None)

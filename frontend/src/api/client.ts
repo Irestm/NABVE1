@@ -138,6 +138,20 @@ export function getStatus(): Promise<StatusResponse> {
   return requestJson<StatusResponse>("/api/status");
 }
 
+export async function setGesturePreview(enabled: boolean): Promise<void> {
+  await fetch(`${BASE_URL}/api/gesture/preview_enabled`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+// URL for an <img> src — carries the token as a query param and a cache
+// buster so each poll re-fetches the latest frame.
+export function gesturePreviewUrl(): string {
+  return withTokenParam(`${BASE_URL}/api/gesture/preview?t=${Date.now()}`);
+}
+
 export function getConversation(limit = 200): Promise<ConversationTurn[]> {
   return requestJson<ConversationTurn[]>(`/api/conversation?limit=${encodeURIComponent(limit)}`);
 }

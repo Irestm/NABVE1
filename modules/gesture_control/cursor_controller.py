@@ -39,25 +39,33 @@ def _virtual_screen_size(pyautogui: ModuleType) -> tuple[int, int]:
     return int(size[0]), int(size[1])
 
 
+def bounds_from_zone(zone_fraction: float) -> tuple[float, float, float, float]:
+    """The symmetric central-square tracking rectangle for a zone fraction —
+    the fallback when the corner-tracing calibration phase hasn't run."""
+    zone = max(0.2, min(1.0, zone_fraction))
+    margin = (1.0 - zone) / 2
+    return (margin, 1.0 - margin, margin, 1.0 - margin)
+
+
 def map_hand_to_screen(
     hand_xy: tuple[float, float],
     screen_size: tuple[int, int],
-    zone_fraction: float,
+    bounds: tuple[float, float, float, float],
 ) -> tuple[int, int]:
     """Maps a normalized hand point (0..1 within the mirrored camera frame)
-    to an absolute screen pixel. Only the central `zone_fraction` of the
-    frame is active — mapping the whole frame to the whole screen makes
-    control far too coarse. Points outside the zone clamp to the edge."""
-    zone = max(0.2, min(1.0, zone_fraction))
-    margin = (1.0 - zone) / 2
+    to an absolute screen pixel. `bounds` is (x0, x1, y0, y1) — the frame
+    rectangle that maps to the whole screen (personalised by the corner
+    calibration, or a central square via bounds_from_zone). Points outside
+    it clamp to the screen edge."""
+    x0, x1, y0, y1 = bounds
 
-    def _axis(value: float, extent: int) -> int:
-        normalized = (value - margin) / zone
-        clamped = max(0.0, min(1.0, normalized))
+    def _axis(value: float, lo: float, hi: float, extent: int) -> int:
+        span = hi - lo if hi - lo > 1e-4 else 1e-4
+        clamped = max(0.0, min(1.0, (value - lo) / span))
         return int(round(clamped * (extent - 1)))
 
     width, height = screen_size
-    return _axis(hand_xy[0], width), _axis(hand_xy[1], height)
+    return _axis(hand_xy[0], x0, x1, width), _axis(hand_xy[1], y0, y1, height)
 
 
 class CursorController:

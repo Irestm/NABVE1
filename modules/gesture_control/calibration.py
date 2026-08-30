@@ -15,6 +15,10 @@ from modules.gesture_control.config import (
     GESTURE_OPEN_PALM_RATIO_KEY,
     GESTURE_PINCH_THRESHOLD_KEY,
     GESTURE_SWIPE_MIN_DX_KEY,
+    GESTURE_ZONE_KEY,
+    CORNER_CALIBRATION_SAMPLES,
+    CORNER_ZONE_MIN_SPAN,
+    CORNER_ZONE_PAD,
     JITTER_HIGH_PX,
     JITTER_LOW_PX,
     MIN_CUTOFF_CEIL,
@@ -40,15 +44,17 @@ _PHASE_STEADY = "steady"
 _PHASE_PINCH = "pinch"
 _PHASE_OPEN_PALM = "open_palm"
 _PHASE_SWIPE = "swipe"
+_PHASE_CORNERS = "corners"
 _PHASE_DONE = "done"
 
-_TOTAL_PHASES = 4
+_TOTAL_PHASES = 5
 
 _PROMPTS = {
     _PHASE_STEADY: "Калибровка. Держите руку неподвижно перед камерой пару секунд.",
     _PHASE_PINCH: "Теперь пять раз медленно сожмите и разожмите большой и указательный пальцы.",
     _PHASE_OPEN_PALM: "Теперь пять раз раскройте всю ладонь и снова сожмите в кулак.",
     _PHASE_SWIPE: "Теперь пять раз проведите открытой ладонью влево и вправо.",
+    _PHASE_CORNERS: "Теперь медленно обведите рукой четыре угла экрана.",
     _PHASE_DONE: "Калибровка завершена.",
 }
 
@@ -58,6 +64,7 @@ _PHASE_META = {
     _PHASE_PINCH: (2, "Щипок", "Сожмите и разожмите большой и указательный пальцы"),
     _PHASE_OPEN_PALM: (3, "Ладонь", "Раскройте всю ладонь и снова сожмите в кулак"),
     _PHASE_SWIPE: (4, "Взмах ладонью", "Проведите открытой ладонью влево и вправо"),
+    _PHASE_CORNERS: (5, "Углы экрана", "Медленно обведите рукой четыре угла экрана"),
 }
 
 
@@ -87,6 +94,7 @@ class AppliedCalibration:
     min_cutoff: float
     open_palm_ratio: float
     swipe_min_dx: float
+    zone_bounds: tuple[float, float, float, float] | None
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -193,6 +201,7 @@ class CalibrationSession:
     _swipe_dir: int = 0
     _swing_start_x: float = 0.0
     _swipe_travels: list[float] = field(default_factory=list)
+    _corner_pts: list[tuple[float, float]] = field(default_factory=list)
 
     done: bool = False
     deadzone_px: int | None = None
@@ -200,6 +209,7 @@ class CalibrationSession:
     pinch_threshold: float | None = None
     open_palm_ratio: float | None = None
     swipe_min_dx: float | None = None
+    zone_bounds: tuple[float, float, float, float] | None = None
 
     def take_announcement(self) -> str | None:
         message, self._pending = self._pending, None
@@ -218,8 +228,10 @@ class CalibrationSession:
             done = self._pinch.reps
         elif self._phase == _PHASE_OPEN_PALM:
             done = self._open_palm.reps
-        else:
+        elif self._phase == _PHASE_SWIPE:
             done = len(self._swipe_travels)
+        else:
+            done = len(self._corner_pts) * _REQUIRED_REPS // max(CORNER_CALIBRATION_SAMPLES, 1)
         return CalibrationProgress(
             index, _TOTAL_PHASES, label, instruction,
             min(_REQUIRED_REPS, done), _REQUIRED_REPS, False,
@@ -246,6 +258,8 @@ class CalibrationSession:
                 self._finish_open_palm()
         elif self._phase == _PHASE_SWIPE:
             self._observe_swipe(frame.palm_centre[0])
+        elif self._phase == _PHASE_CORNERS:
+            self._observe_corners(frame.raw_tip)
 
     def _observe_steady(self, point: tuple[float, float]) -> None:
         self._steady_points.append(point)
@@ -329,6 +343,29 @@ class CalibrationSession:
             [round(t, 2) for t in self._swipe_travels],
             self.swipe_min_dx,
         )
+        self._advance(_PHASE_CORNERS)
+
+    def _observe_corners(self, tip: tuple[float, float]) -> None:
+        self._corner_pts.append(tip)
+        if len(self._corner_pts) < CORNER_CALIBRATION_SAMPLES:
+            return
+        xs = [p[0] for p in self._corner_pts]
+        ys = [p[1] for p in self._corner_pts]
+        x0, x1 = min(xs) + CORNER_ZONE_PAD, max(xs) - CORNER_ZONE_PAD
+        y0, y1 = min(ys) + CORNER_ZONE_PAD, max(ys) - CORNER_ZONE_PAD
+        if x1 - x0 >= CORNER_ZONE_MIN_SPAN and y1 - y0 >= CORNER_ZONE_MIN_SPAN:
+            self.zone_bounds = (
+                round(_clamp(x0, 0.0, 1.0), 3),
+                round(_clamp(x1, 0.0, 1.0), 3),
+                round(_clamp(y0, 0.0, 1.0), 3),
+                round(_clamp(y1, 0.0, 1.0), 3),
+            )
+            logger.info("Calibration CORNERS: zone_bounds=%s", self.zone_bounds)
+        else:
+            logger.info(
+                "Calibration CORNERS: swept area too small (x %.2f-%.2f y %.2f-%.2f), keeping default zone",
+                x0, x1, y0, y1,
+            )
         self._advance(_PHASE_DONE)
 
     def persist(self) -> AppliedCalibration:
@@ -342,12 +379,15 @@ class CalibrationSession:
             if self.open_palm_ratio is not None
             else DEFAULT_OPEN_PALM_RATIO,
             swipe_min_dx=self.swipe_min_dx if self.swipe_min_dx is not None else SWIPE_MIN_DX,
+            zone_bounds=self.zone_bounds,
         )
         _set_fact(GESTURE_PINCH_THRESHOLD_KEY, f"{applied.pinch_threshold:.4f}")
         _set_fact(GESTURE_DEADZONE_PX_KEY, str(applied.deadzone_px))
         _set_fact(GESTURE_MIN_CUTOFF_KEY, f"{applied.min_cutoff:.3f}")
         _set_fact(GESTURE_OPEN_PALM_RATIO_KEY, f"{applied.open_palm_ratio:.3f}")
         _set_fact(GESTURE_SWIPE_MIN_DX_KEY, f"{applied.swipe_min_dx:.3f}")
+        if applied.zone_bounds is not None:
+            _set_fact(GESTURE_ZONE_KEY, ",".join(f"{v:.3f}" for v in applied.zone_bounds))
         return applied
 
 
@@ -381,3 +421,18 @@ def load_open_palm_ratio() -> float:
 
 def load_swipe_min_dx() -> float:
     return _load_fact_float(GESTURE_SWIPE_MIN_DX_KEY, SWIPE_MIN_DX)
+
+
+def load_zone_bounds() -> tuple[float, float, float, float] | None:
+    """The personal tracking rectangle (x0, x1, y0, y1) from the corner
+    phase, or None if never calibrated (use the symmetric default zone)."""
+    stored = profile_service_layer.get_fact(ProfileUnitOfWork(), GESTURE_ZONE_KEY)
+    if not stored:
+        return None
+    try:
+        x0, x1, y0, y1 = (float(v) for v in stored.split(","))
+    except (ValueError, TypeError):
+        return None
+    if x1 - x0 < CORNER_ZONE_MIN_SPAN or y1 - y0 < CORNER_ZONE_MIN_SPAN:
+        return None
+    return (x0, x1, y0, y1)
