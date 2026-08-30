@@ -126,3 +126,30 @@ def test_discussion_mode_exits_on_the_stop_word(monkeypatch) -> None:
 
     assert result is False
     assert discussion_session.is_active() is False
+
+
+def test_pending_discussion_flag_enters_mode_without_recording_a_command(monkeypatch) -> None:
+    # The "Режим дискуссии" button path: request_discussion_mode() sets the
+    # flag, and _handle_command must go straight into discussion mode — no
+    # command utterance recorded first.
+    dispatcher = CommandDispatcher()
+    loop, spoken, stt = _loop(
+        monkeypatch, dispatcher, ["первый спорит", "выйди из режима дискуссии"]
+    )
+    recorded: list[int] = []
+    monkeypatch.setattr(loop, "_record_command_audio", lambda: recorded.append(1) or (np.zeros(0), False))
+
+    loop._pending_discussion = True
+    result = loop._handle_command(stt, _FakeTTS())
+
+    assert recorded == []  # never fell through to normal command recording
+    assert result is False
+    assert loop._pending_discussion is False
+    assert discussion_session.is_active() is False
+    assert any("Выхожу из режима дискуссии" in line for line in spoken)
+
+
+def test_request_discussion_mode_is_a_noop_when_loop_not_running() -> None:
+    loop = VoiceAssistantLoop(CommandDispatcher())
+    assert loop.request_discussion_mode() is False
+    assert loop._pending_discussion is False

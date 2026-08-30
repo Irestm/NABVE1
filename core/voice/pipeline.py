@@ -225,6 +225,10 @@ class VoiceAssistantLoop:
         # wake_word.listen_for_phrases, so it interrupts a blocking listen
         # call rather than only being noticed on the next pass.
         self._manual_trigger_event = threading.Event()
+        # Set by request_discussion_mode() (the "Режим дискуссии" command
+        # button) so the next command turn enters discussion mode directly
+        # instead of recording a command — see _handle_command's top.
+        self._pending_discussion = False
         self._thread: threading.Thread | None = None
         self._barge_in = BargeInMonitor(settings)
         # One-line summary of the previous exchange within the current
@@ -274,6 +278,20 @@ class VoiceAssistantLoop:
         reflects which one actually happened."""
         if not self.is_running:
             return False
+        self._paused_event.clear()
+        self._manual_trigger_event.set()
+        return True
+
+    def request_discussion_mode(self) -> bool:
+        """Enters modules/discussion_mode on the next turn, for the "Режим
+        дискуссии" command button (no spoken trigger phrase). Like
+        request_manual_wake(), it clears any pause and pokes
+        _manual_trigger_event to unblock whatever listen is in progress, so
+        the mode starts promptly rather than only after the next wake/pause
+        word. Returns False without effect if the loop isn't running."""
+        if not self.is_running:
+            return False
+        self._pending_discussion = True
         self._paused_event.clear()
         self._manual_trigger_event.set()
         return True
@@ -1384,8 +1402,7 @@ class VoiceAssistantLoop:
         self,
         command_stt: SpeechToText,
         tts: TextToSpeech,
-        decision: LanguageDecision,
-        response_language: str,
+        language: str,
     ) -> bool:
         """modules/discussion_mode. While active, nothing said is classified
         as a command — every line is transcribed, speaker-tagged (pitch
@@ -1405,7 +1422,7 @@ class VoiceAssistantLoop:
             "и «выйди из режима дискуссии», чтобы закончить."
         )
         try:
-            if self._speak_safely(tts, opener, response_language):
+            if self._speak_safely(tts, opener, language):
                 return True
 
             while not self._stop_event.is_set():
@@ -1421,30 +1438,30 @@ class VoiceAssistantLoop:
                 if special_phrases.check(text, "recording", self._settings) == "pause":
                     self._paused_event.set()
                     return False
-                if is_stop_command(text, decision.resolved):
+                if is_stop_command(text, language):
                     return False
                 if discussion_detector.is_exit_phrase(text, custom_exit):
                     state_manager.set_state(AssistantState.SPEAKING)
-                    return self._speak_safely(tts, "Выхожу из режима дискуссии.", response_language)
+                    return self._speak_safely(tts, "Выхожу из режима дискуссии.", language)
 
                 if discussion_detector.is_opinion_request(text, assistant_name):
                     transcript = discussion_session.transcript_since_last_opinion()
                     state_manager.set_state(AssistantState.THINKING, "Обдумываю мнение")
                     try:
                         opinion_text = run_cancellable(
-                            discussion_opinion.build_opinion(transcript, assistant_name, response_language),
+                            discussion_opinion.build_opinion(transcript, assistant_name, language),
                             self._barge_in,
-                            response_language,
+                            language,
                         )
                     except TurnCancelled:
                         return True
                     discussion_session.mark_opinion_given()
                     state_manager.set_state(AssistantState.SPEAKING)
                     if confirmation_phrase.is_enabled() and self._speak_safely(
-                        tts, confirmation_phrase.get_confirmation_phrase(), response_language
+                        tts, confirmation_phrase.get_confirmation_phrase(), language
                     ):
                         return True
-                    if self._speak_safely(tts, opinion_text, response_language):
+                    if self._speak_safely(tts, opinion_text, language):
                         return True
                     continue
 
@@ -1905,6 +1922,16 @@ class VoiceAssistantLoop:
         word — see VoiceAssistantLoop._run, which then pauses (same as
         _wait_for_wake_or_pause's own "pause" branch) instead of listening
         for a new command right away."""
+        # A "Режим дискуссии" button press (see request_discussion_mode /
+        # modules/discussion_mode/handlers.py) enters the mode directly,
+        # without a command utterance first — same shape as the spoken
+        # "давай подискутируем" branch in _resolve_and_run_one.
+        if self._pending_discussion:
+            self._pending_discussion = False
+            interrupted = self._run_discussion_mode(command_stt, tts, self._ack_language())
+            state_manager.set_state(AssistantState.IDLE)
+            return interrupted
+
         state_manager.set_state(AssistantState.LISTENING, "Слушаю команду")
         audio, interrupted = self._record_command_audio()
         if interrupted:
@@ -2227,9 +2254,7 @@ class VoiceAssistantLoop:
                 state_manager.set_state(AssistantState.IDLE)
                 return interrupted
             elif command.name == "start_discussion":
-                interrupted = self._run_discussion_mode(
-                    command_stt, tts, decision, response_language
-                )
+                interrupted = self._run_discussion_mode(command_stt, tts, decision.resolved)
                 state_manager.set_state(AssistantState.IDLE)
                 return interrupted
             elif command.name == "stop_os_agent":

@@ -23,6 +23,7 @@ from modules.crm_transcribe import register_commands as register_crm_transcribe_
 from modules.custom_commands import register_commands as register_custom_commands_commands
 from modules.delayed_execution import register_commands as register_delayed_execution_commands
 from modules.delayed_execution.scheduler import DelayedCommandRunner
+from modules.discussion_mode import register_commands as register_discussion_commands
 from modules.figma_control import register_commands as register_figma_control_commands
 from modules.files import register_commands as register_files_commands
 from modules.gmail import gmail_poller, register_commands as register_gmail_commands
@@ -165,6 +166,7 @@ def compose(bus: MessageBus = message_bus) -> Composed:
     register_task_orchestrator_commands(dispatcher)
     register_software_installer_commands(dispatcher)
     register_delayed_execution_commands(dispatcher)
+    register_discussion_commands(dispatcher, voice_loop)
     delayed_command_runner = DelayedCommandRunner(dispatcher)
 
     # Cross-module wiring: a due reminder is also spoken aloud while the

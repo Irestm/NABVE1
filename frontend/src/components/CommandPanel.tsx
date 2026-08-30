@@ -57,8 +57,9 @@ const GROUP_LABELS: Record<string, string> = {
   files: "Файлы",
   time_lang: "Время и язык",
   games: "Игры",
+  modes: "Режимы",
 };
-const GROUP_ORDER = ["power", "sound", "windows", "files", "time_lang", "games"];
+const GROUP_ORDER = ["power", "sound", "windows", "files", "time_lang", "games", "modes"];
 const GROUP_ACCENT: Record<string, string> = {
   power: "var(--accent-red)",
   sound: "var(--accent-blue)",
@@ -66,6 +67,7 @@ const GROUP_ACCENT: Record<string, string> = {
   files: "var(--accent-amber)",
   time_lang: "var(--accent-purple)",
   games: "var(--accent-green)",
+  modes: "var(--accent-purple)",
 };
 const DEFAULT_GROUP_ACCENT = "var(--accent-blue)";
 

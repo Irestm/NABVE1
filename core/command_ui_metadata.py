@@ -39,8 +39,9 @@ GROUP_LABELS: dict[str, str] = {
     "files": "Файлы",
     "time_lang": "Время и язык",
     "games": "Игры",
+    "modes": "Режимы",
 }
-GROUP_ORDER: tuple[str, ...] = ("power", "sound", "windows", "files", "time_lang", "games")
+GROUP_ORDER: tuple[str, ...] = ("power", "sound", "windows", "files", "time_lang", "games", "modes")
 
 
 # UI-facing subset of core/dispatcher.py's registered commands — the ones
@@ -120,4 +121,8 @@ COMMAND_UI_METADATA: dict[str, CommandUIMeta] = {
         (ParamField("game", "select", "Игра", options=("Шахматы", "Шашки")),),
         group="games",
     ),
+    # Signals the running mic loop into modules/discussion_mode — no params;
+    # exit is by voice ("выйди из режима дискуссии"). See
+    # modules/discussion_mode/handlers.py.
+    "discussion_start": CommandUIMeta("Режим дискуссии", "MessagesSquare", None, group="modes"),
 }
