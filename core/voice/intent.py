@@ -835,6 +835,20 @@ _OS_AGENT_START_PHRASES: dict[str, set[str]] = {
     },
 }
 
+# Trigger phrases for modules.discussion_mode — same shape as
+# _OS_AGENT_START_PHRASES: only *entering* the mode is recognized here; once
+# active, everything said is handled by pipeline.py's discussion sub-loop
+# (transcribe + buffer, never classify), and only the explicit exit phrase
+# (modules/discussion_mode/detector.py) leaves it.
+_DISCUSSION_START_PHRASES: dict[str, set[str]] = {
+    "ru": {
+        "давай подискутируем", "давай подискутируем втроём", "режим дискуссии",
+        "включи режим дискуссии", "давай обсудим втроём",
+    },
+    "uk": {"давай подискутуємо", "режим дискусії", "увімкни режим дискусії"},
+    "en": {"let's have a discussion", "discussion mode", "enable discussion mode"},
+}
+
 # Trigger phrases for modules.fitness_tracker's voice context (see
 # core/voice/pipeline.py::_resolve_active_fitness_context_utterance) — same
 # shape as _OS_AGENT_START_PHRASES: only the *entry* into the context is
@@ -1103,6 +1117,9 @@ def interpret(text: str, language: str) -> Command | None:
 
     if fuzzy_matches_any(normalized, _OS_AGENT_START_PHRASES.get(language, set())):
         return Command(name="start_os_agent", params={})
+
+    if fuzzy_matches_any(normalized, _DISCUSSION_START_PHRASES.get(language, set())):
+        return Command(name="start_discussion", params={})
 
     if fuzzy_matches_any(normalized, _FITNESS_START_PHRASES.get(language, set())):
         return Command(name="fitness_activate_context", params={})

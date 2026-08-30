@@ -34,6 +34,11 @@ class AssistantState(str, Enum):
     # everything — see core/voice/critical_reminder.py and the orb's
     # attention animation (frontend CentralOrb.css).
     CRITICAL_REMINDER = "critical_reminder"
+    # modules/discussion_mode: the assistant is silently listening to a
+    # conversation between people, transcribing but not acting on it, until
+    # asked for its opinion or told to exit — see core/voice/pipeline.py's
+    # _run_discussion_mode.
+    DISCUSSION = "discussion"
 
 
 class CommandRequest(BaseModel):

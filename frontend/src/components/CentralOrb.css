@@ -92,6 +92,14 @@
   --glow-strength: 0.75;
 }
 
+/* modules/discussion_mode — the assistant is present but hanging back,
+   listening to two people talk. A calm, cool, slow breath: engaged, not
+   awaiting a command. */
+.central-orb--discussion {
+  --glow: var(--glow-background_listening, var(--glow-listening));
+  --glow-strength: 0.6;
+}
+
 .central-orb__halo {
   position: absolute;
   inset: -30px;

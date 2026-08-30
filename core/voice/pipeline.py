@@ -43,6 +43,11 @@ from modules.delayed_execution import command_parser as delayed_command_parser
 from modules.delayed_execution import resolver as delayed_resolver
 from modules.delayed_execution import service_layer as delayed_service_layer
 from modules.delayed_execution.uow import DelayedExecutionUnitOfWork
+from modules.discussion_mode import detector as discussion_detector
+from modules.discussion_mode import opinion as discussion_opinion
+from modules.discussion_mode import speaker_diarization as discussion_diarization
+from modules.discussion_mode.config import DISCUSSION_EXIT_PHRASE_KEY
+from modules.discussion_mode.state import session as discussion_session
 from modules.fitness_tracker import announce as fitness_announce
 from modules.fitness_tracker import context_state as fitness_context_state
 from modules.fitness_tracker import fitness_chat
@@ -70,7 +75,7 @@ from modules.ui_automation import service_layer as ui_service_layer
 from modules.ui_automation.domain import UIStep
 from modules.ui_control import service_layer as ui_control_service_layer
 from modules.user_profile import service_layer as profile_service_layer
-from modules.user_profile.domain import STOP_WORD_KEY
+from modules.user_profile.domain import ASSISTANT_NAME_KEY, STOP_WORD_KEY
 from modules.user_profile.onboarding import run_onboarding
 from modules.user_profile.uow import ProfileUnitOfWork
 
@@ -1375,6 +1380,82 @@ class VoiceAssistantLoop:
         os_agent_session.start()
         return self._speak_safely(tts, os_agent_announce.mode_started_text(response_language), response_language)
 
+    def _run_discussion_mode(
+        self,
+        command_stt: SpeechToText,
+        tts: TextToSpeech,
+        decision: LanguageDecision,
+        response_language: str,
+    ) -> bool:
+        """modules/discussion_mode. While active, nothing said is classified
+        as a command — every line is transcribed, speaker-tagged (pitch
+        heuristic) and kept in memory only. The code phrase "Что думаешь,
+        <имя>" has the assistant summarize the buffer and give its view via
+        the AI chain (still in its own voice/personality/sound effects); the
+        explicit exit phrase — and nothing else — leaves the mode. Returns
+        True on a stop-word barge-in (which also pauses the outer loop)."""
+        custom_exit = profile_service_layer.get_fact(ProfileUnitOfWork(), DISCUSSION_EXIT_PHRASE_KEY)
+        assistant_name = profile_service_layer.get_fact(ProfileUnitOfWork(), ASSISTANT_NAME_KEY)
+        sample_rate = self._settings.sample_rate
+
+        discussion_session.activate()
+        state_manager.set_state(AssistantState.DISCUSSION, "Слушаю беседу")
+        opener = (
+            "Слушаю вашу беседу. Скажите «что думаешь» с моим именем, чтобы спросить моё мнение, "
+            "и «выйди из режима дискуссии», чтобы закончить."
+        )
+        try:
+            if self._speak_safely(tts, opener, response_language):
+                return True
+
+            while not self._stop_event.is_set():
+                state_manager.set_state(AssistantState.DISCUSSION, "Слушаю беседу")
+                audio = audio_io.record_until_silence(self._settings, self._stop_event)
+                if getattr(audio, "size", 0) == 0:
+                    continue
+                text = command_stt.transcribe(audio).text.strip()
+                if not text:
+                    continue
+
+                # These leave the mode — they are never treated as commands.
+                if special_phrases.check(text, "recording", self._settings) == "pause":
+                    self._paused_event.set()
+                    return False
+                if is_stop_command(text, decision.resolved):
+                    return False
+                if discussion_detector.is_exit_phrase(text, custom_exit):
+                    state_manager.set_state(AssistantState.SPEAKING)
+                    return self._speak_safely(tts, "Выхожу из режима дискуссии.", response_language)
+
+                if discussion_detector.is_opinion_request(text, assistant_name):
+                    transcript = discussion_session.transcript_since_last_opinion()
+                    state_manager.set_state(AssistantState.THINKING, "Обдумываю мнение")
+                    try:
+                        opinion_text = run_cancellable(
+                            discussion_opinion.build_opinion(transcript, assistant_name, response_language),
+                            self._barge_in,
+                            response_language,
+                        )
+                    except TurnCancelled:
+                        return True
+                    discussion_session.mark_opinion_given()
+                    state_manager.set_state(AssistantState.SPEAKING)
+                    if confirmation_phrase.is_enabled() and self._speak_safely(
+                        tts, confirmation_phrase.get_confirmation_phrase(), response_language
+                    ):
+                        return True
+                    if self._speak_safely(tts, opinion_text, response_language):
+                        return True
+                    continue
+
+                speaker = discussion_diarization.estimate_speaker(
+                    audio, sample_rate, discussion_session.pitch_centroids
+                )
+                discussion_session.add_line(speaker, text)
+        finally:
+            discussion_session.deactivate()
+        return False
+
     def _resolve_os_agent_task(
         self, command: Command, tts: TextToSpeech, command_stt: SpeechToText, response_language: str
     ) -> bool:
@@ -2143,6 +2224,12 @@ class VoiceAssistantLoop:
                     return interrupted
             elif command.name == "start_os_agent":
                 interrupted = self._resolve_os_agent_start(tts, response_language)
+                state_manager.set_state(AssistantState.IDLE)
+                return interrupted
+            elif command.name == "start_discussion":
+                interrupted = self._run_discussion_mode(
+                    command_stt, tts, decision, response_language
+                )
                 state_manager.set_state(AssistantState.IDLE)
                 return interrupted
             elif command.name == "stop_os_agent":

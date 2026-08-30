@@ -8,7 +8,8 @@ export type AssistantState =
   | "error"
   | "paused"
   | "onboarding"
-  | "critical_reminder";
+  | "critical_reminder"
+  | "discussion";
 
 export interface StatusResponse {
   state: AssistantState;

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from core.voice.intent import (
     Command,
     interpret,
@@ -466,6 +468,16 @@ def test_installer_button_ignores_unrecognized_label() -> None:
     assert interpret("нажми сохранить", "ru") != Command(
         name="installer_click_button", params={"button": "next"}
     )
+
+
+# --- discussion mode (modules/discussion_mode) --------------------------
+
+
+@pytest.mark.parametrize(
+    "text", ["давай подискутируем", "режим дискуссии", "включи режим дискуссии"]
+)
+def test_discussion_mode_enter_phrase(text: str) -> None:
+    assert interpret(text, "ru") == Command(name="start_discussion", params={})
 
 
 # --- Weather (modules/weather) -----------------------------------------------
