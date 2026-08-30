@@ -3,19 +3,19 @@ from __future__ import annotations
 from core.config import DATA_DIR
 
 # Profile-fact keys — stored the same way as stop_word / assistant_name
-# (modules/user_profile), so per-user gesture tuning rides the same
-# encrypted table/backup path as everything else.
+# (modules/user_profile). Only the calibrated pinch threshold is per-user;
+# cursor magnification is deliberately NOT configurable (see CURSOR_SCALE).
 GESTURE_PINCH_THRESHOLD_KEY = "gesture_pinch_threshold"
-GESTURE_CURSOR_SCALE_KEY = "gesture_cursor_scale"
 GESTURE_EMA_ALPHA_KEY = "gesture_ema_alpha"
 GESTURE_TRACKING_ZONE_KEY = "gesture_tracking_zone"
 
-# Falling back to these when the fact isn't set yet (before the first
-# calibration / before the user touches the slider).
 DEFAULT_PINCH_THRESHOLD = 0.06  # normalized landmark distance, replaced by calibration
-DEFAULT_CURSOR_SCALE = 1.3
 DEFAULT_EMA_ALPHA = 0.4  # 0..1, higher = snappier / less smoothed
 DEFAULT_TRACKING_ZONE = 0.6  # central fraction of the camera frame that maps to the whole screen
+
+# Fixed +10% cursor magnification while gesture mode is on — a locked
+# constant, not a setting (per the user's spec: "стабильно везде на 10%").
+CURSOR_SCALE = 1.1
 
 # Processing is capped well below the camera's max FPS — enough for a
 # responsive cursor, not enough to pin a CPU core. See the task's

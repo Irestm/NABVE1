@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from core.bootstrap import compose
@@ -297,35 +297,6 @@ async def clear_conversation() -> CommandResponse:
     voice_loop.clear_dialog_context()
     return CommandResponse(
         status=CommandStatus.EXECUTED, command="conversation_clear", message="Контекст очищен."
-    )
-
-
-@app.get("/api/gesture/preview")
-async def gesture_preview() -> Response:
-    """MJPEG stream of the annotated webcam frames — only meaningful while
-    gesture mode is active; serves a single placeholder-free 503 otherwise
-    so the <img> just shows nothing. See modules/gesture_control."""
-    if not gesture_controller.is_active():
-        return JSONResponse(status_code=503, content={"detail": "Режим жестов не активен."})
-
-    async def _frames():
-        boundary = b"--frame\r\n"
-        while gesture_controller.is_active():
-            jpeg = gesture_controller.latest_jpeg()
-            if jpeg:
-                yield boundary + b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
-            await asyncio.sleep(1 / 15)
-
-    return StreamingResponse(_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
-
-
-@app.post("/api/gesture/cursor_scale", response_model=CommandResponse)
-async def gesture_set_cursor_scale(scale: float) -> CommandResponse:
-    applied = await asyncio.to_thread(gesture_controller.set_cursor_scale, scale)
-    return CommandResponse(
-        status=CommandStatus.EXECUTED,
-        command="gesture_cursor_scale",
-        message=f"Размер курсора: {round(applied * 100)}%.",
     )
 
 

@@ -39,8 +39,9 @@ GROUP_LABELS: dict[str, str] = {
     "files": "Файлы",
     "time_lang": "Время и язык",
     "games": "Игры",
+    "modes": "Режимы",
 }
-GROUP_ORDER: tuple[str, ...] = ("power", "sound", "windows", "files", "time_lang", "games")
+GROUP_ORDER: tuple[str, ...] = ("power", "sound", "windows", "files", "time_lang", "games", "modes")
 
 
 # UI-facing subset of core/dispatcher.py's registered commands — the ones
@@ -132,8 +133,12 @@ COMMAND_UI_METADATA: dict[str, CommandUIMeta] = {
         (ParamField("game", "select", "Игра", options=("Шахматы", "Шашки")),),
         group="games",
     ),
+    # Toggleable special modes — buttons only (no dedicated panel). Gesture
+    # cursor size is fixed at +10%, so there's no config here. The how-to
+    # for gestures is the "Управление жестами" card on the Ассистент tab
+    # (frontend/src/components/GestureInfo.tsx).
+    "gesture_start": CommandUIMeta("Режим жестов", "Hand", None, group="modes"),
+    "gesture_stop": CommandUIMeta("Выключить жесты", "Hand", None, group="modes"),
+    "gesture_calibrate": CommandUIMeta("Калибровка жестов", "Crosshair", None, group="modes"),
+    "discussion_start": CommandUIMeta("Режим дискуссии", "MessagesSquare", None, group="modes"),
 }
-# discussion_start / gesture_start|stop|calibrate deliberately have no
-# button here — they live on the dedicated "Режимы" tab
-# (frontend/src/components/ModesPanel.tsx), not scattered through the
-# command panel.

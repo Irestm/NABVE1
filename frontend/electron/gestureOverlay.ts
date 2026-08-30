@@ -14,7 +14,8 @@ const FOLLOW_INTERVAL_MS = 16; // ~60 Hz
 
 let overlayWindow: BrowserWindow | null = null;
 let followTimer: NodeJS.Timeout | null = null;
-let currentScale = 1.3;
+// Locked +10% (backend sends the same constant on /api/status).
+let currentScale = 1.1;
 
 function overlayHtmlPath(): string {
   // Same shape as setupWindow.ts: compiled JS lives in dist-electron/, the

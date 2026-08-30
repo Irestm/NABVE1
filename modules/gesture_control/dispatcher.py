@@ -10,10 +10,8 @@ from core.logger import get_logger
 from core.message_bus import MessageBus, message_bus
 from modules.gesture_control import calibration
 from modules.gesture_control.config import (
-    DEFAULT_CURSOR_SCALE,
     DEFAULT_EMA_ALPHA,
     DEFAULT_TRACKING_ZONE,
-    GESTURE_CURSOR_SCALE_KEY,
     GESTURE_EMA_ALPHA_KEY,
     GESTURE_PINCH_THRESHOLD_KEY,
     GESTURE_TRACKING_ZONE_KEY,
@@ -61,8 +59,6 @@ class GestureController:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._recalibrate = False
-        self._latest_jpeg: bytes | None = None
-        self._jpeg_lock = threading.Lock()
         self._last_error: str | None = None
 
     # --- public API (called from command handlers / API) ---
@@ -101,16 +97,6 @@ class GestureController:
         self._recalibrate = True
         return True
 
-    def latest_jpeg(self) -> bytes | None:
-        with self._jpeg_lock:
-            return self._latest_jpeg
-
-    def set_cursor_scale(self, scale: float) -> float:
-        clamped = max(1.0, min(2.5, scale))
-        profile_service_layer.set_fact(ProfileUnitOfWork(), GESTURE_CURSOR_SCALE_KEY, f"{clamped:.2f}")
-        overlay_state.set(scale=clamped)
-        return clamped
-
     # --- worker ---
 
     def _announce(self, message: str) -> None:
@@ -122,7 +108,6 @@ class GestureController:
     def _run(self) -> None:
         ema_alpha = _load_float(GESTURE_EMA_ALPHA_KEY, DEFAULT_EMA_ALPHA)
         zone = _load_float(GESTURE_TRACKING_ZONE_KEY, DEFAULT_TRACKING_ZONE)
-        scale = _load_float(GESTURE_CURSOR_SCALE_KEY, DEFAULT_CURSOR_SCALE)
 
         try:
             tracker = HandTracker(ema_alpha=ema_alpha)
@@ -136,7 +121,7 @@ class GestureController:
             overlay_state.set(active=False)
             return
 
-        overlay_state.set(active=True, scale=scale)
+        overlay_state.set(active=True)
 
         threshold = calibration.load_threshold()
         never_calibrated = (
@@ -160,8 +145,6 @@ class GestureController:
                 if result is None:
                     self._stop_event.wait(frame_interval)
                     continue
-
-                self._update_preview(cursor, tracker, result)
 
                 if not result.hands:
                     cursor.click_up()
@@ -216,29 +199,11 @@ class GestureController:
             cursor.release()
             tracker.close()
             overlay_state.set(active=False)
-            with self._jpeg_lock:
-                self._latest_jpeg = None
 
     def _pace(self, loop_start: float, frame_interval: float) -> None:
         remaining = frame_interval - (time.monotonic() - loop_start)
         if remaining > 0:
             self._stop_event.wait(remaining)
-
-    def _update_preview(self, cursor: CursorController, tracker: HandTracker, result) -> None:
-        try:
-            import cv2  # type: ignore[import-untyped]
-
-            frame = result.frame
-            height, width = frame.shape[:2]
-            for hand in result.hands:
-                for x, y in hand:
-                    cv2.circle(frame, (int(x * width), int(y * height)), 3, (0, 220, 255), -1)
-            ok, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
-            if ok:
-                with self._jpeg_lock:
-                    self._latest_jpeg = buffer.tobytes()
-        except Exception:
-            logger.debug("Preview frame encode failed", exc_info=True)
 
 
 gesture_controller = GestureController()

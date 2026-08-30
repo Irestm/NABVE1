@@ -4,6 +4,7 @@ import {
   Code2,
   Edit3,
   Gamepad2,
+  Hand,
   Image as ImageIcon,
   MessageCircle,
   QrCode,
@@ -26,7 +27,7 @@ import { FitnessPanel } from "./components/FitnessPanel";
 import { FitnessProgressPhotoGallery } from "./components/FitnessProgressPhotoGallery";
 import { ImageGenerationPanel } from "./components/ImageGenerationPanel";
 import { IntegrationsPanel } from "./components/IntegrationsPanel";
-import { ModesPanel } from "./components/ModesPanel";
+import { GestureInfo } from "./components/GestureInfo";
 import { LanQrPanel } from "./components/LanQrPanel";
 import { MessagingPanel } from "./components/MessagingPanel";
 import { PlannerView } from "./components/PlannerView";
@@ -254,6 +255,10 @@ export function App(): JSX.Element {
                 </CollapsibleCard>
               )}
 
+              <CollapsibleCard title="Управление жестами" icon={<Hand size={16} />} accent="green">
+                <GestureInfo />
+              </CollapsibleCard>
+
               <PluginSuggestions />
             </div>
           ) : activePage === "commands" ? (
@@ -273,10 +278,6 @@ export function App(): JSX.Element {
                   setTimeout(() => setGamesOpenSignal((n) => n + 1), 0);
                 }}
               />
-            </div>
-          ) : activePage === "modes" ? (
-            <div key="modes" className="app-page">
-              <ModesPanel />
             </div>
           ) : activePage === "fitness" ? (
             <div key="fitness" className="app-page">
