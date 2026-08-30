@@ -21,13 +21,13 @@ DEFAULT_TRACKING_ZONE = 0.55  # central fraction of the camera frame that maps t
 # the landmark shimmer so a resting hand doesn't twitch the pointer. This is
 # the fallback; "калибровка дрожания" measures the user's own tremor and
 # stores a personal value under GESTURE_DEADZONE_PX_KEY.
-CURSOR_DEADZONE_PX = 3
+CURSOR_DEADZONE_PX = 5
 DEADZONE_PX_MIN = 2
 DEADZONE_PX_MAX = 40
 
-# Fixed 2x cursor magnification while gesture mode is on — a locked
-# constant, not a setting ("не на 10% а на 2").
-CURSOR_SCALE = 2.0
+# Fixed cursor magnification while gesture mode is on — a locked constant,
+# not a setting. Was 2x, dialled back to 1.5 ("меньше ещё курсор сделай").
+CURSOR_SCALE = 1.5
 
 # Processing rate — enough for a responsive cursor without pinning a core.
 PROCESSING_FPS = 24
@@ -36,15 +36,17 @@ CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 
 # Adaptive (one-euro-style) smoothing: alpha rises with hand speed, so a
-# fast move barely lags while a still hand is heavily smoothed. EMA_MIN_ALPHA
-# is the fallback resting blend; "калибровка дрожания" replaces it with a
-# personal value between MIN_ALPHA_FLOOR (heavy tremor) and MIN_ALPHA_CEIL
-# (steady hand), stored under GESTURE_MIN_ALPHA_KEY.
-EMA_MIN_ALPHA = 0.06
+# fast move barely lags while a still hand is heavily smoothed. A median-of-3
+# prefilter (_AdaptiveSmoother) drops single-frame spikes before this runs.
+# EMA_MIN_ALPHA is the fallback resting blend; "калибровка дрожания" replaces
+# it with a personal value between MIN_ALPHA_FLOOR (heavy tremor) and
+# MIN_ALPHA_CEIL (steady hand), stored under GESTURE_MIN_ALPHA_KEY. Values
+# kept deliberately low — repeated request for "меньше трясётся".
+EMA_MIN_ALPHA = 0.045
 EMA_MAX_ALPHA = 0.90
-EMA_SPEED_FULL = 0.05  # normalized units/frame at which smoothing is fully "off"
-MIN_ALPHA_FLOOR = 0.03
-MIN_ALPHA_CEIL = 0.12
+EMA_SPEED_FULL = 0.07  # normalized units/frame at which smoothing is fully "off"
+MIN_ALPHA_FLOOR = 0.025
+MIN_ALPHA_CEIL = 0.10
 
 # "Калибровка дрожания": hold the hand still for this many frames, measure
 # the RMS tremor of the fingertip, and map it (in screen px) across this
@@ -67,6 +69,17 @@ PHYSICAL_MOUSE_OVERRIDE_SECONDS = 1.2
 # Two-hand zoom: minimum spread change per frame and cooldown between nudges.
 ZOOM_DELTA_THRESHOLD = 0.04
 ZOOM_COOLDOWN_FRAMES = 8
+
+# Open-palm horizontal swipe = switch windows (Alt+Tab / Alt+Shift+Tab).
+# The palm centre must travel at least SWIPE_MIN_DX (normalized) across the
+# last SWIPE_HISTORY_FRAMES frames, staying mostly horizontal, with the hand
+# open (pinch ratio above SWIPE_OPEN_HAND_RATIO). Cooldown blocks cursor
+# motion briefly after a switch so the swipe doesn't also fling the pointer.
+SWIPE_HISTORY_FRAMES = 5
+SWIPE_MIN_DX = 0.22
+SWIPE_MAX_DY_RATIO = 0.6
+SWIPE_OPEN_HAND_RATIO = 1.3
+SWIPE_COOLDOWN_FRAMES = 12
 
 # Rejecting false hands ("воспринимает любой объект, даже голову"):
 # MediaPipe's own thresholds are raised, and every detection is then

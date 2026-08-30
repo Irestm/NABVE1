@@ -100,6 +100,12 @@ class CursorController:
         finally:
             self._pyautogui.keyUp("ctrl")
 
+    def trigger_window_switch(self, direction: str) -> None:
+        if direction == "prev":
+            self._pyautogui.hotkey("alt", "shift", "tab")
+        else:
+            self._pyautogui.hotkey("alt", "tab")
+
     def release(self) -> None:
         try:
             self.click_up()

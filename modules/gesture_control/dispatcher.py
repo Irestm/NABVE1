@@ -18,13 +18,23 @@ from modules.gesture_control.config import (
     PINCH_DEBOUNCE_FRAMES,
     PINCH_RELEASE_MULT,
     PROCESSING_FPS,
+    SWIPE_COOLDOWN_FRAMES,
+    SWIPE_HISTORY_FRAMES,
+    SWIPE_MAX_DY_RATIO,
+    SWIPE_MIN_DX,
+    SWIPE_OPEN_HAND_RATIO,
     ZOOM_COOLDOWN_FRAMES,
     ZOOM_DELTA_THRESHOLD,
 )
 from modules.gesture_control.cursor_controller import CursorController, map_hand_to_screen
 from modules.gesture_control.cursor_zoom import cursor_zoom
 from modules.gesture_control.events import GestureAnnouncement
-from modules.gesture_control.gesture_recognizer import pinch_ratio, two_hand_spread_delta
+from modules.gesture_control.gesture_recognizer import (
+    hand_centre,
+    pinch_ratio,
+    swipe_direction,
+    two_hand_spread_delta,
+)
 from modules.gesture_control.hand_tracker import HandTracker
 from modules.gesture_control.overlay_state import overlay_state
 from modules.user_profile import service_layer as profile_service_layer
@@ -139,6 +149,9 @@ class GestureController:
         override_until = 0.0
         announced_ready = False
         hand_seen_streak = 0
+        swipe_x: list[float] = []
+        swipe_y: list[float] = []
+        swipe_cooldown = 0
 
         try:
             while not self._stop_event.is_set():
@@ -175,6 +188,8 @@ class GestureController:
                         pinch_state = False
                     prev_spread = None
                     hand_seen_streak = 0
+                    swipe_x.clear()
+                    swipe_y.clear()
                     self._pace(loop_start, frame_interval)
                     continue
 
@@ -206,9 +221,43 @@ class GestureController:
                 if not announced_ready:
                     announced_ready = True
                     self._announce(
-                        "Режим жестов включён. Поднесите руку к камере: щипок — клик и перетаскивание, "
-                        "две руки — масштаб. Возьмётесь за мышь — жесты уступают."
+                        "Режим жестов включён. Щипок — клик и перетаскивание, две руки — масштаб, "
+                        "взмах открытой ладонью — переключение окон. Возьмётесь за мышь — жесты уступают."
                     )
+
+                # Open-palm horizontal swipe -> Alt+Tab. Tracked on the palm
+                # centre; suppressed while pinching so a drag isn't read as a
+                # swipe, and the cooldown freezes the cursor so the swipe
+                # itself doesn't fling the pointer across the screen.
+                centre = hand_centre(primary)
+                if pinch_state:
+                    swipe_x.clear()
+                    swipe_y.clear()
+                else:
+                    swipe_x.append(centre[0])
+                    swipe_y.append(centre[1])
+                    if len(swipe_x) > SWIPE_HISTORY_FRAMES:
+                        swipe_x.pop(0)
+                        swipe_y.pop(0)
+
+                if swipe_cooldown > 0:
+                    swipe_cooldown -= 1
+                    cursor.sync_last_set()
+                    self._pace(loop_start, frame_interval)
+                    continue
+
+                if not pinch_state and len(result.hands) == 1 and ratio > SWIPE_OPEN_HAND_RATIO:
+                    direction = swipe_direction(
+                        swipe_x, swipe_y, SWIPE_MIN_DX, SWIPE_MAX_DY_RATIO
+                    )
+                    if direction != 0:
+                        cursor.trigger_window_switch("next" if direction > 0 else "prev")
+                        swipe_cooldown = SWIPE_COOLDOWN_FRAMES
+                        swipe_x.clear()
+                        swipe_y.clear()
+                        cursor.sync_last_set()
+                        self._pace(loop_start, frame_interval)
+                        continue
 
                 target = map_hand_to_screen(primary[8], cursor.screen_size, zone)
                 cx, cy = cursor.current_pos()

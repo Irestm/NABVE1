@@ -48,6 +48,15 @@ class _FakeCursor:
     def move_cursor(self, _x: int, _y: int) -> None:
         pass
 
+    def trigger_zoom(self, _direction: str) -> None:
+        pass
+
+    def trigger_window_switch(self, _direction: str) -> None:
+        pass
+
+    def click_down(self) -> None:
+        pass
+
     def release(self) -> None:
         self.released = True
 

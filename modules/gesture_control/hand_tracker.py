@@ -42,21 +42,35 @@ class FrameResult:
         return self.raw_index_tips[0] if self.raw_index_tips else None
 
 
+def _median(values: list[float]) -> float:
+    return sorted(values)[len(values) // 2]
+
+
 class _AdaptiveSmoother:
-    """One-euro-lite filter on a single (x, y) point: the blend factor
-    scales with how fast the point is moving, so a quick hand motion barely
-    lags (alpha -> EMA_MAX_ALPHA) while a still hand barely trembles
-    (alpha -> min_alpha, which "калибровка дрожания" tunes per user)."""
+    """Per-point cursor filter: a median-of-3 on the raw landmark drops
+    single-frame spikes, then a one-euro-lite EMA whose blend factor scales
+    with hand speed — a quick motion barely lags (alpha -> EMA_MAX_ALPHA)
+    while a still hand barely trembles (alpha -> min_alpha, which
+    "калибровка дрожания" tunes per user)."""
 
     def __init__(self, min_alpha: float = EMA_MIN_ALPHA) -> None:
         self._min_alpha = max(0.01, min(EMA_MAX_ALPHA, min_alpha))
         self._value: tuple[float, float] | None = None
         self._prev_raw: tuple[float, float] | None = None
+        self._window: list[tuple[float, float]] = []
 
     def set_min_alpha(self, min_alpha: float) -> None:
         self._min_alpha = max(0.01, min(EMA_MAX_ALPHA, min_alpha))
 
     def update(self, point: tuple[float, float]) -> tuple[float, float]:
+        self._window.append(point)
+        if len(self._window) > 3:
+            self._window.pop(0)
+        point = (
+            _median([p[0] for p in self._window]),
+            _median([p[1] for p in self._window]),
+        )
+
         if self._value is None or self._prev_raw is None:
             self._value = point
             self._prev_raw = point
@@ -76,6 +90,7 @@ class _AdaptiveSmoother:
     def reset(self) -> None:
         self._value = None
         self._prev_raw = None
+        self._window.clear()
 
 
 def _looks_like_hand(landmarks: Landmarks) -> bool:

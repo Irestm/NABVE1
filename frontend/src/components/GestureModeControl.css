@@ -31,11 +31,24 @@
   flex: 1;
 }
 
-.gesture-mode__how {
+.gesture-mode__legend {
   margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
   font-size: 11px;
-  line-height: 1.45;
+  line-height: 1.4;
   color: var(--text-dim);
+}
+
+.gesture-mode__legend li {
+  list-style: disc;
+}
+
+.gesture-mode__legend b {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .gesture-mode__badge {

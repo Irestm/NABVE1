@@ -39,6 +39,15 @@ def test_reset_clears_state() -> None:
     assert s.update((1.0, 2.0)) == (1.0, 2.0)
 
 
+def test_median_prefilter_rejects_a_single_frame_spike() -> None:
+    s = _AdaptiveSmoother()
+    s.update((0.0, 0.0))
+    s.update((0.0, 0.0))
+    # One wild frame between two good ones: median of the 3-window ignores it.
+    spiked = s.update((9.0, 9.0))
+    assert spiked[0] < 0.5 and spiked[1] < 0.5
+
+
 def test_lower_min_alpha_smooths_a_resting_hand_more() -> None:
     # Same sub-threshold twitch, calmer filter moves the point less.
     calm = _AdaptiveSmoother(min_alpha=0.03)

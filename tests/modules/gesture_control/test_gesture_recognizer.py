@@ -60,3 +60,21 @@ def test_two_hand_spread_delta_sign() -> None:
     h2[0] = h2[9] = (0.3, 0.5)  # spread 0.1
     _, together = gr.two_hand_spread_delta(h1, h2, 0.4)
     assert together < 0
+
+
+def test_swipe_direction_right_and_left() -> None:
+    xs, ys = [0.2, 0.35, 0.5], [0.5, 0.5, 0.5]
+    assert gr.swipe_direction(xs, ys, min_dx=0.25, max_dy_ratio=0.6) == 1
+    assert gr.swipe_direction(xs[::-1], ys, min_dx=0.25, max_dy_ratio=0.6) == -1
+
+
+def test_swipe_direction_ignores_small_travel() -> None:
+    assert gr.swipe_direction([0.4, 0.45], [0.5, 0.5], min_dx=0.25, max_dy_ratio=0.6) == 0
+
+
+def test_swipe_direction_ignores_a_mostly_vertical_move() -> None:
+    assert gr.swipe_direction([0.2, 0.5], [0.2, 0.6], min_dx=0.25, max_dy_ratio=0.6) == 0
+
+
+def test_swipe_direction_needs_two_samples() -> None:
+    assert gr.swipe_direction([0.5], [0.5], min_dx=0.25, max_dy_ratio=0.6) == 0

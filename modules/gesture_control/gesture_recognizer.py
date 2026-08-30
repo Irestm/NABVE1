@@ -52,3 +52,22 @@ def two_hand_spread_delta(
     if previous_distance is None:
         return current, 0.0
     return current, current - previous_distance
+
+
+def swipe_direction(
+    x_history: list[float],
+    y_history: list[float],
+    min_dx: float,
+    max_dy_ratio: float,
+) -> int:
+    """An open-palm horizontal swipe across the recent hand-centre history:
+    +1 = swiped right, -1 = left, 0 = no swipe. The travel must clear
+    `min_dx` and stay mostly horizontal (|dy| <= |dx| * max_dy_ratio). The
+    mirrored frame means "hand to the user's right" -> +1."""
+    if len(x_history) < 2 or len(y_history) < 2:
+        return 0
+    dx = x_history[-1] - x_history[0]
+    dy = y_history[-1] - y_history[0]
+    if abs(dx) < min_dx or abs(dy) > abs(dx) * max_dy_ratio:
+        return 0
+    return 1 if dx > 0 else -1
