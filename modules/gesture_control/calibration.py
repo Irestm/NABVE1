@@ -10,6 +10,7 @@ from modules.gesture_control.config import (
     CALIBRATION_PHASE_MAX_FRAMES,
     CORNER_CALIBRATION_SAMPLES,
     CORNER_ZONE_MIN_SPAN,
+    CORNER_ZONE_MIN_WIDTH,
     CORNER_ZONE_PAD,
     CURSOR_DEADZONE_PX,
     DEADZONE_PX_MAX,
@@ -94,6 +95,14 @@ class AppliedCalibration:
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def _widen(lo: float, hi: float, min_width: float) -> tuple[float, float]:
+    """Grow [lo, hi] symmetrically around its centre to at least min_width."""
+    if hi - lo >= min_width:
+        return lo, hi
+    c = (lo + hi) / 2
+    return c - min_width / 2, c + min_width / 2
 
 
 def _lerp_min_cutoff(jitter_px: float) -> float:
@@ -282,16 +291,12 @@ class CalibrationSession:
             logger.info("Calibration STEADY: too few samples, keeping defaults")
             self._advance(_PHASE_CORNERS)
             return
-        # The user drifts on/off the ball, so the whole-sample spread is
-        # mostly travel, not tremor. Take the LOW quartile of frame-to-frame
-        # steps — the frames where the hand was actually still.
-        deltas = sorted(
-            math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
-            for i in range(1, len(pts))
-        )
-        still = deltas[len(deltas) // 4] if deltas else 0.0
-        jitter_px = still * self.px_per_norm * 4.0   # per-frame step is small; scale up
-        self.deadzone_px = int(_clamp(round(jitter_px + 2), DEADZONE_PX_MIN, DEADZONE_PX_MAX))
+        n = len(pts)
+        mx = sum(p[0] for p in pts) / n
+        my = sum(p[1] for p in pts) / n
+        rms = math.sqrt(sum((p[0] - mx) ** 2 + (p[1] - my) ** 2 for p in pts) / n)
+        jitter_px = rms * self.px_per_norm
+        self.deadzone_px = int(_clamp(round(jitter_px * 2 + 2), DEADZONE_PX_MIN, DEADZONE_PX_MAX))
         self.min_cutoff = _lerp_min_cutoff(jitter_px)
         logger.info(
             "Calibration STEADY: tremor=%.1fpx -> deadzone=%dpx min_cutoff=%.2f",
@@ -310,6 +315,11 @@ class CalibrationSession:
         x0, x1 = min(xs) + CORNER_ZONE_PAD, max(xs) - CORNER_ZONE_PAD
         y0, y1 = min(ys) + CORNER_ZONE_PAD, max(ys) - CORNER_ZONE_PAD
         if x1 - x0 >= CORNER_ZONE_MIN_SPAN and y1 - y0 >= CORNER_ZONE_MIN_SPAN:
+            # A too-narrow (but non-trivial) sweep would give a huge mapping
+            # gain -> hypersensitive cursor. Expand each axis around its
+            # centre to at least CORNER_ZONE_MIN_WIDTH.
+            x0, x1 = _widen(x0, x1, CORNER_ZONE_MIN_WIDTH)
+            y0, y1 = _widen(y0, y1, CORNER_ZONE_MIN_WIDTH)
             self.zone_bounds = (
                 round(_clamp(x0, 0.0, 1.0), 3),
                 round(_clamp(x1, 0.0, 1.0), 3),
@@ -405,6 +415,8 @@ def load_zone_bounds() -> tuple[float, float, float, float] | None:
         x0, x1, y0, y1 = (float(v) for v in stored.split(","))
     except (ValueError, TypeError):
         return None
-    if x1 - x0 < CORNER_ZONE_MIN_SPAN or y1 - y0 < CORNER_ZONE_MIN_SPAN:
+    # Reject a stored zone that's too narrow to map sanely (an old bad
+    # calibration) — fall back to the default zone instead of a twitchy one.
+    if x1 - x0 < CORNER_ZONE_MIN_WIDTH or y1 - y0 < CORNER_ZONE_MIN_WIDTH:
         return None
     return (x0, x1, y0, y1)

@@ -177,8 +177,13 @@ ABS_FOLLOW_RATE = 0.18
 # each frame, so absolute accuracy returns within ~1.5 s of steady pointing.
 CLUTCH_DECAY = 0.94
 CORNER_CALIBRATION_SAMPLES = 90
-CORNER_ZONE_PAD = 0.02         # shrink the swept rectangle inward this much
-CORNER_ZONE_MIN_SPAN = 0.12    # each axis must span at least this to be used
+CORNER_ZONE_PAD = 0.03         # shrink the swept rectangle inward this much
+CORNER_ZONE_MIN_SPAN = 0.18    # below this on an axis -> ignore the sweep entirely
+# A narrow sweep that still passes MIN_SPAN is EXPANDED around its centre to
+# at least this width per axis, so the mapping gain never gets so high the
+# cursor turns hypersensitive (a tiny zone maps big screen moves to a
+# fingertip twitch). Also the floor for accepting a STORED zone.
+CORNER_ZONE_MIN_WIDTH = 0.42
 
 # On-screen cursor deadzone (px): a mapped move smaller than this is
 # ignored, killing the last of the landmark shimmer for a resting hand.

@@ -290,7 +290,9 @@ export function GestureTraining({
                   e.preventDefault();
                   pop(i);
                 }}
-                onClick={(e) => e.preventDefault()}
+                // a stray left click (thumb wobble during 👍) still pops the
+                // ball so the step doesn't get stuck
+                onClick={() => pop(i)}
               />
             </div>
           ))}

@@ -920,10 +920,7 @@ class GestureController:
                 # ring/pinky never really curl, so median-of-4 reads low even
                 # while POINTING and used to fire a click on every aim. The
                 # fold test alone: neither index nor middle clearly extended.
-                # `thumb_med` (5-frame median, shared with open-palm) — the
-                # raw thumb_gap flickers below THUMB_TUCKED_MAX during a 👍
-                # and fired stray left clicks in the right-click game step.
-                thumb_tucked = thumb_med < THUMB_TUCKED_MAX
+                thumb_tucked = thumb_g < THUMB_TUCKED_MAX
                 pinch_on = False  # the index<->middle gap click is retired
                 fist_closed = (
                     thumb_tucked
@@ -1016,7 +1013,7 @@ class GestureController:
 
                 # --- right click: a THUMBS-UP (fingers curled + thumb out).
                 # Fire-once, then locked until the pose ends or the lockout.
-                thumbs_up = fist_med <= FIST_FALLBACK_RATIO and thumb_med >= THUMB_GAP_MIN
+                thumbs_up = fist_med <= FIST_FALLBACK_RATIO and thumb_g >= THUMB_GAP_MIN
                 if not thumbs_up:
                     right_streak = 0
                     if loop_start >= right_lock_until:
