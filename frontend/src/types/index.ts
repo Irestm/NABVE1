@@ -19,6 +19,7 @@ export interface GestureCalibration {
   reps_done: number;
   reps_target: number;
   done: boolean;
+  phase_key: "steady" | "corners" | "click" | "done";
 }
 
 export interface StatusResponse {

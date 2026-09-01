@@ -36,7 +36,8 @@ from modules.user_profile.uow import ProfileUnitOfWork
 
 logger = get_logger(__name__)
 
-_REQUIRED_REPS = 5
+_REQUIRED_REPS = 5   # STEADY/CORNERS "dot" scaling
+_CLICK_REPS = 3      # balls to fist-pop in the CLICK stage (red / blue / yellow)
 
 _PHASE_STEADY = "steady"
 _PHASE_CORNERS = "corners"
@@ -45,24 +46,26 @@ _PHASE_DONE = "done"
 
 _TOTAL_PHASES = 3
 
+# Prompts double as the voice line and the game caption.
 _PROMPTS = {
     _PHASE_STEADY: (
-        "Калибровка. Держите руку с двумя вытянутыми пальцами — указательным и "
-        "средним — неподвижно перед камерой."
+        "Обучение. Выдвиньте указательный палец и наведитесь на шарик в центре, "
+        "держите руку спокойно."
     ),
     _PHASE_CORNERS: (
-        "Теперь теми же двумя пальцами наведитесь по очереди на четыре угла экрана."
+        "Теперь наведитесь указательным по очереди на шарики по краям экрана."
     ),
     _PHASE_CLICK: (
-        "Теперь пять раз сожмите руку в кулак (все пальцы, кроме большого) и разожмите."
+        "Наведитесь на шарик и сожмите руку в кулак, чтобы лопнуть его. Повторите с "
+        "каждым."
     ),
-    _PHASE_DONE: "Калибровка завершена. Управление подстроено под вас.",
+    _PHASE_DONE: "Обучение пройдено. Управление подстроено под вас.",
 }
 
 _PHASE_META = {
-    _PHASE_STEADY: (1, "Неподвижная рука", "Два пальца вытянуты, держите руку неподвижно"),
-    _PHASE_CORNERS: (2, "Углы экрана", "Наведитесь двумя пальцами на четыре угла экрана"),
-    _PHASE_CLICK: (3, "Клик", "Сожмите кулак и разожмите — пять раз"),
+    _PHASE_STEADY: (1, "Наведись и замри", "Указательный на шарик в центре, держи руку спокойно"),
+    _PHASE_CORNERS: (2, "Шарики по краям", "Наведись указательным на каждый шарик у края экрана"),
+    _PHASE_CLICK: (3, "Лопни кулаком", "Наведись на шарик и сожми кулак — по очереди на каждый"),
 }
 
 
@@ -84,6 +87,7 @@ class CalibrationProgress:
     reps_done: int
     reps_target: int
     done: bool
+    phase_key: str = _PHASE_STEADY   # "steady"|"corners"|"click"|"done" — game screen selector
 
 
 @dataclass(frozen=True)
@@ -200,19 +204,19 @@ class CalibrationSession:
     def progress(self) -> CalibrationProgress:
         if self._phase == _PHASE_DONE:
             return CalibrationProgress(
-                _TOTAL_PHASES, _TOTAL_PHASES, "Готово", "Калибровка завершена",
-                _REQUIRED_REPS, _REQUIRED_REPS, True,
+                _TOTAL_PHASES, _TOTAL_PHASES, "Готово", "Обучение пройдено",
+                _CLICK_REPS, _CLICK_REPS, True, _PHASE_DONE,
             )
         index, label, instruction = _PHASE_META[self._phase]
         if self._phase == _PHASE_STEADY:
-            done = len(self._steady_pts) * _REQUIRED_REPS // max(STEADY_CALIBRATION_SAMPLES, 1)
+            done = len(self._steady_pts) * _CLICK_REPS // max(STEADY_CALIBRATION_SAMPLES, 1)
         elif self._phase == _PHASE_CORNERS:
-            done = len(self._corner_pts) * _REQUIRED_REPS // max(CORNER_CALIBRATION_SAMPLES, 1)
+            done = len(self._corner_pts) * _CLICK_REPS // max(CORNER_CALIBRATION_SAMPLES, 1)
         else:
             done = self._click.reps
         return CalibrationProgress(
             index, _TOTAL_PHASES, label, instruction,
-            min(_REQUIRED_REPS, done), _REQUIRED_REPS, False,
+            min(_CLICK_REPS, done), _CLICK_REPS, False, self._phase,
         )
 
     def _advance(self, phase: str) -> None:
@@ -252,7 +256,7 @@ class CalibrationSession:
             # here; `_RepCounter` (active-low) counts the curl/open reps off
             # the median-straightness signal.
             self._click.observe(frame.fist)
-            if self._click.reps >= _REQUIRED_REPS:
+            if self._click.reps >= _CLICK_REPS:
                 self._finish_click()
         if not self.done and self._frames_in_phase > CALIBRATION_PHASE_MAX_FRAMES:
             self._force_finish_phase()

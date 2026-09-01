@@ -102,6 +102,7 @@ class GestureCalibrationState(BaseModel):
     reps_done: int
     reps_target: int
     done: bool
+    phase_key: str = "steady"
 
 
 class StatusResponse(BaseModel):

@@ -53,13 +53,17 @@ def _do_all(session) -> None:
 def test_phase_order_and_prompts() -> None:
     s = calibration.CalibrationSession(px_per_norm=3000.0)
     assert s._phase == calibration._PHASE_STEADY
-    assert "неподвижно" in (s.take_announcement() or "").lower()
+    assert "спокойно" in (s.take_announcement() or "").lower()
+    assert s.progress().phase_key == "steady"
     _do_steady(s)
     assert s._phase == calibration._PHASE_CORNERS
+    assert s.progress().phase_key == "corners"
     _do_corners(s)
     assert s._phase == calibration._PHASE_CLICK
+    assert s.progress().phase_key == "click"
     _do_click(s)
     assert s._phase == calibration._PHASE_DONE and s.done is True
+    assert s.progress().phase_key == "done"
 
 
 def test_progress_reports_three_phases() -> None:
