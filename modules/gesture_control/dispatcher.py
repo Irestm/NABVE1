@@ -30,7 +30,9 @@ from modules.gesture_control.config import (
     FIST_SCORE_MAX,
     FIST_SCORE_MIN,
     GESTURE_DIAG,
+    HAND_LOST_ALERT_FRAMES,
     HAND_LOST_COAST_FRAMES,
+    HAND_LOST_VOICE_COOLDOWN_S,
     HAND_WARMUP_FRAMES,
     HULL_ENGAGE,
     HULL_RELEASE,
@@ -324,6 +326,8 @@ class GestureController:
         click_held_through = False  # hand hasn't clearly opened since the last click
         open_streak = 0  # consecutive frames the hand has been clearly open
         hand_lost = 0
+        hand_lost_alerted = False       # pulsed/announced for THIS loss already
+        hand_lost_voice_at = -1e9       # last "hand lost" TTS (10-min cooldown)
         click_freeze = 0
         preclick_freeze = 0
         hull_prev = pinch_prev = fist_prev = None  # for the pre-click "closing" test
@@ -582,10 +586,22 @@ class GestureController:
                     if hand_lost <= coast_limit:
                         self._pace(loop_start, frame_interval)
                         continue
+                    # Sustained loss (well past the coast): once, pulse the
+                    # cursor size so the user notices, and say it out loud —
+                    # but the voice line not more than once per 10 min.
+                    if hand_lost >= HAND_LOST_ALERT_FRAMES and not hand_lost_alerted:
+                        hand_lost_alerted = True
+                        cursor_zoom.pulse()
+                        if loop_start - hand_lost_voice_at > HAND_LOST_VOICE_COOLDOWN_S:
+                            hand_lost_voice_at = loop_start
+                            self._announce(
+                                "Камера потеряла руку. Раскройте ладонь перед камерой."
+                            )
                     _reset_tracking(hard=True)
                     self._pace(loop_start, frame_interval)
                     continue
                 hand_lost = 0
+                hand_lost_alerted = False
 
                 # Lock onto one hand across frames: the detection nearest to
                 # last frame's primary, not just the leftmost — a second (or

@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 
 from core.config import DATA_DIR
 from core.logger import get_logger
@@ -37,6 +38,8 @@ class CursorZoom:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._original: int | None = None
+        self._enlarged: int | None = None   # size set by enlarge(), for pulse()
+        self._pulsing = False
 
     def recover_if_stale(self) -> None:
         """If a previous run left the recovery file (killed before restore),
@@ -75,6 +78,7 @@ class CursorZoom:
                 logger.debug("Could not write cursor-size recovery file", exc_info=True)
             if self._write_gnome_cursor_size(target):
                 self._original = current
+                self._enlarged = target
                 logger.info("Gesture mode: cursor size %d -> %d", current, target)
             else:
                 _RECOVERY_FILE.unlink(missing_ok=True)
@@ -87,7 +91,32 @@ class CursorZoom:
             self._write_gnome_cursor_size(self._original)
             logger.info("Gesture mode: cursor size restored to %d", self._original)
             self._original = None
+            self._enlarged = None
             _RECOVERY_FILE.unlink(missing_ok=True)
+
+    def pulse(self, cycles: int = 3, period: float = 0.32) -> None:
+        """Blink the pointer by toggling its size a few times, then leave it
+        at the enlarged size. Non-blocking (runs in a short daemon thread).
+        No-op unless the gesture-mode enlarge is currently in effect."""
+        if self._enlarged is None or self._pulsing:
+            return
+        self._pulsing = True
+        big = min(_MAX_CURSOR_SIZE, max(self._enlarged + 8, round(self._enlarged * 1.5)))
+        base = self._enlarged
+
+        def _run() -> None:
+            try:
+                for _ in range(max(1, cycles)):
+                    self._write_gnome_cursor_size(big)
+                    time.sleep(period / 2)
+                    self._write_gnome_cursor_size(base)
+                    time.sleep(period / 2)
+            finally:
+                # leave it at whatever enlarge()/restore() wants, not mid-blink
+                self._write_gnome_cursor_size(self._enlarged or base)
+                self._pulsing = False
+
+        threading.Thread(target=_run, name="gesture-cursor-pulse", daemon=True).start()
 
     def _gsettings(self) -> str | None:
         if not sys.platform.startswith("linux"):

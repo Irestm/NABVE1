@@ -345,6 +345,12 @@ CLICK_FREEZE_FRAMES = 3
 # px across the screen (seen in the diagnostics). Only a longer gap does the
 # full state reset.
 HAND_LOST_COAST_FRAMES = 18
+# A sustained loss (this many missed frames — well past the coast) pulses
+# the cursor size once and says so once. The voice line does not repeat for
+# HAND_LOST_VOICE_COOLDOWN_S (so a hand that keeps flickering out only nags
+# the first time; the pulse still fires each time).
+HAND_LOST_ALERT_FRAMES = 45
+HAND_LOST_VOICE_COOLDOWN_S = 600.0
 
 # The physical mouse always wins: the instant the real cursor moves by
 # more than this (px) from where the worker last put it, gesture control

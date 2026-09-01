@@ -425,6 +425,26 @@ def test_worker_shuts_down_cleanly_on_camera_fault_mid_stream(monkeypatch) -> No
     assert "камера пропала" in (controller.last_error() or "")
 
 
+def test_sustained_hand_loss_pulses_cursor_and_announces_once(monkeypatch) -> None:
+    monkeypatch.setattr(gd, "HAND_LOST_ALERT_FRAMES", 20)
+    tracker, _cursor, controller = _make(monkeypatch)
+    pulses: list[int] = []
+    says: list[str] = []
+    monkeypatch.setattr(gd.cursor_zoom, "pulse", lambda *a, **k: pulses.append(1))
+    controller._announce = says.append
+    for _ in range(6):
+        tracker.feed([_hand(0.5, 0.55, "point")])
+    for _ in range(60):
+        tracker.feed([])                       # sustained loss
+    controller.start()
+    try:
+        _pump(tracker, 66)
+    finally:
+        controller.stop()
+    assert len(pulses) == 1
+    assert len([s for s in says if "потеряла руку" in s]) == 1
+
+
 def test_physical_mouse_override_does_not_lurch_on_resume(monkeypatch) -> None:
     monkeypatch.setattr(gd, "PHYSICAL_MOUSE_OVERRIDE_SECONDS", 0.05)
     tracker, cursor, controller = _make(monkeypatch, fps=200)
