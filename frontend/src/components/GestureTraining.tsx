@@ -53,10 +53,10 @@ const LAYOUTS: Array<Array<[number, number]>> = [
 ];
 
 const CORNER_LAYOUT: Array<[number, number]> = [
-  [5, 8],
-  [95, 8],
-  [5, 92],
-  [95, 92],
+  [8, 12],
+  [92, 12],
+  [8, 88],
+  [92, 88],
 ];
 
 const BALL_COLOURS = ["#ff4d4f", "#4d79ff", "#ffd24d"];

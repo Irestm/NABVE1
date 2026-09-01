@@ -164,8 +164,8 @@
 .gtrain__ball {
   --ball: #5ad1a5;
   --fill: 0;
-  width: 56px;
-  height: 56px;
+  width: 140px;
+  height: 140px;
   border-radius: 50%;
   border: 3px solid var(--ball);
   background: radial-gradient(
@@ -180,8 +180,8 @@
   animation: gtrain-pulse 1.8s ease-in-out infinite;
 }
 .gtrain__ball--big {
-  width: 92px;
-  height: 92px;
+  width: 230px;
+  height: 230px;
 }
 .gtrain__ball--popped {
   transform: scale(1.8);
@@ -196,7 +196,7 @@
     box-shadow: 0 0 0 0 color-mix(in srgb, var(--ball) 55%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 14px color-mix(in srgb, var(--ball) 0%, transparent);
+    box-shadow: 0 0 0 32px color-mix(in srgb, var(--ball) 0%, transparent);
   }
 }
 
