@@ -1,0 +1,241 @@
+.gtrain {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(
+    120% 120% at 50% 0%,
+    color-mix(in srgb, var(--accent-green, #5ad1a5) 14%, var(--bg, #0e1116)) 0%,
+    var(--bg, #0e1116) 60%
+  );
+  color: var(--text, #e8ecf1);
+  user-select: none;
+  overflow: hidden;
+}
+
+.gtrain__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+}
+
+.gtrain__crumbs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.gtrain__crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: color-mix(in srgb, var(--text, #e8ecf1) 8%, transparent);
+  color: color-mix(in srgb, var(--text, #e8ecf1) 60%, transparent);
+  border: 1px solid transparent;
+}
+.gtrain__crumb em {
+  font-style: normal;
+}
+.gtrain__crumb--now {
+  color: var(--text, #e8ecf1);
+  border-color: var(--accent-green, #5ad1a5);
+  background: color-mix(in srgb, var(--accent-green, #5ad1a5) 18%, transparent);
+}
+.gtrain__crumb--done {
+  color: var(--accent-green, #5ad1a5);
+}
+
+.gtrain__quit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, #ff6b6b 55%, transparent);
+  background: color-mix(in srgb, #ff6b6b 14%, transparent);
+  color: #ff9b9b;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gtrain__pose {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  justify-content: center;
+  padding: 6px 20px 0;
+}
+.gtrain__glyph {
+  font-size: 44px;
+  line-height: 1;
+}
+.gtrain__glyph--big {
+  font-size: 96px;
+}
+.gtrain__posetext {
+  font-size: 14px;
+  color: color-mix(in srgb, var(--text, #e8ecf1) 78%, transparent);
+  max-width: 520px;
+}
+
+.gtrain__stage {
+  position: relative;
+  flex: 1;
+  margin: 12px 20px 20px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--text, #e8ecf1) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text, #e8ecf1) 10%, transparent);
+  overflow: hidden;
+}
+.gtrain__stage--finish {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.gtrain__task {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 8px 16px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg, #0e1116) 70%, transparent);
+  font-size: 14px;
+  text-align: center;
+  max-width: 80%;
+  z-index: 3;
+}
+.gtrain__stage--finish .gtrain__task {
+  position: static;
+  transform: none;
+  background: none;
+  font-size: 18px;
+}
+
+.gtrain__center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gtrain__ball-slot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
+
+.gtrain__ball {
+  --ball: #5ad1a5;
+  --fill: 0;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 3px solid var(--ball);
+  background: radial-gradient(
+    circle at 35% 30%,
+    color-mix(in srgb, var(--ball) 90%, white) 0%,
+    var(--ball) 70%
+  );
+  opacity: calc(0.35 + 0.65 * var(--fill, 0));
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--ball) 60%, transparent);
+  cursor: pointer;
+  transition: transform 0.18s ease, opacity 0.25s ease, box-shadow 0.6s ease;
+  animation: gtrain-pulse 1.8s ease-in-out infinite;
+}
+.gtrain__ball--big {
+  width: 92px;
+  height: 92px;
+}
+.gtrain__ball--popped {
+  transform: scale(1.8);
+  opacity: 0;
+  pointer-events: none;
+  animation: none;
+}
+
+@keyframes gtrain-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ball) 55%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 14px color-mix(in srgb, var(--ball) 0%, transparent);
+  }
+}
+
+.gtrain__actions {
+  position: absolute;
+  bottom: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+}
+.gtrain__refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--accent-green, #5ad1a5);
+  background: color-mix(in srgb, var(--accent-green, #5ad1a5) 16%, transparent);
+  color: var(--text, #e8ecf1);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gtrain__dots {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  z-index: 3;
+}
+.gtrain__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text, #e8ecf1) 18%, transparent);
+}
+.gtrain__dot--on {
+  background: var(--accent-green, #5ad1a5);
+}
+
+.gtrain__scrollbox {
+  position: absolute;
+  inset: 60px 22% 22px;
+  overflow-y: auto;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg, #0e1116) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text, #e8ecf1) 12%, transparent);
+}
+.gtrain__scrollrow {
+  padding: 14px 18px;
+  font-size: 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--text, #e8ecf1) 8%, transparent);
+}
+.gtrain__scrollend {
+  padding: 26px 18px 60px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent-green, #5ad1a5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gtrain__ball {
+    animation: none;
+  }
+}

@@ -1,0 +1,339 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
+import { Check, RefreshCw, X } from "lucide-react";
+import type { GestureCalibration } from "../types";
+import "./GestureTraining.css";
+
+// Full-screen "Обучение" game. The first three steps (steady / corners /
+// click) are driven by the backend calibration session via the `calibration`
+// prop — popping balls is visual juice, the real progression is the
+// session's phase_key / reps. Once the backend session ends the game
+// self-drives two practice steps (right click, scroll) and then closes.
+
+interface GestureTrainingProps {
+  calibration: GestureCalibration | null;
+  onExit: () => void;
+  onCancelBackend: () => void;
+}
+
+type Step = "steady" | "corners" | "click" | "rightclick" | "scroll" | "finished";
+
+const BACKEND_STEPS: Step[] = ["steady", "corners", "click"];
+
+const POSE: Record<Step, { glyph: string; pose: string }> = {
+  steady: { glyph: "☝️", pose: "Один указательный палец вытянут, ладонь к камере" },
+  corners: { glyph: "☝️", pose: "Тот же указательный — тянемся им до краёв экрана" },
+  click: { glyph: "✊", pose: "Наводишься указательным, потом сжимаешь всё в кулак" },
+  rightclick: { glyph: "👍", pose: "Кулак + большой палец в сторону (жест «класс»)" },
+  scroll: { glyph: "✌️", pose: "Указательный и средний вместе, ведёшь кистью вниз" },
+  finished: { glyph: "✅", pose: "" },
+};
+
+// ball layouts per round — [x%, y%]. Rounds spread wider / lower so the
+// backend zone measurement covers more of the screen.
+const LAYOUTS: Array<Array<[number, number]>> = [
+  [
+    [18, 24],
+    [82, 30],
+    [50, 78],
+  ],
+  [
+    [12, 68],
+    [88, 72],
+    [50, 20],
+  ],
+  [
+    [20, 82],
+    [80, 84],
+    [50, 50],
+  ],
+];
+
+const CORNER_LAYOUT: Array<[number, number]> = [
+  [10, 12],
+  [90, 12],
+  [10, 88],
+  [90, 88],
+];
+
+const BALL_COLOURS = ["#ff4d4f", "#4d79ff", "#ffd24d"];
+const BALL_NAMES = ["красный", "синий", "жёлтый"];
+
+export function GestureTraining({
+  calibration,
+  onExit,
+  onCancelBackend,
+}: GestureTrainingProps): JSX.Element {
+  const [step, setStep] = useState<Step>("steady");
+  const [round, setRound] = useState(0);
+  const [popped, setPopped] = useState<number[]>([]);
+  const [scrolledToEnd, setScrolledToEnd] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // best-effort fullscreen while the game is open
+  useEffect(() => {
+    const el = rootRef.current;
+    el?.requestFullscreen?.().catch(() => undefined);
+    return () => {
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    };
+  }, []);
+
+  // follow the backend session for the first three steps
+  useEffect(() => {
+    if (!calibration) return;
+    const key = calibration.phase_key;
+    if (key === "steady" || key === "corners" || key === "click") {
+      setStep((s) => (s === key ? s : (setPopped([]), key)));
+    }
+  }, [calibration?.phase_key]);
+
+  // backend session gone while still on a backend step => it finished on its
+  // own; move on to the practice steps. (Cancel closes the whole overlay
+  // before this can fire.)
+  useEffect(() => {
+    if (calibration === null && BACKEND_STEPS.includes(step)) {
+      setPopped([]);
+      setStep("rightclick");
+    }
+  }, [calibration, step]);
+
+  const layout = useMemo(() => LAYOUTS[round % LAYOUTS.length], [round]);
+
+  function pop(i: number): void {
+    setPopped((p) => (p.includes(i) ? p : [...p, i]));
+  }
+
+  function refreshBalls(): void {
+    setRound((r) => r + 1);
+    setPopped([]);
+  }
+
+  function onScrollArea(e: React.UIEvent<HTMLDivElement>): void {
+    const el = e.currentTarget;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 6) setScrolledToEnd(true);
+  }
+
+  // practice step auto-advance
+  useEffect(() => {
+    if (step === "rightclick" && popped.length >= 3) {
+      const t = window.setTimeout(() => {
+        setPopped([]);
+        setStep("scroll");
+      }, 900);
+      return () => window.clearTimeout(t);
+    }
+    if (step === "scroll" && scrolledToEnd) {
+      const t = window.setTimeout(() => setStep("finished"), 700);
+      return () => window.clearTimeout(t);
+    }
+    if (step === "finished") {
+      const t = window.setTimeout(onExit, 1600);
+      return () => window.clearTimeout(t);
+    }
+    return undefined;
+  }, [step, popped.length, scrolledToEnd, onExit]);
+
+  const stepIndex =
+    (["steady", "corners", "click", "rightclick", "scroll"] as Step[]).indexOf(step) + 1;
+
+  const repsDone = calibration?.reps_done ?? 0;
+  const repsTarget = calibration?.reps_target ?? 3;
+
+  return (
+    <div className="gtrain" ref={rootRef} role="dialog" aria-label="Обучение жестам">
+      <div className="gtrain__top">
+        <div className="gtrain__crumbs">
+          {["Наведись", "Края", "Кулак", "Правый клик", "Скролл"].map((name, i) => (
+            <span
+              key={name}
+              className={
+                "gtrain__crumb" +
+                (i + 1 < stepIndex ? " gtrain__crumb--done" : "") +
+                (i + 1 === stepIndex ? " gtrain__crumb--now" : "")
+              }
+            >
+              {i + 1 < stepIndex ? <Check size={12} strokeWidth={3} /> : i + 1}
+              <em>{name}</em>
+            </span>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="gtrain__quit"
+          onClick={() => {
+            onCancelBackend();
+            onExit();
+          }}
+        >
+          <X size={16} /> Прервать обучение
+        </button>
+      </div>
+
+      {step !== "finished" ? (
+        <div className="gtrain__pose">
+          <span className="gtrain__glyph">{POSE[step].glyph}</span>
+          <span className="gtrain__posetext">{POSE[step].pose}</span>
+        </div>
+      ) : null}
+
+      {step === "steady" ? (
+        <div className="gtrain__stage">
+          <p className="gtrain__task">
+            Наведись указательным на шар в центре и держи руку спокойно пару секунд.
+          </p>
+          <div className="gtrain__center">
+            <Ball
+              colour="#5ad1a5"
+              filled={repsTarget > 0 && repsDone / repsTarget}
+              big
+            />
+          </div>
+          <Progress done={repsDone} target={repsTarget} />
+        </div>
+      ) : null}
+
+      {step === "corners" ? (
+        <div className="gtrain__stage">
+          <p className="gtrain__task">Наведись указательным на каждый шар у края экрана.</p>
+          {CORNER_LAYOUT.map(([x, y], i) => (
+            <div
+              key={i}
+              className="gtrain__ball-slot"
+              style={{ left: `${x}%`, top: `${y}%` } as CSSProperties}
+            >
+              <Ball colour="#5ad1a5" filled={i < repsDone ? 1 : 0} />
+            </div>
+          ))}
+          <Progress done={repsDone} target={repsTarget} />
+        </div>
+      ) : null}
+
+      {step === "click" ? (
+        <div className="gtrain__stage">
+          <p className="gtrain__task">
+            Наведись на {BALL_NAMES[Math.min(repsDone, 2)]} шар и сожми кулак — он лопнет.
+            Повтори с каждым.
+          </p>
+          {layout.map(([x, y], i) => (
+            <div
+              key={i}
+              className="gtrain__ball-slot"
+              style={{ left: `${x}%`, top: `${y}%` } as CSSProperties}
+            >
+              <Ball
+                colour={BALL_COLOURS[i]}
+                popped={i < repsDone || popped.includes(i)}
+                onClick={() => pop(i)}
+              />
+            </div>
+          ))}
+          <div className="gtrain__actions">
+            <button type="button" className="gtrain__refresh" onClick={refreshBalls}>
+              <RefreshCw size={14} /> Обновить шарики
+            </button>
+          </div>
+          <Progress done={repsDone} target={repsTarget} />
+        </div>
+      ) : null}
+
+      {step === "rightclick" ? (
+        <div className="gtrain__stage">
+          <p className="gtrain__task">
+            Покажи «класс» (👍), наведясь на шар — правый клик его лопнет. Лопни все три.
+          </p>
+          {layout.map(([x, y], i) => (
+            <div
+              key={i}
+              className="gtrain__ball-slot"
+              style={{ left: `${x}%`, top: `${y}%` } as CSSProperties}
+            >
+              <Ball
+                colour={BALL_COLOURS[i]}
+                popped={popped.includes(i)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  pop(i);
+                }}
+                onClick={(e) => e.preventDefault()}
+              />
+            </div>
+          ))}
+          <div className="gtrain__actions">
+            <button type="button" className="gtrain__refresh" onClick={refreshBalls}>
+              <RefreshCw size={14} /> Обновить шарики
+            </button>
+          </div>
+          <Progress done={popped.length} target={3} />
+        </div>
+      ) : null}
+
+      {step === "scroll" ? (
+        <div className="gtrain__stage">
+          <p className="gtrain__task">
+            Подними указательный и средний вместе, веди кистью вниз — долистай список до конца.
+          </p>
+          <div className="gtrain__scrollbox" onScroll={onScrollArea}>
+            {Array.from({ length: 40 }).map((_, i) => (
+              <div key={i} className="gtrain__scrollrow">
+                Строка {i + 1}
+              </div>
+            ))}
+            <div className="gtrain__scrollend">
+              {scrolledToEnd ? "Отлично, долистал!" : "…листай сюда…"}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {step === "finished" ? (
+        <div className="gtrain__stage gtrain__stage--finish">
+          <span className="gtrain__glyph gtrain__glyph--big">🎉</span>
+          <p className="gtrain__task">Обучение пройдено. Управление подстроено под тебя.</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Progress({ done, target }: { done: number; target: number }): JSX.Element {
+  return (
+    <div className="gtrain__dots">
+      {Array.from({ length: Math.max(target, 1) }).map((_, i) => (
+        <span key={i} className={"gtrain__dot" + (i < done ? " gtrain__dot--on" : "")} />
+      ))}
+    </div>
+  );
+}
+
+interface BallProps {
+  colour: string;
+  popped?: boolean;
+  filled?: number | boolean;
+  big?: boolean;
+  onClick?: (e: React.MouseEvent) => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
+}
+
+function Ball({ colour, popped, filled, big, onClick, onContextMenu }: BallProps): JSX.Element {
+  const f = typeof filled === "number" ? Math.max(0, Math.min(1, filled)) : filled ? 1 : 0;
+  return (
+    <button
+      type="button"
+      className={
+        "gtrain__ball" +
+        (popped ? " gtrain__ball--popped" : "") +
+        (big ? " gtrain__ball--big" : "")
+      }
+      style={
+        {
+          "--ball": colour,
+          "--fill": String(f),
+        } as CSSProperties
+      }
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+      aria-label="шар"
+    />
+  );
+}

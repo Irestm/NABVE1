@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { Check, Crosshair, Eye, Hand, X } from "lucide-react";
+import { Check, Eye, GraduationCap, Hand, X } from "lucide-react";
 import { getStatus, gesturePreviewUrl, runCommand, setGesturePreview } from "../api/client";
 import type { GestureCalibration } from "../types";
+import { GestureTraining } from "./GestureTraining";
 import "./GestureModeControl.css";
 
 const POLL_INTERVAL_MS = 2000;
@@ -13,11 +14,13 @@ interface GestureModeControlProps {
 }
 
 // One entry in the "Режимы" group. Collapsed while the mode is off; once
-// active it expands to the gesture legend + "Калибровка"/"Выключить", and
-// while the calibration wizard runs it shows the step-by-step progress.
+// active it expands to the gesture legend + "Обучение"/"Выключить". The
+// "Обучение" button opens the full-screen GestureTraining game, which also
+// runs the calibration session underneath.
 export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Element {
   const [active, setActive] = useState(false);
   const [calibration, setCalibration] = useState<GestureCalibration | null>(null);
+  const [training, setTraining] = useState(false);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(false);
   const [previewSrc, setPreviewSrc] = useState("");
@@ -105,16 +108,16 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
         <span className="gesture-mode__badge">активен</span>
       </div>
 
-      {calibration ? (
+      {calibration && !training ? (
         <div className="gesture-cal">
           <div className="gesture-cal__step">
-            Калибровка {Math.min(calibration.phase_index, calibration.total_phases)} из{" "}
+            Обучение {Math.min(calibration.phase_index, calibration.total_phases)} из{" "}
             {calibration.total_phases}: <b>{calibration.label}</b>
           </div>
           <p className="gesture-cal__instruction">
             {calibration.done
-              ? "Калибровка завершена — жесты подстроены под вас."
-              : `${calibration.instruction}. Повторите ${calibration.reps_target} раз — следите за кружками.`}
+              ? "Обучение пройдено — жесты подстроены под вас."
+              : `${calibration.instruction}. Следите за кружками.`}
           </p>
           <div className="gesture-cal__dots">
             {Array.from({ length: calibration.reps_target }).map((_, i) => (
@@ -175,7 +178,7 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
       ) : null}
 
       <div className="gesture-mode__actions">
-        {calibration && !calibration.done ? (
+        {calibration && !calibration.done && !training ? (
           <button
             type="button"
             className="gesture-mode__action"
@@ -183,17 +186,20 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
             onClick={() => void run("gesture_calibrate_cancel")}
           >
             <X size={15} />
-            Отменить калибровку
+            Отменить обучение
           </button>
         ) : (
           <button
             type="button"
             className="gesture-mode__action"
-            disabled={busy}
-            onClick={() => void run("gesture_calibrate")}
+            disabled={busy || training}
+            onClick={() => {
+              setTraining(true);
+              void run("gesture_calibrate");
+            }}
           >
-            <Crosshair size={15} />
-            Калибровка
+            <GraduationCap size={15} />
+            Обучение
           </button>
         )}
         <button
@@ -206,6 +212,17 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
           Выключить
         </button>
       </div>
+
+      {training ? (
+        <GestureTraining
+          calibration={calibration}
+          onCancelBackend={() => void run("gesture_calibrate_cancel")}
+          onExit={() => {
+            setTraining(false);
+            void refresh();
+          }}
+        />
+      ) : null}
     </div>
   );
 }
