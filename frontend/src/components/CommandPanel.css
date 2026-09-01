@@ -129,3 +129,146 @@
   text-align: right;
   color: var(--text);
 }
+
+/* Result banner: sticky at the top of the panel instead of at the very
+   bottom under six groups of buttons, where it was effectively invisible
+   (a command clicked in the first group put its confirmation off-screen). */
+.command-panel__result--top {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-elevated-glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+}
+
+.command-panel__stopwatch {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--bg-elevated-glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 2px solid var(--item-accent, var(--accent-blue));
+}
+
+.command-panel__stopwatch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.command-panel__stopwatch-label svg {
+  color: var(--item-accent, var(--accent-blue));
+}
+
+.command-panel__stopwatch-display {
+  flex: 1;
+  min-width: 7ch;
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.command-panel__stopwatch-actions {
+  display: inline-flex;
+  gap: 10px;
+}
+
+.command-panel__stopwatch-actions button {
+  padding: 12px 26px;
+  border-radius: 999px;
+  border: 2px solid var(--item-accent, var(--accent-blue));
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+
+.command-panel__stopwatch-actions button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--item-accent, var(--accent-blue)) 18%, var(--bg));
+  transform: translateY(-1px);
+}
+
+.command-panel__stopwatch-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.command-panel__timer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.command-panel__timer-fields {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.command-panel__timer-part {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.command-panel__timer-part input {
+  width: 3.5em;
+  padding: 8px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.command-panel__timer-colon {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 40px;
+  color: var(--text-dim);
+}
+
+.command-panel__timer-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.command-panel__timer-presets button {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.command-panel__timer-presets button:hover {
+  background: var(--bg-elevated-glass);
+}

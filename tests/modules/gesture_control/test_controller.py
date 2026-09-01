@@ -197,6 +197,76 @@ def test_recalibration_needs_an_active_session(monkeypatch) -> None:
     controller.stop()
 
 
+# --- cursor-zoom lifecycle (enlargement only, no tracking/movement) ---
+
+
+def test_start_recovers_a_stale_cursor_zoom_before_enlarging(monkeypatch) -> None:
+    controller, _ = _make_controller(monkeypatch)
+    calls: list[str] = []
+    monkeypatch.setattr(gd.cursor_zoom, "recover_if_stale", lambda: calls.append("recover"))
+
+    assert controller.start() is True
+    _wait_active(controller, True)
+    try:
+        assert calls == ["recover"]  # healed a possible prior unclean exit
+        assert controller.start() is False  # already active
+        assert calls == ["recover"]  # not run again over a live session
+    finally:
+        controller.stop()
+        _wait_active(controller, False)
+
+
+def test_stop_timeout_still_restores_the_cursor_zoom(monkeypatch) -> None:
+    monkeypatch.setattr(gd, "_STOP_JOIN_TIMEOUT_S", 0.2)
+    restores: list[str] = []
+    monkeypatch.setattr(gd.cursor_zoom, "restore", lambda: restores.append("restore"))
+    release = threading.Event()
+
+    class _SlowCloseTracker(_FakeTracker):
+        def close(self) -> None:  # keeps the worker wedged past the join
+            release.wait(3.0)
+            super().close()
+
+    monkeypatch.setattr(gd, "HandTracker", _SlowCloseTracker)
+    monkeypatch.setattr(gd, "CursorController", _FakeCursor)
+    controller = gd.GestureController(bus=MessageBus())
+
+    controller.start()
+    _wait_active(controller, True)
+    try:
+        assert controller.stop() is False  # join timed out
+        assert restores == ["restore"]  # cursor size put back despite the wedge
+    finally:
+        release.set()
+        _wait_active(controller, False, timeout=5.0)
+
+
+def test_stop_after_self_termination_restores_the_cursor_zoom(monkeypatch) -> None:
+    restores: list[str] = []
+    monkeypatch.setattr(gd.cursor_zoom, "restore", lambda: restores.append("restore"))
+
+    class _FatalTracker(_FakeTracker):
+        def __init__(self, *a, **k) -> None:
+            super().__init__(*a, **k)
+            self._n = 0
+
+        def read(self):
+            self._n += 1
+            if self._n >= 2:
+                raise gd.CameraUnavailable("камера занята")
+            return None
+
+    monkeypatch.setattr(gd, "HandTracker", _FatalTracker)
+    monkeypatch.setattr(gd, "CursorController", _FakeCursor)
+    controller = gd.GestureController(bus=MessageBus())
+
+    controller.start()
+    _wait_active(controller, False)  # worker self-terminated on the camera fault
+    restores.clear()  # ignore the worker's own finally restore
+    assert controller.stop() is False  # nothing left to stop
+    assert restores == ["restore"]  # stop() still nets the size back as a safety net
+
+
 # --- command handlers ---
 
 
@@ -242,6 +312,40 @@ def test_gesture_command_handlers(monkeypatch) -> None:
     fake._active = True
     r4 = asyncio.run(gd._handle_gesture_calibrate({}))
     assert "обучени" in r4["message"].lower()
+
+
+def test_gesture_stop_reports_a_wedged_worker_instead_of_claiming_off(monkeypatch) -> None:
+    class _WedgedController:
+        def stop(self) -> bool:
+            return False  # join timed out, handle kept
+
+        def is_active(self) -> bool:
+            return True  # worker still alive
+
+        def last_error(self) -> str:
+            return "Не удалось остановить режим жестов вовремя — попробуйте ещё раз."
+
+    monkeypatch.setattr(gd, "gesture_controller", _WedgedController())
+    r = asyncio.run(gd._handle_gesture_stop({}))
+    assert r["active"] is True
+    assert "не удалось остановить" in r["message"].lower()
+
+
+def test_gesture_stop_still_says_already_off_when_truly_idle(monkeypatch) -> None:
+    class _IdleController:
+        def stop(self) -> bool:
+            return False
+
+        def is_active(self) -> bool:
+            return False
+
+        def last_error(self):
+            return None
+
+    monkeypatch.setattr(gd, "gesture_controller", _IdleController())
+    r = asyncio.run(gd._handle_gesture_stop({}))
+    assert r["active"] is False
+    assert "и так выключен" in r["message"]
 
 
 def test_gesture_calibrate_fails_when_inactive(monkeypatch) -> None:

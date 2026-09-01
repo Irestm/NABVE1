@@ -23,6 +23,7 @@ def _make_tts(monkeypatch, *, breath_enabled: bool) -> TextToSpeech:
     monkeypatch.setattr(tts_module, "_breath_effect_enabled", lambda: breath_enabled)
     monkeypatch.setattr(tts_module, "get_current_style", lambda: _NeutralStyle())
     monkeypatch.setattr(tts_module, "resolve_voice_prosody_rate", lambda speaker: 1.0)
+    monkeypatch.setattr(tts_module, "resolve_voice_pitch_shift", lambda speaker: 1.0)
     return TextToSpeech(settings=object())  # unused once _synthesize_raw is replaced below
 
 

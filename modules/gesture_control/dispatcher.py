@@ -176,6 +176,11 @@ class GestureController:
             # starting a second worker over one that won't die.
             if self.is_active():
                 return False
+            # Belt-and-suspenders for the enlarged desktop cursor: if a
+            # previous run was killed before restore() ran (SIGKILL / power
+            # loss) and the backend was never bounced, shrink it back now,
+            # before this session enlarges from an already-oversized base.
+            cursor_zoom.recover_if_stale()
             self._stop_event.clear()
             self._worker_done.clear()
             self._recalibrate = False
@@ -193,6 +198,9 @@ class GestureController:
                 # (camera fault / crash) — reap the handle and report "off".
                 self._thread = None
                 overlay_state.set(active=False)
+                # The worker's own finally already ran restore(); this is a
+                # no-op then, and a safety net if it somehow didn't.
+                cursor_zoom.restore()
                 return False
             self._stop_event.set()
         thread.join(timeout=_STOP_JOIN_TIMEOUT_S)
@@ -203,6 +211,10 @@ class GestureController:
                 _STOP_JOIN_TIMEOUT_S,
             )
             self._last_error = "Не удалось остановить режим жестов вовремя — попробуйте ещё раз."
+            # The worker is wedged and its finally may never run — don't
+            # leave the desktop pointer enlarged. restore() is idempotent,
+            # so the worker's own cleanup (if it ever unwinds) is harmless.
+            cursor_zoom.restore()
             return False
         with self._lock:
             self._thread = None
@@ -1083,9 +1095,15 @@ async def _handle_gesture_start(_params: dict[str, Any]) -> dict[str, Any]:
 
 async def _handle_gesture_stop(_params: dict[str, Any]) -> dict[str, Any]:
     stopped = await asyncio.to_thread(gesture_controller.stop)
-    if not stopped:
-        return {"active": False, "message": "Режим жестов и так выключен."}
-    return {"active": False, "message": "Режим жестов выключен."}
+    if stopped:
+        return {"active": False, "message": "Режим жестов выключен."}
+    if gesture_controller.is_active():
+        return {
+            "active": True,
+            "message": gesture_controller.last_error()
+            or "Не удалось остановить режим жестов вовремя — попробуйте ещё раз.",
+        }
+    return {"active": False, "message": "Режим жестов и так выключен."}
 
 
 async def _handle_gesture_calibrate(_params: dict[str, Any]) -> dict[str, Any]:

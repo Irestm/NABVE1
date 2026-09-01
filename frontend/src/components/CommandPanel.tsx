@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import {
   AlarmClockOff,
@@ -140,6 +140,191 @@ function toParams(schema: CommandParamField[], values: FormValues): Record<strin
   return params;
 }
 
+// toggle_timer's UI is digital H/M/S entry (see TimerFields), not the
+// schema-driven range slider every other bounded number field uses. The
+// handler still receives a single "minutes" (float — seconds survive as a
+// fraction); nothing entered omits it entirely, which the handler reads
+// as "cancel every active timer" (see modules.timer.handlers).
+function timerParamsFromHMS(values: FormValues): Record<string, unknown> {
+  const hours = Math.max(0, Math.floor(Number(values.h) || 0));
+  const minutes = Math.max(0, Math.floor(Number(values.m) || 0));
+  const seconds = Math.max(0, Math.floor(Number(values.s) || 0));
+  const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+  if (totalSeconds <= 0) {
+    return {};
+  }
+  return { minutes: totalSeconds / 60 };
+}
+
+const TIMER_PRESETS_MIN = [1, 3, 5, 10, 15] as const;
+
+function TimerFields({
+  values,
+  onChange,
+}: {
+  values: FormValues;
+  onChange: (name: string, value: string) => void;
+}): JSX.Element {
+  const parts = [
+    { name: "h", label: "ч", max: 23 },
+    { name: "m", label: "мин", max: 59 },
+    { name: "s", label: "сек", max: 59 },
+  ] as const;
+  return (
+    <div className="command-panel__timer">
+      <div className="command-panel__timer-fields">
+        {parts.map((part, index) => (
+          <Fragment key={part.name}>
+            {index > 0 && <span className="command-panel__timer-colon">:</span>}
+            <label className="command-panel__timer-part">
+              <span className="command-panel__timer-unit">{part.label}</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={part.max}
+                value={values[part.name] ?? "0"}
+                onChange={(event) => onChange(part.name, event.target.value)}
+              />
+            </label>
+          </Fragment>
+        ))}
+      </div>
+      <div className="command-panel__timer-presets">
+        {TIMER_PRESETS_MIN.map((minutes) => (
+          <button
+            key={minutes}
+            type="button"
+            onClick={() => {
+              onChange("h", "0");
+              onChange("m", String(minutes));
+              onChange("s", "0");
+            }}
+          >
+            {minutes} мин
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatStopwatch(totalMs: number): string {
+  const clamped = Math.max(0, totalMs);
+  const centis = Math.floor(clamped / 10) % 100;
+  const totalSeconds = Math.floor(clamped / 1000);
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+  const cc = String(centis).padStart(2, "0");
+  const ss = String(seconds).padStart(2, "0");
+  const mm = String(minutes).padStart(2, "0");
+  return hours > 0 ? `${hours}:${mm}:${ss}.${cc}` : `${mm}:${ss}.${cc}`;
+}
+
+// Replaces the blind toggle_stopwatch button (one press = "started", next
+// press = a message that scrolled off-screen) with a real ticking
+// stopwatch. Purely client-side — the voice "запусти секундомер" path is
+// untouched and independent. Collapsed it looks like any other command
+// button; the first press expands it and starts the count.
+function StopwatchControl({ accent }: { accent: string }): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [accumulatedMs, setAccumulatedMs] = useState(0);
+  const [nowMs, setNowMs] = useState(0);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!running || startedAt == null) {
+      return;
+    }
+    const id = window.setInterval(() => setNowMs(Date.now()), 71);
+    return () => window.clearInterval(id);
+  }, [running, startedAt]);
+
+  // Collapse back to a plain button when the click lands anywhere outside
+  // the widget (the stopwatch and its own buttons keep it open). The
+  // running count, if any, keeps ticking in state and reappears on the
+  // next expand.
+  useEffect(() => {
+    if (!expanded) {
+      return;
+    }
+    function onPointerDown(event: PointerEvent): void {
+      if (boxRef.current && !boxRef.current.contains(event.target as Node)) {
+        setExpanded(false);
+      }
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [expanded]);
+
+  const shownMs = running && startedAt != null ? accumulatedMs + (nowMs - startedAt) : accumulatedMs;
+
+  function start(): void {
+    const t = Date.now();
+    setStartedAt(t);
+    setNowMs(t);
+    setRunning(true);
+  }
+
+  function stop(): void {
+    setAccumulatedMs((prev) => (startedAt != null ? prev + (Date.now() - startedAt) : prev));
+    setStartedAt(null);
+    setRunning(false);
+  }
+
+  function reset(): void {
+    setAccumulatedMs(0);
+    setStartedAt(null);
+    setNowMs(0);
+    setRunning(false);
+  }
+
+  if (!expanded) {
+    return (
+      <button
+        type="button"
+        className="command-panel__button"
+        style={{ "--item-accent": accent } as CSSProperties}
+        onClick={() => setExpanded(true)}
+        title="Секундомер"
+      >
+        <Watch size={22} />
+        <span>Секундомер</span>
+      </button>
+    );
+  }
+
+  return (
+    <div
+      ref={boxRef}
+      className="command-panel__stopwatch"
+      style={{ "--item-accent": accent } as CSSProperties}
+    >
+      <span className="command-panel__stopwatch-label">
+        <Watch size={16} /> Секундомер
+      </span>
+      <span className="command-panel__stopwatch-display">{formatStopwatch(shownMs)}</span>
+      <span className="command-panel__stopwatch-actions">
+        {running ? (
+          <button type="button" onClick={stop}>
+            Стоп
+          </button>
+        ) : (
+          <button type="button" onClick={start}>
+            Старт
+          </button>
+        )}
+        <button type="button" onClick={reset} disabled={running || shownMs === 0}>
+          Сброс
+        </button>
+      </span>
+    </div>
+  );
+}
+
 function ParamFields({
   schema,
   values,
@@ -279,7 +464,11 @@ export function CommandPanel({ onNavigateToGames }: CommandPanelProps): JSX.Elem
     setResultMessage("");
     setResultError("");
     if ((command.params_schema && command.params_schema.length > 0) || command.dangerous) {
-      setFormValues(command.params_schema ? defaultFormValues(command.params_schema) : {});
+      if (command.name === "toggle_timer") {
+        setFormValues({ h: "0", m: "5", s: "0" });
+      } else {
+        setFormValues(command.params_schema ? defaultFormValues(command.params_schema) : {});
+      }
       setOpenCommand(command);
       return;
     }
@@ -294,6 +483,19 @@ export function CommandPanel({ onNavigateToGames }: CommandPanelProps): JSX.Elem
     <div className="section command-panel">
       <h3>Команды</h3>
       {loadError && <p className="status-error">{loadError}</p>}
+
+      {(resultMessage || resultError) && (
+        <p
+          className={
+            resultError
+              ? "status-error command-panel__result command-panel__result--top"
+              : "command-panel__result command-panel__result--top"
+          }
+          role="status"
+        >
+          {resultError || resultMessage}
+        </p>
+      )}
 
       {groups.map(([group, groupCommands]) => (
         <div key={group} className="command-panel__group">
@@ -310,7 +512,14 @@ export function CommandPanel({ onNavigateToGames }: CommandPanelProps): JSX.Elem
                 <DiscussionEndButton accent={GROUP_ACCENT[group] ?? DEFAULT_GROUP_ACCENT} />
               </>
             )}
+            {group === "time_lang" && (
+              <StopwatchControl accent={GROUP_ACCENT[group] ?? DEFAULT_GROUP_ACCENT} />
+            )}
             {groupCommands.map((command) => {
+              // Rendered above as a live ticking widget, not a blind toggle button.
+              if (command.name === "toggle_stopwatch") {
+                return null;
+              }
               const Icon = ICONS[command.icon];
               return (
                 <button
@@ -331,17 +540,15 @@ export function CommandPanel({ onNavigateToGames }: CommandPanelProps): JSX.Elem
         </div>
       ))}
 
-      {(resultMessage || resultError) && (
-        <p className={resultError ? "status-error" : "command-panel__result"}>{resultError || resultMessage}</p>
-      )}
-
       {openCommand && (
         <ConfirmDialog
           title={openCommand.dangerous ? `Вы уверены? — ${openCommand.label}` : openCommand.label}
           message={
             openCommand.dangerous
               ? "Это действие необратимо. Подтвердите, что хотите его выполнить."
-              : "Заполните параметры и подтвердите выполнение."
+              : openCommand.name === "toggle_timer"
+                ? "Введите время. Пусто (0:00:00) — отменить все активные таймеры."
+                : "Заполните параметры и подтвердите выполнение."
           }
           tone={openCommand.dangerous ? "danger" : "neutral"}
           confirmLabel={openCommand.dangerous ? "Да, выполнить" : "Выполнить"}
@@ -352,15 +559,28 @@ export function CommandPanel({ onNavigateToGames }: CommandPanelProps): JSX.Elem
             if (!formReady) {
               return;
             }
-            void execute(openCommand, schema ? toParams(schema, formValues) : {});
+            const params =
+              openCommand.name === "toggle_timer"
+                ? timerParamsFromHMS(formValues)
+                : schema
+                  ? toParams(schema, formValues)
+                  : {};
+            void execute(openCommand, params);
           }}
         >
-          {schema && (
-            <ParamFields
-              schema={schema}
+          {openCommand.name === "toggle_timer" ? (
+            <TimerFields
               values={formValues}
               onChange={(name, value) => setFormValues((prev) => ({ ...prev, [name]: value }))}
             />
+          ) : (
+            schema && (
+              <ParamFields
+                schema={schema}
+                values={formValues}
+                onChange={(name, value) => setFormValues((prev) => ({ ...prev, [name]: value }))}
+              />
+            )
           )}
         </ConfirmDialog>
       )}

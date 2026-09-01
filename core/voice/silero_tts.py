@@ -27,44 +27,45 @@ class VoiceOption:
     # below, which reuse a real speaker's voice but aren't a distinct
     # identity Silero itself knows about. Resolve via resolve_silero_speaker().
     silero_speaker: str = ""
-    # Intrinsic tempo/pitch multiplier for this specific voice entry (see
-    # core/voice/tts.py:_apply_prosody_rate), independent of and combined
-    # with whatever the current communication style's own rate is. 1.0 for
-    # every real distinct speaker; only the variants below set this.
+    # Intrinsic, pitch-preserving tempo multiplier for this voice entry (see
+    # core/voice/tts.py:_apply_prosody_rate), combined with the current
+    # communication style's own tempo. 1.0 for most voices.
     prosody_rate: float = 1.0
+    # Intrinsic pitch multiplier for this voice entry, duration-preserving
+    # (see core/voice/tts.py:_apply_pitch_shift): <1.0 deeper, >1.0
+    # brighter, 1.0 unchanged. This is what gives the character variants
+    # below a distinct timbre — tempo and pitch are separate knobs now, not
+    # one coupled resample.
+    pitch_shift: float = 1.0
 
 
 # The five named speakers shipped in the v3_1_ru multi-speaker checkpoint,
-# "random" as an explicit sixth option (the model answers to it too, but
-# it isn't a stable identity — every synthesize() call gets a different
-# random voice rather than sticking to one; exposed on purpose, with the
-# instability spelled out in the label itself), plus three pitch/tempo
-# *variants* built on top of the three most distinct real speakers. Those
-# three aren't new Silero speaker identities — there are only ever the five
-# real ones in this checkpoint — they're the same underlying voice resampled
-# to a deliberately different tempo/pitch (see resolve_silero_speaker /
-# resolve_voice_prosody_rate and core/voice/tts.py), a second, honest way to
-# add more *selectable, audibly distinct* options without pretending a 6th
-# person exists in the model.
+# "random" as an explicit option (the model answers to it too, but it isn't
+# a stable identity — every synthesize() call gets a different voice; the
+# instability is spelled out in the label), plus three character *variants*
+# built on the three most distinct real speakers. Those three aren't new
+# Silero identities — there are only ever five real ones in this checkpoint
+# (resolve_silero_speaker maps them back) — they're the same underlying
+# voice given a deliberate timbre/tempo of its own via core/voice/tts.py:
+# "Василич" is aidar dropped into a low register at normal tempo, "Артём"
+# is eugene a touch brighter, "Алиса" is baya a little softer and slower.
+# Every entry has a unique standalone name so the selection panel and any
+# voiced pick never collide.
 VOICE_OPTIONS: tuple[VoiceOption, ...] = (
     VoiceOption(speaker="aidar", label="Айдар", gender="male"),
-    VoiceOption(speaker="aidar-deep", label="Айдар низкий", gender="male", silero_speaker="aidar", prosody_rate=0.85),
+    VoiceOption(
+        speaker="aidar-deep", label="Василич", gender="male", silero_speaker="aidar", pitch_shift=0.84
+    ),
     VoiceOption(speaker="eugene", label="Евгений", gender="male"),
     VoiceOption(
-        speaker="eugene-bright", label="Евгений бодрый", gender="male", silero_speaker="eugene", prosody_rate=1.15
+        speaker="eugene-bright", label="Артём", gender="male", silero_speaker="eugene", pitch_shift=1.08
     ),
     VoiceOption(speaker="baya", label="Байя", gender="female"),
-    VoiceOption(speaker="baya-soft", label="Байя мягкая", gender="female", silero_speaker="baya", prosody_rate=0.92),
+    VoiceOption(
+        speaker="baya-soft", label="Алиса", gender="female", silero_speaker="baya", prosody_rate=0.94
+    ),
     VoiceOption(speaker="kseniya", label="Ксения", gender="female"),
-    # Labeled "Вторая Ксения", not just "Ксения (Xenia)": onboarding's
-    # spoken voice selection (modules/user_profile/onboarding.py's
-    # _voice_short_name) strips everything from " (" onward, so "Ксения
-    # (Xenia)" and plain "Ксения" collapsed to the identical short name
-    # "Ксения" — this voice could never actually be chosen by voice, only
-    # "kseniya" ever matched. The first word now has to differ. Same reason
-    # the three variants above are named "Айдар низкий" etc without
-    # parentheses, not "Айдар (низкий)".
-    VoiceOption(speaker="xenia", label="Вторая Ксения (Xenia)", gender="female"),
+    VoiceOption(speaker="xenia", label="Вероника", gender="female"),
     VoiceOption(speaker="random", label="Случайный (звучит по-разному каждый раз)", gender="other"),
 )
 VOICE_SPEAKER_IDS: frozenset[str] = frozenset(option.speaker for option in VOICE_OPTIONS)
@@ -73,6 +74,7 @@ _SILERO_SPEAKER_BY_OPTION: dict[str, str] = {
     option.speaker: (option.silero_speaker or option.speaker) for option in VOICE_OPTIONS
 }
 _PROSODY_RATE_BY_OPTION: dict[str, float] = {option.speaker: option.prosody_rate for option in VOICE_OPTIONS}
+_PITCH_SHIFT_BY_OPTION: dict[str, float] = {option.speaker: option.pitch_shift for option in VOICE_OPTIONS}
 
 
 def resolve_silero_speaker(speaker: str) -> str:
@@ -84,11 +86,19 @@ def resolve_silero_speaker(speaker: str) -> str:
 
 
 def resolve_voice_prosody_rate(speaker: str) -> float:
-    """This voice option's own intrinsic tempo/pitch multiplier (1.0 for
-    every real speaker; only the variants differ) — combined with the
-    current communication style's rate in core/voice/tts.py, not a
+    """This voice option's own intrinsic, pitch-preserving tempo multiplier
+    (1.0 unless the voice deliberately speaks slower/faster) — combined with
+    the current communication style's tempo in core/voice/tts.py, not a
     replacement for it."""
     return _PROSODY_RATE_BY_OPTION.get(speaker, 1.0)
+
+
+def resolve_voice_pitch_shift(speaker: str) -> float:
+    """This voice option's own intrinsic, duration-preserving pitch
+    multiplier (<1.0 deeper, >1.0 brighter, 1.0 unchanged) — applied in
+    core/voice/tts.py:_apply_pitch_shift. Only the character variants set
+    it away from 1.0."""
+    return _PITCH_SHIFT_BY_OPTION.get(speaker, 1.0)
 
 
 class SileroVoice:

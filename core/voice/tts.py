@@ -10,7 +10,12 @@ from core.voice import voice_preference
 from core.voice.config import VoiceSettings
 from core.voice.number_speech import spell_out_numbers
 from core.voice.silero_tts import SAMPLE_RATE as SILERO_SAMPLE_RATE
-from core.voice.silero_tts import SileroVoice, resolve_silero_speaker, resolve_voice_prosody_rate
+from core.voice.silero_tts import (
+    SileroVoice,
+    resolve_silero_speaker,
+    resolve_voice_pitch_shift,
+    resolve_voice_prosody_rate,
+)
 from core.voice.sound_effects import BREATH_MARKER, generate_breath_sound
 from core.voice.tts_effects import (
     apply_response_delay,
@@ -96,22 +101,108 @@ def _apply_assistant_volume(samples: np.ndarray) -> np.ndarray:
     return np.clip(samples * (percent / 100.0), -1.0, 1.0).astype(np.float32)
 
 
-def _apply_prosody_rate(samples: np.ndarray, rate: float) -> np.ndarray:
-    """Approximates a personality's intonation by resampling the waveform:
-    rate > 1.0 plays faster and higher-pitched (energetic/aggressive
-    styles), rate < 1.0 slower and lower-pitched (calm styles), 1.0 leaves
-    it untouched. Neither Silero's apply_tts() nor Piper's synthesize()
-    exposes real prosody/emotion parameters, so a true time-stretch (tempo
-    changed independently of pitch, via a phase vocoder) would need a new
-    dependency (e.g. librosa) we don't otherwise have; this couples tempo
-    and pitch together instead — a real, audible effect, just not
-    independent prosody control."""
+# WSOLA time-stretch parameters (see _time_stretch). A ~40ms frame at 50%
+# overlap is the usual speech-friendly choice; the ±10ms waveform-similarity
+# search between successive grains is what keeps them phase-aligned, so the
+# result avoids the metallic "phasiness" plain overlap-add produces on
+# voiced speech.
+_STRETCH_FRAME_SECONDS = 0.040
+_STRETCH_OVERLAP = 0.5
+_STRETCH_SEEK_SECONDS = 0.010
+
+
+def _linear_resample(samples: np.ndarray, target_length: int) -> np.ndarray:
+    """Plain index-space resample — changes duration AND pitch together.
+    Used only as the short-buffer fallback inside _time_stretch and as the
+    second half of _apply_pitch_shift."""
+    target_length = max(1, target_length)
+    original_indices = np.arange(samples.size, dtype=np.float64)
+    resampled_indices = np.linspace(0, samples.size - 1, target_length)
+    return np.interp(resampled_indices, original_indices, samples).astype(np.float32)
+
+
+def _time_stretch(samples: np.ndarray, sample_rate: int, stretch: float) -> np.ndarray:
+    """Changes a waveform's duration by `stretch` (>1.0 longer/slower, <1.0
+    shorter/faster) WITHOUT moving its pitch, via WSOLA: overlap-add of
+    windowed grains, each nudged by a short cross-correlation search so it
+    lines up with the previous one. Pure numpy — no scipy/librosa, matching
+    the rest of this module's DSP. Buffers too short for a couple of frames
+    fall back to a plain resample (a blip's pitch is inaudible anyway)."""
+    samples = samples.astype(np.float32, copy=False)
+    if stretch == 1.0 or samples.size == 0 or sample_rate <= 0:
+        return samples
+
+    frame = max(2, int(sample_rate * _STRETCH_FRAME_SECONDS))
+    frame -= frame % 2
+    syn_hop = max(1, int(frame * _STRETCH_OVERLAP))
+    ana_hop = max(1, int(round(syn_hop / stretch)))
+    seek = min(int(sample_rate * _STRETCH_SEEK_SECONDS), syn_hop)
+
+    if samples.size < 2 * frame + seek:
+        return _linear_resample(samples, int(round(samples.size * stretch)))
+
+    window = np.hanning(frame).astype(np.float32)
+    out_len = max(1, int(round(samples.size * stretch)))
+    out = np.zeros(out_len + frame, dtype=np.float32)
+    norm = np.zeros(out_len + frame, dtype=np.float32)
+    max_start = samples.size - frame
+
+    ana = 0.0
+    syn = 0
+    delta = 0
+    while syn + frame <= out_len:
+        start = min(max(int(ana) + delta, 0), max_start)
+        out[syn:syn + frame] += samples[start:start + frame] * window
+        norm[syn:syn + frame] += window
+
+        reference = samples[start + syn_hop:start + syn_hop + frame]
+
+        ana += ana_hop
+        syn += syn_hop
+
+        nominal = int(ana)
+        if reference.size == frame and nominal - seek >= 0 and nominal + frame + seek <= samples.size:
+            search = samples[nominal - seek:nominal + frame + seek]
+            scores = np.correlate(search, reference, mode="valid")
+            delta = int(np.argmax(scores)) - seek
+        else:
+            delta = 0
+
+    out = out[:out_len]
+    norm = norm[:out_len]
+    np.divide(out, norm, out=out, where=norm > 1e-6)
+    return out.astype(np.float32)
+
+
+def _apply_prosody_rate(samples: np.ndarray, rate: float, sample_rate: int = SILERO_SAMPLE_RATE) -> np.ndarray:
+    """Applies a communication style's tempo: rate > 1.0 speeds speech up,
+    rate < 1.0 slows it down, 1.0 leaves it untouched. Pitch is preserved
+    (unlike the old plain-resample approach, which also dragged the voice
+    into an unnaturally low register whenever a calm/slow style was
+    selected) — see _time_stretch. Neither Silero's apply_tts() nor Piper's
+    synthesize() exposes a real prosody parameter, so this is still a
+    stylized tempo shift, not genuine emotional delivery, but tempo and
+    pitch are now independent."""
     if rate == 1.0 or samples.size == 0:
         return samples
-    new_length = max(1, int(round(samples.size / rate)))
-    original_indices = np.arange(samples.size, dtype=np.float64)
-    resampled_indices = np.linspace(0, samples.size - 1, new_length)
-    return np.interp(resampled_indices, original_indices, samples).astype(np.float32)
+    return _time_stretch(samples, sample_rate, 1.0 / rate)
+
+
+def _apply_pitch_shift(samples: np.ndarray, sample_rate: int, ratio: float) -> np.ndarray:
+    """Shifts a voice's pitch by `ratio` (e.g. 0.84 -> noticeably deeper,
+    1.08 -> a touch brighter) while keeping its duration: resample to move
+    the pitch (which also drags the duration by 1/ratio), then WSOLA-stretch
+    back to the original length with the new pitch preserved. This is how
+    the per-voice character variants (see core/voice/silero_tts.py) get a
+    distinct timbre now that the old plain-resample trick — which also
+    warped their tempo — is gone."""
+    if ratio == 1.0 or samples.size == 0 or sample_rate <= 0:
+        return samples
+    repitched = _linear_resample(samples, int(round(samples.size / ratio)))
+    restored = _time_stretch(repitched, sample_rate, ratio)
+    if restored.size < 2:
+        return samples.astype(np.float32, copy=False)
+    return restored.astype(np.float32, copy=False)
 
 
 class TextToSpeech:
@@ -190,13 +281,15 @@ class TextToSpeech:
         call only (used for one-off previews); otherwise the current
         selection from core.voice.voice_preference is used.
 
-        Whatever comes out of Silero/Piper is then run through the combined
-        prosody rate of the current communication style AND the selected
-        voice's own intrinsic rate (see modules.user_profile.communication_styles,
-        core/voice/silero_tts.py's pitch/tempo voice variants, and this
-        module's `_apply_prosody_rate`) — the "нейронка молчаливо
-        разговаривает по-разному в зависимости от характера" bit,
-        approximated as a tempo/pitch shift rather than real emotional
+        Whatever comes out of Silero/Piper is then run through two
+        independent, pitch-preserving steps: the communication style's tempo
+        combined with the selected voice's own intrinsic tempo
+        (`_apply_prosody_rate`), then that voice's intrinsic pitch shift
+        (`_apply_pitch_shift`) — see modules.user_profile.communication_styles
+        and core/voice/silero_tts.py's voice character variants. This is the
+        "нейронка молчаливо разговаривает по-разному в зависимости от
+        характера" bit; tempo and timbre are decoupled rather than warped
+        together, but it is still a stylized shift, not real emotional
         delivery.
 
         If the breath effect is enabled AND `text` actually contains
@@ -216,15 +309,18 @@ class TextToSpeech:
         offsets."""
         text = spell_out_numbers(text, language)
         style = get_current_style()
-        voice_rate = resolve_voice_prosody_rate(speaker or voice_preference.get_selected_speaker())
+        resolved_speaker = speaker or voice_preference.get_selected_speaker()
+        voice_rate = resolve_voice_prosody_rate(resolved_speaker)
+        voice_pitch = resolve_voice_pitch_shift(resolved_speaker)
         effective_rate = style.prosody_rate * voice_rate
 
         if _breath_effect_enabled() and BREATH_MARKER in text:
             samples, sample_rate = self._synthesize_with_breath_markers(text, language, speaker, effective_rate)
         else:
             samples, sample_rate = self._synthesize_raw(text, language, speaker)
-            samples = _apply_prosody_rate(samples, effective_rate)
+            samples = _apply_prosody_rate(samples, effective_rate, sample_rate)
 
+        samples = _apply_pitch_shift(samples, sample_rate, voice_pitch)
         samples = _apply_delay_if_enabled(samples, sample_rate)
         samples = _apply_voice_fx(samples, sample_rate)
         samples = _apply_assistant_volume(samples)
@@ -244,7 +340,7 @@ class TextToSpeech:
                 if not have_sample_rate:
                     sample_rate = sr
                     have_sample_rate = True
-                pieces.append(_apply_prosody_rate(raw_samples, effective_rate))
+                pieces.append(_apply_prosody_rate(raw_samples, effective_rate, sr))
             if index < len(segments) - 1:
                 breath = generate_breath_sound(sample_rate)
                 if breath.size:
