@@ -4,11 +4,13 @@ import { Check, RefreshCw, X } from "lucide-react";
 import type { GestureCalibration } from "../types";
 import "./GestureTraining.css";
 
-// Full-screen "Обучение" game. The first three steps (steady / corners /
-// click) are driven by the backend calibration session via the `calibration`
-// prop — popping balls is visual juice, the real progression is the
-// session's phase_key / reps. Once the backend session ends the game
-// self-drives two practice steps (right click, scroll) and then closes.
+// Full-screen "Обучение" game.
+//   intro   — режим уже включён, просим раскрыть ладонь и лопнуть стартовый
+//             шар кулаком (подтверждаем, что руку видно и клик работает).
+//   steady / corners / click — ведёт бэкенд-сессия калибровки (phase_key);
+//             лопанье шариков = визуальный отклик, прогресс = reps.
+//   rightclick / scroll — фронт ведёт сам, без замеров (тренировка).
+//   finished — 🎉 и авто-закрытие.
 
 interface GestureTrainingProps {
   calibration: GestureCalibration | null;
@@ -16,12 +18,13 @@ interface GestureTrainingProps {
   onCancelBackend: () => void;
 }
 
-type Step = "steady" | "corners" | "click" | "rightclick" | "scroll" | "finished";
+type Step = "intro" | "steady" | "corners" | "click" | "rightclick" | "scroll" | "finished";
 
 const BACKEND_STEPS: Step[] = ["steady", "corners", "click"];
 
 const POSE: Record<Step, { glyph: string; pose: string }> = {
-  steady: { glyph: "☝️", pose: "Один указательный палец вытянут, ладонь к камере" },
+  intro: { glyph: "🖐️", pose: "Режим включён. Раскрой ладонь к камере — так система тебя увидит" },
+  steady: { glyph: "☝️", pose: "Один указательный палец, ладонь к камере" },
   corners: { glyph: "☝️", pose: "Тот же указательный — тянемся им до краёв экрана" },
   click: { glyph: "✊", pose: "Наводишься указательным, потом сжимаешь всё в кулак" },
   rightclick: { glyph: "👍", pose: "Кулак + большой палец в сторону (жест «класс»)" },
@@ -29,8 +32,7 @@ const POSE: Record<Step, { glyph: string; pose: string }> = {
   finished: { glyph: "✅", pose: "" },
 };
 
-// ball layouts per round — [x%, y%]. Rounds spread wider / lower so the
-// backend zone measurement covers more of the screen.
+// ball layouts per round — [x%, y%]. Later rounds spread wider / lower.
 const LAYOUTS: Array<Array<[number, number]>> = [
   [
     [18, 24],
@@ -43,9 +45,9 @@ const LAYOUTS: Array<Array<[number, number]>> = [
     [50, 20],
   ],
   [
-    [20, 82],
-    [80, 84],
-    [50, 50],
+    [22, 84],
+    [78, 82],
+    [50, 48],
   ],
 ];
 
@@ -64,11 +66,13 @@ export function GestureTraining({
   onExit,
   onCancelBackend,
 }: GestureTrainingProps): JSX.Element {
-  const [step, setStep] = useState<Step>("steady");
+  const [step, setStep] = useState<Step>("intro");
+  const [started, setStarted] = useState(false);
   const [round, setRound] = useState(0);
   const [popped, setPopped] = useState<number[]>([]);
-  const [scrolledToEnd, setScrolledToEnd] = useState(false);
+  const [scrollFrac, setScrollFrac] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  const sawBackendRef = useRef(false);
 
   // best-effort fullscreen while the game is open
   useEffect(() => {
@@ -79,24 +83,36 @@ export function GestureTraining({
     };
   }, []);
 
-  // follow the backend session for the first three steps
+  // fresh ball state whenever the step changes
   useEffect(() => {
-    if (!calibration) return;
+    setPopped([]);
+  }, [step]);
+
+  // once the user has started, follow the backend calibration phase
+  useEffect(() => {
+    if (!started || !calibration) return;
     const key = calibration.phase_key;
     if (key === "steady" || key === "corners" || key === "click") {
-      setStep((s) => (s === key ? s : (setPopped([]), key)));
+      sawBackendRef.current = true;
+      setStep((s) => (s === key ? s : key));
+    } else if (key === "done") {
+      sawBackendRef.current = true;
     }
-  }, [calibration?.phase_key]);
+  }, [started, calibration?.phase_key]);
 
-  // backend session gone while still on a backend step => it finished on its
-  // own; move on to the practice steps. (Cancel closes the whole overlay
-  // before this can fire.)
+  // backend session cleared AFTER we actually saw it run => it finished on
+  // its own; move on to the practice steps. Never fires before the user
+  // started (so the mount-time null can't skip anything).
   useEffect(() => {
-    if (calibration === null && BACKEND_STEPS.includes(step)) {
-      setPopped([]);
+    if (
+      started &&
+      calibration === null &&
+      sawBackendRef.current &&
+      BACKEND_STEPS.includes(step)
+    ) {
       setStep("rightclick");
     }
-  }, [calibration, step]);
+  }, [started, calibration, step]);
 
   const layout = useMemo(() => LAYOUTS[round % LAYOUTS.length], [round]);
 
@@ -111,32 +127,29 @@ export function GestureTraining({
 
   function onScrollArea(e: React.UIEvent<HTMLDivElement>): void {
     const el = e.currentTarget;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 6) setScrolledToEnd(true);
+    const max = el.scrollHeight - el.clientHeight;
+    setScrollFrac(max > 0 ? el.scrollTop / max : 0);
   }
 
-  // practice step auto-advance
+  // practice auto-advance
   useEffect(() => {
     if (step === "rightclick" && popped.length >= 3) {
-      const t = window.setTimeout(() => {
-        setPopped([]);
-        setStep("scroll");
-      }, 900);
+      const t = window.setTimeout(() => setStep("scroll"), 900);
       return () => window.clearTimeout(t);
     }
-    if (step === "scroll" && scrolledToEnd) {
+    if (step === "scroll" && scrollFrac >= 0.98) {
       const t = window.setTimeout(() => setStep("finished"), 700);
       return () => window.clearTimeout(t);
     }
     if (step === "finished") {
-      const t = window.setTimeout(onExit, 1600);
+      const t = window.setTimeout(onExit, 1800);
       return () => window.clearTimeout(t);
     }
     return undefined;
-  }, [step, popped.length, scrolledToEnd, onExit]);
+  }, [step, popped.length, scrollFrac, onExit]);
 
   const stepIndex =
     (["steady", "corners", "click", "rightclick", "scroll"] as Step[]).indexOf(step) + 1;
-
   const repsDone = calibration?.reps_done ?? 0;
   const repsTarget = calibration?.reps_target ?? 3;
 
@@ -149,11 +162,11 @@ export function GestureTraining({
               key={name}
               className={
                 "gtrain__crumb" +
-                (i + 1 < stepIndex ? " gtrain__crumb--done" : "") +
+                (stepIndex > 0 && i + 1 < stepIndex ? " gtrain__crumb--done" : "") +
                 (i + 1 === stepIndex ? " gtrain__crumb--now" : "")
               }
             >
-              {i + 1 < stepIndex ? <Check size={12} strokeWidth={3} /> : i + 1}
+              {stepIndex > 0 && i + 1 < stepIndex ? <Check size={12} strokeWidth={3} /> : i + 1}
               <em>{name}</em>
             </span>
           ))}
@@ -177,17 +190,26 @@ export function GestureTraining({
         </div>
       ) : null}
 
+      {step === "intro" ? (
+        <div className="gtrain__stage">
+          <p className="gtrain__task">
+            Режим жестов включён. Раскрой ладонь к камере, потом наведись указательным на шар и
+            сожми кулак — так мы убедимся, что руку видно, и начнём.
+          </p>
+          <div className="gtrain__center">
+            <Ball colour="#5ad1a5" big onClick={() => setStarted(true)} />
+          </div>
+          {started ? <p className="gtrain__hint">Отлично! Ждём камеру…</p> : null}
+        </div>
+      ) : null}
+
       {step === "steady" ? (
         <div className="gtrain__stage">
           <p className="gtrain__task">
             Наведись указательным на шар в центре и держи руку спокойно пару секунд.
           </p>
           <div className="gtrain__center">
-            <Ball
-              colour="#5ad1a5"
-              filled={repsTarget > 0 && repsDone / repsTarget}
-              big
-            />
+            <Ball colour="#5ad1a5" filled={repsTarget > 0 ? repsDone / repsTarget : 0} big />
           </div>
           <Progress done={repsDone} target={repsTarget} />
         </div>
@@ -195,16 +217,19 @@ export function GestureTraining({
 
       {step === "corners" ? (
         <div className="gtrain__stage">
-          <p className="gtrain__task">Наведись указательным на каждый шар у края экрана.</p>
-          {CORNER_LAYOUT.map(([x, y], i) => (
-            <div
-              key={i}
-              className="gtrain__ball-slot"
-              style={{ left: `${x}%`, top: `${y}%` } as CSSProperties}
-            >
-              <Ball colour="#5ad1a5" filled={i < repsDone ? 1 : 0} />
-            </div>
-          ))}
+          <p className="gtrain__task">Тянись указательным до каждого шара у края экрана.</p>
+          {CORNER_LAYOUT.map(([x, y], i) => {
+            const lit = Math.round((repsDone / Math.max(repsTarget, 1)) * CORNER_LAYOUT.length);
+            return (
+              <div
+                key={i}
+                className="gtrain__ball-slot"
+                style={{ left: `${x}%`, top: `${y}%` } as CSSProperties}
+              >
+                <Ball colour="#5ad1a5" filled={i < lit ? 1 : 0} />
+              </div>
+            );
+          })}
           <Progress done={repsDone} target={repsTarget} />
         </div>
       ) : null}
@@ -280,8 +305,11 @@ export function GestureTraining({
               </div>
             ))}
             <div className="gtrain__scrollend">
-              {scrolledToEnd ? "Отлично, долистал!" : "…листай сюда…"}
+              {scrollFrac >= 0.98 ? "Отлично, долистал!" : "…листай сюда…"}
             </div>
+          </div>
+          <div className="gtrain__scrollbar">
+            <div className="gtrain__scrollbar-fill" style={{ width: `${Math.round(scrollFrac * 100)}%` }} />
           </div>
         </div>
       ) : null}
@@ -325,12 +353,7 @@ function Ball({ colour, popped, filled, big, onClick, onContextMenu }: BallProps
         (popped ? " gtrain__ball--popped" : "") +
         (big ? " gtrain__ball--big" : "")
       }
-      style={
-        {
-          "--ball": colour,
-          "--fill": String(f),
-        } as CSSProperties
-      }
+      style={{ "--ball": colour, "--fill": String(f) } as CSSProperties}
       onClick={onClick}
       onContextMenu={onContextMenu}
       aria-label="шар"
