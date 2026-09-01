@@ -59,3 +59,7 @@ figma_plugin/code.js
 # Claude Code's private working notes for itself between sessions — never
 # for GitHub, re-read this at the start of a new session if context is lost.
 AGENT_NOTES.md
+
+# Claude Code's project-instructions file — local guidance only, not for the
+# repo. Purged from history 2026-09-02.
+CLAUDE.md
