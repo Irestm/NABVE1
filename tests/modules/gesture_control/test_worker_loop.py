@@ -155,7 +155,6 @@ class _RecordingCursor:
 
 @pytest.fixture(autouse=True)
 def _stub_env(monkeypatch):
-    monkeypatch.setattr(gd.calibration.profile_service_layer, "set_fact", lambda *a, **k: None)
     monkeypatch.setattr(gd.calibration, "load_min_cutoff", lambda: 1.0)
     monkeypatch.setattr(gd.calibration, "load_deadzone_px", lambda: 2)
     monkeypatch.setattr(gd.calibration, "load_click_gap_thresholds", lambda: (0.55, 0.75))

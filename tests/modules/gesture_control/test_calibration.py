@@ -106,28 +106,11 @@ def test_non_pointing_frames_are_ignored_in_steady() -> None:
     assert len(s._steady_pts) == 0
 
 
-def test_persist_writes_facts(monkeypatch) -> None:
-    written: dict[str, str] = {}
-    monkeypatch.setattr(
-        calibration.profile_service_layer,
-        "set_fact",
-        lambda uow, key, value, **kw: written.__setitem__(key, value),
-    )
+def test_persist_stores_nothing_and_returns_defaults() -> None:
+    # "Обучение" is a tutorial now: it never persists, control uses defaults.
     s = calibration.CalibrationSession(px_per_norm=3000.0)
     _do_all(s)
-    s.persist()
-    assert set(written) == {
-        "gesture_min_cutoff",
-        "gesture_deadzone_px",
-        "gesture_zone_bounds",
-        "gesture_click_gap_engage",
-        "gesture_click_gap_release",
-    }
-
-
-def test_persist_falls_back_to_defaults_when_unfinished(monkeypatch) -> None:
-    monkeypatch.setattr(calibration.profile_service_layer, "set_fact", lambda *a, **k: None)
-    applied = calibration.CalibrationSession().persist()
+    applied = s.persist()
     assert applied.min_cutoff == ONE_EURO_MIN_CUTOFF
     assert applied.deadzone_px == CURSOR_DEADZONE_PX
     assert applied.zone_bounds is None
@@ -135,43 +118,11 @@ def test_persist_falls_back_to_defaults_when_unfinished(monkeypatch) -> None:
     assert applied.click_gap_release == FIST_CLICK_RELEASE
 
 
-def test_loaders_fall_back_to_defaults(monkeypatch) -> None:
-    monkeypatch.setattr(calibration.profile_service_layer, "get_fact", lambda uow, key: None)
+def test_loaders_always_return_defaults() -> None:
     assert calibration.load_min_cutoff() == ONE_EURO_MIN_CUTOFF
     assert calibration.load_deadzone_px() == CURSOR_DEADZONE_PX
     assert calibration.load_click_gap_thresholds() == (FIST_CLICK_ENGAGE, FIST_CLICK_RELEASE)
     assert calibration.load_zone_bounds() is None
-
-
-def test_loaders_read_stored_values(monkeypatch) -> None:
-    stored = {
-        "gesture_min_cutoff": "0.7",
-        "gesture_deadzone_px": "9",
-        "gesture_click_gap_engage": "0.18",
-        "gesture_click_gap_release": "0.42",
-        "gesture_zone_bounds": "0.10,0.90,0.15,0.80",
-    }
-    monkeypatch.setattr(
-        calibration.profile_service_layer, "get_fact", lambda uow, key: stored.get(key)
-    )
-    assert calibration.load_min_cutoff() == 0.7
-    assert calibration.load_deadzone_px() == 9
-    assert calibration.load_click_gap_thresholds() == (0.18, 0.42)
-    assert calibration.load_zone_bounds() == (0.10, 0.90, 0.15, 0.80)
-
-
-@pytest.mark.parametrize(
-    "stored, expected",
-    [
-        ("0.10,0.90,0.15,0.80", (0.10, 0.90, 0.15, 0.80)),
-        ("0.4,0.5,0.4,0.5", None),  # span below CORNER_ZONE_MIN_SPAN
-        ("garbage", None),
-        (None, None),
-    ],
-)
-def test_load_zone_bounds_guards(monkeypatch, stored, expected) -> None:
-    monkeypatch.setattr(calibration.profile_service_layer, "get_fact", lambda uow, key: stored)
-    assert calibration.load_zone_bounds() == expected
 
 
 def test_click_phase_times_out_and_uses_defaults() -> None:
@@ -202,18 +153,10 @@ def test_going_dark_aborts_at_the_next_boundary() -> None:
     assert s.aborted is True and "темно" in s.abort_reason
 
 
-def test_dark_steady_aborts_and_persists_nothing(monkeypatch) -> None:
-    written: dict[str, str] = {}
-    monkeypatch.setattr(
-        calibration.profile_service_layer,
-        "set_fact",
-        lambda uow, key, value, **kw: written.__setitem__(key, value),
-    )
+def test_dark_steady_aborts() -> None:
     s = calibration.CalibrationSession(px_per_norm=3000.0)
     s.take_announcement()
     for i in range(STEADY_CALIBRATION_SAMPLES):
         off = 0.001 if i % 2 == 0 else -0.001
         s.observe(_frame(tip=(0.5 + off, 0.5), brightness=8.0))
     assert s.aborted is True and "темно" in s.abort_reason
-    s.persist()
-    assert written == {}

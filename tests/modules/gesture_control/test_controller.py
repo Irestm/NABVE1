@@ -74,7 +74,6 @@ def _no_profile_db(monkeypatch):
     monkeypatch.setattr(gd.calibration, "load_deadzone_px", lambda: 4)
     monkeypatch.setattr(gd.calibration, "load_click_gap_thresholds", lambda: (0.22, 0.40))
     monkeypatch.setattr(gd.calibration, "load_zone_bounds", lambda: None)
-    monkeypatch.setattr(gd.calibration.profile_service_layer, "set_fact", lambda *a, **k: None)
     # Never touch the real desktop cursor size from a test run.
     monkeypatch.setattr(gd.cursor_zoom, "enlarge", lambda: None)
     monkeypatch.setattr(gd.cursor_zoom, "restore", lambda: None)
@@ -242,7 +241,7 @@ def test_gesture_command_handlers(monkeypatch) -> None:
 
     fake._active = True
     r4 = asyncio.run(gd._handle_gesture_calibrate({}))
-    assert "калибр" in r4["message"].lower()
+    assert "обучени" in r4["message"].lower()
 
 
 def test_gesture_calibrate_fails_when_inactive(monkeypatch) -> None:
@@ -255,10 +254,10 @@ def test_gesture_calibrate_cancel_handler(monkeypatch) -> None:
     fake = _FakeController()
     monkeypatch.setattr(gd, "gesture_controller", fake)
     r_off = asyncio.run(gd._handle_gesture_calibrate_cancel({}))
-    assert "не запущена" in r_off["message"]
+    assert "не запущено" in r_off["message"]
     fake._active = True
     r_on = asyncio.run(gd._handle_gesture_calibrate_cancel({}))
-    assert "тмен" in r_on["message"] and "cancel_cal" in fake.calls
+    assert "акрываю" in r_on["message"] and "cancel_cal" in fake.calls
 
 
 def test_announce_is_non_blocking_and_delivered_via_the_bound_loop() -> None:

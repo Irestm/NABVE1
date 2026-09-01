@@ -1090,14 +1090,14 @@ async def _handle_gesture_stop(_params: dict[str, Any]) -> dict[str, Any]:
 
 async def _handle_gesture_calibrate(_params: dict[str, Any]) -> dict[str, Any]:
     if not gesture_controller.request_recalibration():
-        raise RuntimeError("Сначала включите режим жестов — калибровка идёт при активной камере.")
-    return {"message": "Начинаю калибровку. Голос и экран проведут по каждому жесту — повторите каждый пять раз."}
+        raise RuntimeError("Сначала включите режим жестов — обучение идёт при активной камере.")
+    return {"message": "Открываю обучение. Следуйте подсказкам на экране."}
 
 
 async def _handle_gesture_calibrate_cancel(_params: dict[str, Any]) -> dict[str, Any]:
     if not gesture_controller.cancel_calibration():
-        return {"message": "Калибровка не запущена."}
-    return {"message": "Отменяю калибровку."}
+        return {"message": "Обучение не запущено."}
+    return {"message": "Закрываю обучение."}
 
 
 async def _handle_gesture_training_done(_params: dict[str, Any]) -> dict[str, Any]:
@@ -1124,13 +1124,13 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         "gesture_calibrate",
         _handle_gesture_calibrate,
         dangerous=False,
-        description="Пошаговый мастер калибровки жестов под текущего пользователя (режим жестов должен быть активен).",
+        description="Открыть игру-обучалку жестам (тренажёр, ничего не настраивает; режим жестов должен быть активен).",
     )
     dispatcher.register(
         "gesture_calibrate_cancel",
         _handle_gesture_calibrate_cancel,
         dangerous=False,
-        description="Прервать идущий мастер калибровки жестов (ничего не сохраняется).",
+        description="Закрыть игру-обучалку жестам.",
     )
     dispatcher.register(
         "gesture_training_done",

@@ -20,11 +20,6 @@ from modules.gesture_control.config import (
     FIST_CLICK_ENGAGE,
     FIST_CLICK_REL_MAX,
     FIST_CLICK_RELEASE,
-    GESTURE_CLICK_GAP_ENG_KEY,
-    GESTURE_CLICK_GAP_REL_KEY,
-    GESTURE_DEADZONE_PX_KEY,
-    GESTURE_MIN_CUTOFF_KEY,
-    GESTURE_ZONE_KEY,
     JITTER_HIGH_PX,
     JITTER_LOW_PX,
     MIN_CUTOFF_CEIL,
@@ -32,8 +27,6 @@ from modules.gesture_control.config import (
     ONE_EURO_MIN_CUTOFF,
     STEADY_CALIBRATION_SAMPLES,
 )
-from modules.user_profile import service_layer as profile_service_layer
-from modules.user_profile.uow import ProfileUnitOfWork
 
 logger = get_logger(__name__)
 
@@ -357,66 +350,29 @@ class CalibrationSession:
         self._advance(_PHASE_DONE)
 
     def persist(self) -> AppliedCalibration:
-        applied = AppliedCalibration(
-            min_cutoff=self.min_cutoff if self.min_cutoff is not None else ONE_EURO_MIN_CUTOFF,
-            deadzone_px=self.deadzone_px if self.deadzone_px is not None else CURSOR_DEADZONE_PX,
-            zone_bounds=self.zone_bounds,
-            click_gap_engage=self.click_gap_engage
-            if self.click_gap_engage is not None
-            else FIST_CLICK_ENGAGE,
-            click_gap_release=self.click_gap_release
-            if self.click_gap_release is not None
-            else FIST_CLICK_RELEASE,
+        # "Обучение" is a pure tutorial now — it measures and stores NOTHING.
+        # Control always runs on the built-in defaults.
+        return AppliedCalibration(
+            min_cutoff=ONE_EURO_MIN_CUTOFF,
+            deadzone_px=CURSOR_DEADZONE_PX,
+            zone_bounds=None,
+            click_gap_engage=FIST_CLICK_ENGAGE,
+            click_gap_release=FIST_CLICK_RELEASE,
         )
-        if self.aborted:
-            logger.warning("Calibration aborted (%s) — nothing stored", self.abort_reason)
-            return applied
-        _set_fact(GESTURE_MIN_CUTOFF_KEY, f"{applied.min_cutoff:.3f}")
-        _set_fact(GESTURE_DEADZONE_PX_KEY, str(applied.deadzone_px))
-        _set_fact(GESTURE_CLICK_GAP_ENG_KEY, f"{applied.click_gap_engage:.3f}")
-        _set_fact(GESTURE_CLICK_GAP_REL_KEY, f"{applied.click_gap_release:.3f}")
-        if applied.zone_bounds is not None:
-            _set_fact(GESTURE_ZONE_KEY, ",".join(f"{v:.3f}" for v in applied.zone_bounds))
-        return applied
 
 
-def _set_fact(key: str, value: str) -> None:
-    profile_service_layer.set_fact(ProfileUnitOfWork(), key, value)
-
-
-def _load_fact_float(key: str, default: float) -> float:
-    stored = profile_service_layer.get_fact(ProfileUnitOfWork(), key)
-    try:
-        return float(stored) if stored else default
-    except ValueError:
-        return default
-
-
+# The loaders return the fixed defaults — there is no per-user calibration.
 def load_min_cutoff() -> float:
-    return _load_fact_float(GESTURE_MIN_CUTOFF_KEY, ONE_EURO_MIN_CUTOFF)
+    return ONE_EURO_MIN_CUTOFF
 
 
 def load_deadzone_px() -> int:
-    return int(round(_load_fact_float(GESTURE_DEADZONE_PX_KEY, float(CURSOR_DEADZONE_PX))))
+    return CURSOR_DEADZONE_PX
 
 
 def load_click_gap_thresholds() -> tuple[float, float]:
-    # Unit is median finger-straightness now (fist click), not the old gap.
-    eng = _load_fact_float(GESTURE_CLICK_GAP_ENG_KEY, FIST_CLICK_ENGAGE)
-    rel = _load_fact_float(GESTURE_CLICK_GAP_REL_KEY, FIST_CLICK_RELEASE)
-    return eng, max(rel, eng + 0.04)
+    return FIST_CLICK_ENGAGE, FIST_CLICK_RELEASE
 
 
 def load_zone_bounds() -> tuple[float, float, float, float] | None:
-    stored = profile_service_layer.get_fact(ProfileUnitOfWork(), GESTURE_ZONE_KEY)
-    if not stored:
-        return None
-    try:
-        x0, x1, y0, y1 = (float(v) for v in stored.split(","))
-    except (ValueError, TypeError):
-        return None
-    # Reject a stored zone that's too narrow to map sanely (an old bad
-    # calibration) — fall back to the default zone instead of a twitchy one.
-    if x1 - x0 < CORNER_ZONE_MIN_WIDTH or y1 - y0 < CORNER_ZONE_MIN_WIDTH:
-        return None
-    return (x0, x1, y0, y1)
+    return None
