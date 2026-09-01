@@ -171,9 +171,14 @@ DEFAULT_TRACKING_ZONE = 0.60   # central fraction of the frame -> whole screen
 # so pointing somewhere far glides and there's time to react. Higher =
 # snappier, lower = slower / heavier. Tune this one knob for feel.
 ABS_FOLLOW_RATE = 0.18
+# After a clutch (open palm / hand lost / physical-mouse yield) the mapping
+# is re-anchored so the cursor RESUMES from where it was instead of jumping
+# to wherever the finger now points. That offset then decays by this factor
+# each frame, so absolute accuracy returns within ~1.5 s of steady pointing.
+CLUTCH_DECAY = 0.94
 CORNER_CALIBRATION_SAMPLES = 90
-CORNER_ZONE_PAD = 0.03         # shrink the swept rectangle inward this much
-CORNER_ZONE_MIN_SPAN = 0.18    # each axis must span at least this to be used
+CORNER_ZONE_PAD = 0.02         # shrink the swept rectangle inward this much
+CORNER_ZONE_MIN_SPAN = 0.12    # each axis must span at least this to be used
 
 # On-screen cursor deadzone (px): a mapped move smaller than this is
 # ignored, killing the last of the landmark shimmer for a resting hand.

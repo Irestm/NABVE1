@@ -16,6 +16,7 @@ interface GestureTrainingProps {
   calibration: GestureCalibration | null;
   onExit: () => void;
   onCancelBackend: () => void;
+  onFinished: () => void; // whole flow done (incl. practice) — game speaks here
 }
 
 type Step = "intro" | "steady" | "corners" | "click" | "rightclick" | "scroll" | "finished";
@@ -52,10 +53,10 @@ const LAYOUTS: Array<Array<[number, number]>> = [
 ];
 
 const CORNER_LAYOUT: Array<[number, number]> = [
-  [10, 12],
-  [90, 12],
-  [10, 88],
-  [90, 88],
+  [5, 8],
+  [95, 8],
+  [5, 92],
+  [95, 92],
 ];
 
 const BALL_COLOURS = ["#ff4d4f", "#4d79ff", "#ffd24d"];
@@ -65,6 +66,7 @@ export function GestureTraining({
   calibration,
   onExit,
   onCancelBackend,
+  onFinished,
 }: GestureTrainingProps): JSX.Element {
   const [step, setStep] = useState<Step>("intro");
   const [started, setStarted] = useState(false);
@@ -73,6 +75,7 @@ export function GestureTraining({
   const [scrollFrac, setScrollFrac] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const sawBackendRef = useRef(false);
+  const finishedRef = useRef(false);
 
   // best-effort fullscreen while the game is open
   useEffect(() => {
@@ -142,11 +145,15 @@ export function GestureTraining({
       return () => window.clearTimeout(t);
     }
     if (step === "finished") {
-      const t = window.setTimeout(onExit, 1800);
+      if (!finishedRef.current) {
+        finishedRef.current = true;
+        onFinished();
+      }
+      const t = window.setTimeout(onExit, 2400);
       return () => window.clearTimeout(t);
     }
     return undefined;
-  }, [step, popped.length, scrollFrac, onExit]);
+  }, [step, popped.length, scrollFrac, onExit, onFinished]);
 
   const stepIndex =
     (["steady", "corners", "click", "rightclick", "scroll"] as Step[]).indexOf(step) + 1;
@@ -217,7 +224,10 @@ export function GestureTraining({
 
       {step === "corners" ? (
         <div className="gtrain__stage">
-          <p className="gtrain__task">Тянись указательным до каждого шара у края экрана.</p>
+          <p className="gtrain__task">
+            Разведи руку ШИРОКО: тянись указательным к каждому шару у самого края —
+            вправо до предела, влево, вверх, вниз. Двигай всю руку, не только палец.
+          </p>
           {CORNER_LAYOUT.map(([x, y], i) => {
             const lit = Math.round((repsDone / Math.max(repsTarget, 1)) * CORNER_LAYOUT.length);
             return (

@@ -217,6 +217,7 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
         <GestureTraining
           calibration={calibration}
           onCancelBackend={() => void run("gesture_calibrate_cancel")}
+          onFinished={() => void runCommand("gesture_training_done").catch(() => undefined)}
           onExit={() => {
             setTraining(false);
             void refresh();

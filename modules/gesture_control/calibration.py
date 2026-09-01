@@ -52,7 +52,7 @@ _PROMPTS = {
     _PHASE_STEADY: "Обучение. Следуйте подсказкам на экране.",
     _PHASE_CORNERS: None,
     _PHASE_CLICK: None,
-    _PHASE_DONE: "Молодец! Обучение пройдено, управление подстроено под вас.",
+    _PHASE_DONE: None,   # the game speaks the "молодец" line when IT finishes
 }
 
 _PHASE_META = {
@@ -282,12 +282,16 @@ class CalibrationSession:
             logger.info("Calibration STEADY: too few samples, keeping defaults")
             self._advance(_PHASE_CORNERS)
             return
-        n = len(pts)
-        mx = sum(p[0] for p in pts) / n
-        my = sum(p[1] for p in pts) / n
-        rms = math.sqrt(sum((p[0] - mx) ** 2 + (p[1] - my) ** 2 for p in pts) / n)
-        jitter_px = rms * self.px_per_norm
-        self.deadzone_px = int(_clamp(round(jitter_px * 2 + 2), DEADZONE_PX_MIN, DEADZONE_PX_MAX))
+        # The user drifts on/off the ball, so the whole-sample spread is
+        # mostly travel, not tremor. Take the LOW quartile of frame-to-frame
+        # steps — the frames where the hand was actually still.
+        deltas = sorted(
+            math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+            for i in range(1, len(pts))
+        )
+        still = deltas[len(deltas) // 4] if deltas else 0.0
+        jitter_px = still * self.px_per_norm * 4.0   # per-frame step is small; scale up
+        self.deadzone_px = int(_clamp(round(jitter_px + 2), DEADZONE_PX_MIN, DEADZONE_PX_MAX))
         self.min_cutoff = _lerp_min_cutoff(jitter_px)
         logger.info(
             "Calibration STEADY: tremor=%.1fpx -> deadzone=%dpx min_cutoff=%.2f",

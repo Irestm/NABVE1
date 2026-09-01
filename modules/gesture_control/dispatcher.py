@@ -38,6 +38,7 @@ from modules.gesture_control.config import (
     HULL_RELEASE,
     HULL_SCORE_MAX,
     ABS_FOLLOW_RATE,
+    CLUTCH_DECAY,
     MAX_CURSOR_STEP_FRAC,
     MAX_CURSOR_STEP_PX,
     MIDDLE_DOWN_MAX,
@@ -345,6 +346,11 @@ class GestureController:
         mid_buf: list[float] = []
         thumb_buf: list[float] = []
         open_palm_streak = 0    # index up + thumb spread = "do nothing, repositioning"
+        open_palm_prev = False
+        # clutch: after open-palm / hand-loss / mouse-yield the mapping is
+        # re-anchored to the current cursor, then that offset decays away.
+        clutch_offset = [0.0, 0.0]
+        reanchor = False
         prev_filtered: tuple[float, float] | None = None
         prev_t = 0.0
         prev_primary: tuple[float, float] | None = None
@@ -402,6 +408,7 @@ class GestureController:
             nonlocal hull_prev, pinch_prev, fist_prev, seen
             nonlocal scroll_on, scroll_enter_streak, scroll_exit_streak
             nonlocal scroll_anchor_y, scroll_accum, mid_buf, thumb_buf, open_palm_streak
+            nonlocal clutch_offset, reanchor
             _release_click()
             euro.reset()
             prev_filtered = None
@@ -416,6 +423,8 @@ class GestureController:
             mid_buf = []
             thumb_buf = []
             open_palm_streak = 0
+            clutch_offset = [0.0, 0.0]
+            reanchor = True
             if hard:
                 seen = max(0, seen - 1)
 
@@ -664,6 +673,17 @@ class GestureController:
                     else 0
                 )
                 open_palm = open_palm_streak >= OPEN_PALM_FRAMES
+                if open_palm_prev and not open_palm:
+                    # leaving the "do nothing" pose: re-anchor the mapping so
+                    # the cursor RESUMES from where it sits (not a jump to the
+                    # new finger position) and swallow any click the closing
+                    # hand would fire on the way in.
+                    reanchor = True
+                    click_freeze = CLICK_FREEZE_FRAMES
+                    click_held_through = True
+                    click_lock_until = loop_start + CLICK_REPEAT_LOCKOUT_S
+                    fist_engage_streak = 0
+                open_palm_prev = open_palm
                 # median-smooth the noisy middle-finger signal for the scroll
                 # pose test so it can't flip modes frame to frame.
                 mid_buf.append(mid_s)
@@ -741,8 +761,10 @@ class GestureController:
                             )
                         session = None
                         overlay_state.set_calibration(None)
-                    self._pace(loop_start, frame_interval)
-                    continue
+                    # NB: no `continue` — the cursor stays live during the
+                    # game so the user gets "am I on the ball?" feedback
+                    # (esp. the corners sweep). The session just collects in
+                    # parallel.
 
                 seen = min(seen + 1, warmup_cap)
                 if seen < HAND_WARMUP_FRAMES:
@@ -852,12 +874,25 @@ class GestureController:
                 if hold_cursor:
                     cursor.sync_last_set()
                     cursor_px, cursor_py = (float(v) for v in cursor.current_pos())
+                    if not can_move:
+                        # a genuine clutch (not just a click/pre-click freeze)
+                        # -> the next real move resumes from here
+                        reanchor = True
                 else:
-                    tx, ty = map_hand_to_screen(filtered, (screen_w, screen_h), bounds)
+                    tx0, ty0 = map_hand_to_screen(filtered, (screen_w, screen_h), bounds)
+                    cx, cy = cursor.current_pos()
+                    if reanchor:
+                        # resume from where the cursor sits, not a jump to the
+                        # finger's absolute point
+                        reanchor = False
+                        clutch_offset = [cx - tx0, cy - ty0]
+                    clutch_offset[0] *= CLUTCH_DECAY
+                    clutch_offset[1] *= CLUTCH_DECAY
+                    tx = min(screen_w - 1.0, max(0.0, tx0 + clutch_offset[0]))
+                    ty = min(screen_h - 1.0, max(0.0, ty0 + clutch_offset[1]))
                     # Ease toward the mapped point instead of snapping there
                     # (EMA): pointing somewhere far glides over ~0.3 s, so
                     # there's time to react. ABS_FOLLOW_RATE is the one knob.
-                    cx, cy = cursor.current_pos()
                     cursor_px = cx + ABS_FOLLOW_RATE * (tx - cx)
                     cursor_py = cy + ABS_FOLLOW_RATE * (ty - cy)
                     cursor_px, cursor_py = _drive_cursor(cursor_px, cursor_py)
@@ -880,30 +915,25 @@ class GestureController:
                         if hull_release_streak >= CLICK_RELEASE_FRAMES:
                             hull_on, hull_release_streak = False, 0
 
-                # LEFT click = curl ALL FOUR fingers into a fist, thumb NOT
-                # out (thumb out = the 👍 right click). `fist_med` = median
-                # finger straightness: catch below `click_gap_eng`, release
-                # above `click_gap_rel` (both personalised by the CLICK
-                # calibration phase, unit = straightness). Robust where the
-                # old "tips together" gap wasn't — MediaPipe keeps a closing
-                # fist in view.
-                thumb_tucked = thumb_g < THUMB_TUCKED_MAX  # clearly wrapped in -> fist
+                # LEFT click = FOLD THE INDEX (and the middle isn't held up
+                # pointing), thumb NOT out. NO median-fist term: this user's
+                # ring/pinky never really curl, so median-of-4 reads low even
+                # while POINTING and used to fire a click on every aim. The
+                # fold test alone: neither index nor middle clearly extended.
+                thumb_tucked = thumb_g < THUMB_TUCKED_MAX
                 pinch_on = False  # the index<->middle gap click is retired
-                # A fist = median straightness low AND both reliable fingers
-                # (index, middle) clearly curled AND the thumb clearly tucked.
-                # It RELEASES the moment the thumb stops being tucked, so the
-                # click ends cleanly before the next gesture (and the 0.28..
-                # 0.36 thumb band fires neither click).
                 fist_closed = (
-                    fist_med <= click_gap_eng
-                    and idx_s < MIDDLE_DOWN_MAX
-                    and mid_s < MIDDLE_DOWN_MAX
-                    and thumb_tucked
+                    thumb_tucked
+                    and idx_s < MOVE_FINGER_RATIO
+                    and mid_s < MOVE_FINGER_RATIO
                 )
+                # RELEASE the moment the hand leaves the fist: thumb pops out,
+                # OR the index straightens back to pointing, OR the middle
+                # goes clearly up (V / scroll).
                 fist_open = (
-                    fist_med >= click_gap_rel
-                    or not thumb_tucked
+                    not thumb_tucked
                     or idx_s > MOVE_FINGER_RATIO
+                    or mid_s > MOVE_FINGER_RATIO
                 )
                 if not fist_on:
                     fist_engage_streak = fist_engage_streak + 1 if fist_closed else 0
@@ -1070,6 +1100,13 @@ async def _handle_gesture_calibrate_cancel(_params: dict[str, Any]) -> dict[str,
     return {"message": "Отменяю калибровку."}
 
 
+async def _handle_gesture_training_done(_params: dict[str, Any]) -> dict[str, Any]:
+    # spoken by the game itself when the WHOLE flow (incl. the practice
+    # steps) is finished — the calibration session stays silent.
+    gesture_controller._announce("Молодец! Обучение пройдено, управление подстроено под вас.")
+    return {"message": "Обучение завершено."}
+
+
 def register_commands(dispatcher: CommandDispatcher) -> None:
     dispatcher.register(
         "gesture_start",
@@ -1094,4 +1131,10 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         _handle_gesture_calibrate_cancel,
         dangerous=False,
         description="Прервать идущий мастер калибровки жестов (ничего не сохраняется).",
+    )
+    dispatcher.register(
+        "gesture_training_done",
+        _handle_gesture_training_done,
+        dangerous=False,
+        description="Служебная: озвучить завершение игры «Обучение» (шлёт фронтенд).",
     )
