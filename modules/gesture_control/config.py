@@ -103,6 +103,13 @@ DEFAULT_FIST_RATIO = 0.75
 # fires — which is where a fist-open thumb blip lands.
 THUMB_GAP_MIN = 0.36
 THUMB_TUCKED_MAX = 0.28
+# OPEN PALM ("do nothing / reposition") — a SEPARATE, higher bar than the
+# 👍 test: the thumb must be clearly fanned out (a pointing hand's thumb
+# noise sits near 0.3-0.4 and used to trip this, freezing the cursor mid-aim).
+# Median-smoothed over OPEN_PALM_WINDOW + OPEN_PALM_FRAMES of dwell.
+OPEN_PALM_THUMB_MIN = 0.50
+OPEN_PALM_WINDOW = 5
+OPEN_PALM_FRAMES = 3
 RIGHT_CLICK_FRAMES = 3
 RIGHT_CLICK_LOCKOUT_S = 0.8
 RIGHT_AFTER_LEFT_LOCKOUT_S = 0.35  # brief right-click block after a left click

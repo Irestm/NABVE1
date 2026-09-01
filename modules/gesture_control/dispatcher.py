@@ -42,6 +42,9 @@ from modules.gesture_control.config import (
     MAX_CURSOR_STEP_PX,
     MIDDLE_DOWN_MAX,
     MOVE_FINGER_RATIO,
+    OPEN_PALM_FRAMES,
+    OPEN_PALM_THUMB_MIN,
+    OPEN_PALM_WINDOW,
     PHYSICAL_MOUSE_OVERRIDE_SECONDS,
     PHYSICAL_MOUSE_THRESHOLD_PX,
     PRECLICK_DELTA,
@@ -340,6 +343,7 @@ class GestureController:
         scroll_anchor_y: float | None = None
         scroll_accum = 0.0
         mid_buf: list[float] = []
+        thumb_buf: list[float] = []
         open_palm_streak = 0    # index up + thumb spread = "do nothing, repositioning"
         prev_filtered: tuple[float, float] | None = None
         prev_t = 0.0
@@ -397,7 +401,7 @@ class GestureController:
             nonlocal prev_filtered, prev_primary, click_freeze, preclick_freeze
             nonlocal hull_prev, pinch_prev, fist_prev, seen
             nonlocal scroll_on, scroll_enter_streak, scroll_exit_streak
-            nonlocal scroll_anchor_y, scroll_accum, mid_buf, open_palm_streak
+            nonlocal scroll_anchor_y, scroll_accum, mid_buf, thumb_buf, open_palm_streak
             _release_click()
             euro.reset()
             prev_filtered = None
@@ -410,6 +414,7 @@ class GestureController:
             scroll_anchor_y = None
             scroll_accum = 0.0
             mid_buf = []
+            thumb_buf = []
             open_palm_streak = 0
             if hard:
                 seen = max(0, seen - 1)
@@ -645,16 +650,20 @@ class GestureController:
                 # both-fingers-clearly-up + debounce IS the scroll pose.
                 index_up = idx_s > MOVE_FINGER_RATIO
                 middle_up = mid_s > MOVE_FINGER_RATIO
-                # OPEN PALM = fingers up (index extended) AND the thumb spread
-                # away — a deliberate "do nothing" pose so the hand can be
-                # repositioned between gestures. 2-frame dwell so a stray thumb
-                # blip while pointing can't freeze the cursor.
+                # OPEN PALM = index extended AND the thumb CLEARLY fanned out
+                # (median-smoothed, higher bar than the 👍 test + a few frames
+                # of dwell). A pointing hand's thumb noise sits near 0.3-0.4
+                # and used to trip this, freezing the cursor mid-aim.
+                thumb_buf.append(thumb_g)
+                if len(thumb_buf) > OPEN_PALM_WINDOW:
+                    thumb_buf.pop(0)
+                thumb_med = sorted(thumb_buf)[len(thumb_buf) // 2]
                 open_palm_streak = (
                     open_palm_streak + 1
-                    if (index_up and thumb_g >= THUMB_GAP_MIN)
+                    if (index_up and thumb_med >= OPEN_PALM_THUMB_MIN)
                     else 0
                 )
-                open_palm = open_palm_streak >= 2
+                open_palm = open_palm_streak >= OPEN_PALM_FRAMES
                 # median-smooth the noisy middle-finger signal for the scroll
                 # pose test so it can't flip modes frame to frame.
                 mid_buf.append(mid_s)
@@ -770,7 +779,7 @@ class GestureController:
                 closing = (
                     fist_prev is not None
                     and fist_prev - fist_med > PRECLICK_DELTA
-                    and fist_med < click_gap_rel
+                    and fist_med < click_gap_eng
                 )
                 hull_prev, pinch_prev, fist_prev = hull_med, pinch_med, fist_med
                 if closing:

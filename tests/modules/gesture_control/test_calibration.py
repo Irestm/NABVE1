@@ -53,7 +53,7 @@ def _do_all(session) -> None:
 def test_phase_order_and_prompts() -> None:
     s = calibration.CalibrationSession(px_per_norm=3000.0)
     assert s._phase == calibration._PHASE_STEADY
-    assert "спокойно" in (s.take_announcement() or "").lower()
+    assert "подсказк" in (s.take_announcement() or "").lower()
     assert s.progress().phase_key == "steady"
     _do_steady(s)
     assert s._phase == calibration._PHASE_CORNERS

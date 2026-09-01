@@ -299,17 +299,23 @@ def test_open_palm_does_nothing(monkeypatch) -> None:
     # A fully open palm (index up + thumb spread) is the "reposition" pose:
     # cursor held, no scroll, no click, whatever the hand does.
     tracker, cursor, controller = _make(monkeypatch, fps=200)
-    for _ in range(10):
-        tracker.feed([_hand(0.5, 0.55, "point")])          # establish a position
-    for i in range(30):
-        tracker.feed([_hand(0.30 + i * 0.01, 0.35, "open")])  # travel with open palm
+    for _ in range(16):
+        tracker.feed([_hand(0.5, 0.55, "point")])           # settle onto a position
     controller.start()
     try:
-        _pump(tracker, 40)
+        _pump(tracker, 16)
+        _wait_for(lambda: len(cursor.moves) >= 1)
+        time.sleep(0.05)
+        settled = len(cursor.moves)
+        for i in range(30):
+            tracker.feed([_hand(0.30 + i * 0.013, 0.30, "open")])  # open + travel
+        _pump(tracker, 46)
+        time.sleep(0.05)
     finally:
         controller.stop()
-    settled = cursor.moves[9][0] if len(cursor.moves) > 9 else cursor.moves[-1][0]
-    assert all(abs(m[0] - settled) < 40 for m in cursor.moves[10:])
+    # a few transition frames may still land while the median/dwell catches
+    # up, but the cursor must not chase the open hand across the zone
+    assert len(cursor.moves) - settled <= 8
     assert cursor.downs == 0 and cursor.rights == 0 and cursor.scrolls == []
 
 

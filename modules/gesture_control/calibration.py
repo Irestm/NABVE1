@@ -46,20 +46,13 @@ _PHASE_DONE = "done"
 
 _TOTAL_PHASES = 3
 
-# Prompts double as the voice line and the game caption.
+# Only the first and last prompts are spoken (see _advance); the middle
+# phases pass None so the voice stays quiet — the on-screen game leads.
 _PROMPTS = {
-    _PHASE_STEADY: (
-        "Обучение. Выдвиньте указательный палец и наведитесь на шарик в центре, "
-        "держите руку спокойно."
-    ),
-    _PHASE_CORNERS: (
-        "Теперь наведитесь указательным по очереди на шарики по краям экрана."
-    ),
-    _PHASE_CLICK: (
-        "Наведитесь на шарик и сожмите руку в кулак, чтобы лопнуть его. Повторите с "
-        "каждым."
-    ),
-    _PHASE_DONE: "Обучение пройдено. Управление подстроено под вас.",
+    _PHASE_STEADY: "Обучение. Следуйте подсказкам на экране.",
+    _PHASE_CORNERS: None,
+    _PHASE_CLICK: None,
+    _PHASE_DONE: "Молодец! Обучение пройдено, управление подстроено под вас.",
 }
 
 _PHASE_META = {
@@ -276,7 +269,7 @@ class CalibrationSession:
     def _abort(self, reason: str) -> None:
         self.aborted = True
         self.abort_reason = reason
-        self._pending = f"Калибровка отменена: {reason}."
+        self._pending = f"Обучение прервано: {reason}."
         self._phase = _PHASE_DONE
         self.done = True
 
