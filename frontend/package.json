@@ -1,6 +1,6 @@
 {
   "name": "assistant-frontend",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Electron + React tray UI for the local assistant",
   "main": "dist-electron/main.js",
