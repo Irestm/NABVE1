@@ -5,78 +5,73 @@ from dataclasses import dataclass, field
 
 from core.logger import get_logger
 from modules.gesture_control.config import (
-    CURSOR_DEADZONE_PX,
-    DEADZONE_PX_MAX,
-    DEADZONE_PX_MIN,
-    DEFAULT_OPEN_PALM_RATIO,
-    DEFAULT_FIST_RATIO,
-    GESTURE_DEADZONE_PX_KEY,
-    GESTURE_MIN_CUTOFF_KEY,
-    GESTURE_OPEN_PALM_RATIO_KEY,
-    GESTURE_FIST_THRESHOLD_KEY,
-    GESTURE_SWIPE_MIN_DX_KEY,
-    GESTURE_ZONE_KEY,
     CALIBRATION_MAX_DARK_FRACTION,
     CALIBRATION_MIN_BRIGHTNESS,
+    CALIBRATION_PHASE_MAX_FRAMES,
+    CLICK_GAP_ENG_MAX,
+    CLICK_GAP_ENG_MIN,
+    CLICK_GAP_ENGAGE,
+    CLICK_GAP_REL_MAX,
+    CLICK_GAP_RELEASE,
     CORNER_CALIBRATION_SAMPLES,
     CORNER_ZONE_MIN_SPAN,
     CORNER_ZONE_PAD,
+    CURSOR_DEADZONE_PX,
+    DEADZONE_PX_MAX,
+    DEADZONE_PX_MIN,
+    GESTURE_CLICK_GAP_ENG_KEY,
+    GESTURE_CLICK_GAP_REL_KEY,
+    GESTURE_DEADZONE_PX_KEY,
+    GESTURE_MIN_CUTOFF_KEY,
+    GESTURE_ZONE_KEY,
     JITTER_HIGH_PX,
     JITTER_LOW_PX,
     MIN_CUTOFF_CEIL,
     MIN_CUTOFF_FLOOR,
     ONE_EURO_MIN_CUTOFF,
-    OPEN_PALM_RATIO_MAX,
-    OPEN_PALM_RATIO_MIN,
     STEADY_CALIBRATION_SAMPLES,
-    SWIPE_MIN_DX,
-    SWIPE_MIN_DX_CEIL,
-    SWIPE_MIN_DX_FLOOR,
 )
 from modules.user_profile import service_layer as profile_service_layer
 from modules.user_profile.uow import ProfileUnitOfWork
 
 logger = get_logger(__name__)
 
-# Each gesture is demonstrated this many times; the wizard learns the
-# threshold from the spread of those reps.
 _REQUIRED_REPS = 5
 
 _PHASE_STEADY = "steady"
-_PHASE_FIST = "fist"
-_PHASE_OPEN_PALM = "open_palm"
-_PHASE_SWIPE = "swipe"
 _PHASE_CORNERS = "corners"
+_PHASE_CLICK = "click"
 _PHASE_DONE = "done"
 
-_TOTAL_PHASES = 5
+_TOTAL_PHASES = 3
 
 _PROMPTS = {
-    _PHASE_STEADY: "Калибровка. Держите руку неподвижно перед камерой пару секунд.",
-    _PHASE_FIST: "Теперь пять раз медленно сожмите руку в кулак и разожмите.",
-    _PHASE_OPEN_PALM: "Теперь пять раз раскройте всю ладонь и снова сожмите в кулак.",
-    _PHASE_SWIPE: "Теперь пять раз проведите открытой ладонью влево и вправо.",
-    _PHASE_CORNERS: "Теперь медленно обведите рукой четыре угла экрана.",
-    _PHASE_DONE: "Калибровка завершена.",
+    _PHASE_STEADY: (
+        "Калибровка. Держите руку с двумя вытянутыми пальцами — указательным и "
+        "средним — неподвижно перед камерой."
+    ),
+    _PHASE_CORNERS: (
+        "Теперь теми же двумя пальцами наведитесь по очереди на четыре угла экрана."
+    ),
+    _PHASE_CLICK: (
+        "Теперь пять раз сведите кончики указательного и среднего пальцев вместе и разведите."
+    ),
+    _PHASE_DONE: "Калибровка завершена. Управление подстроено под вас.",
 }
 
-# (phase_index, short label, short on-screen instruction)
 _PHASE_META = {
-    _PHASE_STEADY: (1, "Неподвижная рука", "Держите руку неподвижно перед камерой"),
-    _PHASE_FIST: (2, "Кулак", "Сожмите руку в кулак и разожмите"),
-    _PHASE_OPEN_PALM: (3, "Ладонь", "Раскройте всю ладонь и снова сожмите в кулак"),
-    _PHASE_SWIPE: (4, "Взмах ладонью", "Проведите открытой ладонью влево и вправо"),
-    _PHASE_CORNERS: (5, "Углы экрана", "Медленно обведите рукой четыре угла экрана"),
+    _PHASE_STEADY: (1, "Неподвижная рука", "Два пальца вытянуты, держите руку неподвижно"),
+    _PHASE_CORNERS: (2, "Углы экрана", "Наведитесь двумя пальцами на четыре угла экрана"),
+    _PHASE_CLICK: (3, "Клик", "Сведите кончики указательного и среднего пальцев и разведите"),
 }
 
 
 @dataclass(frozen=True)
 class CalibrationFrame:
-    fist_score: float
-    open_palm_score: float
-    raw_tip: tuple[float, float]
-    palm_centre: tuple[float, float]
-    brightness: float = -1.0  # mean pixel value of the source frame, -1 if unknown
+    tip: tuple[float, float]     # the index fingertip (what the cursor follows), normalised
+    index_middle_gap: float      # index-tip to middle-tip distance / hand size
+    pointing: bool               # is the hand in the two-finger pointing pose?
+    brightness: float = -1.0
 
 
 @dataclass(frozen=True)
@@ -92,12 +87,11 @@ class CalibrationProgress:
 
 @dataclass(frozen=True)
 class AppliedCalibration:
-    fist_threshold: float
-    deadzone_px: int
     min_cutoff: float
-    open_palm_ratio: float
-    swipe_min_dx: float
+    deadzone_px: int
     zone_bounds: tuple[float, float, float, float] | None
+    click_gap_engage: float
+    click_gap_release: float
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -105,16 +99,12 @@ def _clamp(value: float, low: float, high: float) -> float:
 
 
 def _lerp_min_cutoff(jitter_px: float) -> float:
-    """Steady hand (low jitter) -> MIN_CUTOFF_CEIL (lighter smoothing);
-    shaky hand (high jitter) -> MIN_CUTOFF_FLOOR (heavier)."""
     span = max(JITTER_HIGH_PX - JITTER_LOW_PX, 1e-6)
     t = _clamp((jitter_px - JITTER_LOW_PX) / span, 0.0, 1.0)
     return round(MIN_CUTOFF_CEIL + (MIN_CUTOFF_FLOOR - MIN_CUTOFF_CEIL) * t, 3)
 
 
 def _trimmed_mean(values: list[float]) -> float:
-    """Mean after dropping the single lowest and highest sample (needs >=3)
-    — a robust personal level that one bad rep can't skew."""
     if not values:
         return 0.0
     ordered = sorted(values)
@@ -124,15 +114,11 @@ def _trimmed_mean(values: list[float]) -> float:
 
 
 class _RepCounter:
-    """Counts "do it N times" for a scalar signal that swings between a low
-    and a high state, and records the extreme reached on each side. A rep =
-    the value crosses the midpoint of its observed range into the gesture
-    side and back out (with a hysteresis band). `active_high` picks which
-    side is the gesture — a fist drives the score low, an open palm drives
-    it high."""
+    """Counts "do it N times" for a scalar that dips LOW during the gesture
+    and rises between reps (both the pinch-gap and the fist do this).
+    Records the extreme reached on each side."""
 
-    def __init__(self, active_high: bool, min_span: float) -> None:
-        self._active_high = active_high
+    def __init__(self, min_span: float) -> None:
         self._min_span = min_span
         self._samples: list[float] = []
         self._in_gesture = False
@@ -145,21 +131,18 @@ class _RepCounter:
         self._samples.append(value)
         low, high = min(self._samples), max(self._samples)
         span = high - low
-        if span < self._min_span:  # not enough range seen to tell the two states apart
+        if span < self._min_span:
             return
         band = span * 0.15
         mid = (low + high) / 2
-        if self._active_high:
-            enter, leave = value >= mid + band, value <= mid - band
-        else:
-            enter, leave = value <= mid - band, value >= mid + band
+        enter, leave = value <= mid - band, value >= mid + band
 
         if self._cur_extreme is None:
             self._cur_extreme = value
-        elif self._in_gesture == self._active_high:
-            self._cur_extreme = max(self._cur_extreme, value)
-        else:
+        elif self._in_gesture:
             self._cur_extreme = min(self._cur_extreme, value)
+        else:
+            self._cur_extreme = max(self._cur_extreme, value)
 
         if not self._in_gesture and enter:
             self._rest_extremes.append(self._cur_extreme)
@@ -171,52 +154,43 @@ class _RepCounter:
             self._cur_extreme = value
             self.reps += 1
 
-    def gesture_level(self) -> float:
+    def closed_level(self) -> float:
         return _trimmed_mean(self._gesture_extremes)
 
-    def rest_level(self) -> float:
+    def open_level(self) -> float:
         if self._rest_extremes:
             return _trimmed_mean(self._rest_extremes)
-        return max(self._samples) if self._active_high else min(self._samples)
+        return max(self._samples) if self._samples else 0.0
 
 
 @dataclass
 class CalibrationSession:
-    """The gesture wizard: STEADY (jitter) -> FIST -> OPEN_PALM -> SWIPE -> CORNERS,
-    each gesture demonstrated five times, each deriving its own personal
-    threshold. Feed it a CalibrationFrame every frame; drain
-    take_announcement() for the spoken prompts and progress() for the
-    on-screen wizard; call persist() once done."""
+    """The wizard for the absolute + finger-state model: STEADY (fingertip
+    tremor -> smoothing + deadzone) -> CORNERS (four screen corners -> the
+    absolute mapping rectangle) -> CLICK (index/middle tips together ->
+    click thresholds). Every output is applied by the worker."""
 
-    px_per_norm: float = 1000.0
+    px_per_norm: float = 3000.0   # screen px per 1.0 of normalised frame travel
 
     _phase: str = _PHASE_STEADY
     _pending: str | None = _PROMPTS[_PHASE_STEADY]
 
-    _steady_points: list[tuple[float, float]] = field(default_factory=list)
-    _fist: _RepCounter = field(
-        default_factory=lambda: _RepCounter(active_high=False, min_span=0.4)
-    )
-    _open_palm: _RepCounter = field(
-        default_factory=lambda: _RepCounter(active_high=True, min_span=0.12)
-    )
-    _swipe_xs: list[float] = field(default_factory=list)
-    _swipe_dir: int = 0
-    _swing_start_x: float = 0.0
-    _swipe_travels: list[float] = field(default_factory=list)
+    _steady_pts: list[tuple[float, float]] = field(default_factory=list)
     _corner_pts: list[tuple[float, float]] = field(default_factory=list)
+    _click: _RepCounter = field(default_factory=lambda: _RepCounter(min_span=0.10))
 
     done: bool = False
     aborted: bool = False
     abort_reason: str = ""
     _dark_frames: int = 0
     _total_frames: int = 0
-    deadzone_px: int | None = None
+    _frames_in_phase: int = 0
+
     min_cutoff: float | None = None
-    fist_threshold: float | None = None
-    open_palm_ratio: float | None = None
-    swipe_min_dx: float | None = None
+    deadzone_px: int | None = None
     zone_bounds: tuple[float, float, float, float] | None = None
+    click_gap_engage: float | None = None
+    click_gap_release: float | None = None
 
     def take_announcement(self) -> str | None:
         message, self._pending = self._pending, None
@@ -230,21 +204,26 @@ class CalibrationSession:
             )
         index, label, instruction = _PHASE_META[self._phase]
         if self._phase == _PHASE_STEADY:
-            done = len(self._steady_points) * _REQUIRED_REPS // max(STEADY_CALIBRATION_SAMPLES, 1)
-        elif self._phase == _PHASE_FIST:
-            done = self._fist.reps
-        elif self._phase == _PHASE_OPEN_PALM:
-            done = self._open_palm.reps
-        elif self._phase == _PHASE_SWIPE:
-            done = len(self._swipe_travels)
-        else:
+            done = len(self._steady_pts) * _REQUIRED_REPS // max(STEADY_CALIBRATION_SAMPLES, 1)
+        elif self._phase == _PHASE_CORNERS:
             done = len(self._corner_pts) * _REQUIRED_REPS // max(CORNER_CALIBRATION_SAMPLES, 1)
+        else:
+            done = self._click.reps
         return CalibrationProgress(
             index, _TOTAL_PHASES, label, instruction,
             min(_REQUIRED_REPS, done), _REQUIRED_REPS, False,
         )
 
     def _advance(self, phase: str) -> None:
+        self._frames_in_phase = 0
+        if (
+            phase != _PHASE_DONE
+            and not self.aborted
+            and self._total_frames >= 30
+            and self._dark_frames / self._total_frames > CALIBRATION_MAX_DARK_FRACTION
+        ):
+            self._abort("слишком темно, добавьте света и повторите")
+            return
         self._phase = phase
         self._pending = _PROMPTS[phase]
         if phase == _PHASE_DONE:
@@ -254,22 +233,38 @@ class CalibrationSession:
         if self.done:
             return
         self._total_frames += 1
+        self._frames_in_phase += 1
         if 0 <= frame.brightness < CALIBRATION_MIN_BRIGHTNESS:
             self._dark_frames += 1
         if self._phase == _PHASE_STEADY:
-            self._observe_steady(frame.raw_tip)
-        elif self._phase == _PHASE_FIST:
-            self._fist.observe(frame.fist_score)
-            if self._fist.reps >= _REQUIRED_REPS:
-                self._finish_fist()
-        elif self._phase == _PHASE_OPEN_PALM:
-            self._open_palm.observe(frame.open_palm_score)
-            if self._open_palm.reps >= _REQUIRED_REPS:
-                self._finish_open_palm()
-        elif self._phase == _PHASE_SWIPE:
-            self._observe_swipe(frame.palm_centre[0])
+            if frame.pointing:
+                self._steady_pts.append(frame.tip)
+                if len(self._steady_pts) >= STEADY_CALIBRATION_SAMPLES:
+                    self._finalize_steady()
         elif self._phase == _PHASE_CORNERS:
-            self._observe_corners(frame.raw_tip)
+            if frame.pointing:
+                self._corner_pts.append(frame.tip)
+                if len(self._corner_pts) >= CORNER_CALIBRATION_SAMPLES:
+                    self._finalize_corners()
+        elif self._phase == _PHASE_CLICK:
+            if frame.pointing:
+                self._click.observe(frame.index_middle_gap)
+                if self._click.reps >= _REQUIRED_REPS:
+                    self._finish_click()
+        if not self.done and self._frames_in_phase > CALIBRATION_PHASE_MAX_FRAMES:
+            self._force_finish_phase()
+
+    def _force_finish_phase(self) -> None:
+        logger.warning(
+            "Calibration %s: no result after %d frames — using the default and moving on",
+            self._phase, self._frames_in_phase,
+        )
+        if self._phase == _PHASE_STEADY:
+            self._finalize_steady()
+        elif self._phase == _PHASE_CORNERS:
+            self._finalize_corners()
+        elif self._phase == _PHASE_CLICK:
+            self._finish_click()
 
     def _abort(self, reason: str) -> None:
         self.aborted = True
@@ -278,99 +273,36 @@ class CalibrationSession:
         self._phase = _PHASE_DONE
         self.done = True
 
-    def _observe_steady(self, point: tuple[float, float]) -> None:
-        self._steady_points.append(point)
-        if len(self._steady_points) < STEADY_CALIBRATION_SAMPLES:
-            return
+    def _finalize_steady(self) -> None:
         if self._total_frames and self._dark_frames / self._total_frames > CALIBRATION_MAX_DARK_FRACTION:
             self._abort("слишком темно, добавьте света и повторите")
             return
-        n = len(self._steady_points)
-        mean_x = sum(p[0] for p in self._steady_points) / n
-        mean_y = sum(p[1] for p in self._steady_points) / n
-        rms = math.sqrt(
-            sum((p[0] - mean_x) ** 2 + (p[1] - mean_y) ** 2 for p in self._steady_points) / n
-        )
+        pts = self._steady_pts
+        if len(pts) < 10:
+            logger.info("Calibration STEADY: too few samples, keeping defaults")
+            self._advance(_PHASE_CORNERS)
+            return
+        n = len(pts)
+        mx = sum(p[0] for p in pts) / n
+        my = sum(p[1] for p in pts) / n
+        rms = math.sqrt(sum((p[0] - mx) ** 2 + (p[1] - my) ** 2 for p in pts) / n)
         jitter_px = rms * self.px_per_norm
-        self.deadzone_px = int(_clamp(round(jitter_px * 3 + 2), DEADZONE_PX_MIN, DEADZONE_PX_MAX))
+        self.deadzone_px = int(_clamp(round(jitter_px * 2 + 2), DEADZONE_PX_MIN, DEADZONE_PX_MAX))
         self.min_cutoff = _lerp_min_cutoff(jitter_px)
         logger.info(
-            "Calibration STEADY: jitter=%.1fpx deadzone=%dpx min_cutoff=%.2f",
-            jitter_px,
-            self.deadzone_px,
-            self.min_cutoff,
-        )
-        self._advance(_PHASE_FIST)
-
-    def _finish_fist(self) -> None:
-        closed = self._fist.gesture_level()  # trimmed mean of per-fist minima
-        open_ = self._fist.rest_level()  # trimmed mean of the open-hand score
-        span = open_ - closed
-        value = closed + span * 0.4 if span > 1e-3 else DEFAULT_FIST_RATIO
-        self.fist_threshold = round(_clamp(value, 0.7, 1.5), 4)
-        logger.info(
-            "Calibration FIST: closed=%.3f open=%.3f threshold=%.3f (%d reps)",
-            closed,
-            open_,
-            self.fist_threshold,
-            self._fist.reps,
-        )
-        self._advance(_PHASE_OPEN_PALM)
-
-    def _finish_open_palm(self) -> None:
-        high = self._open_palm.gesture_level()  # trimmed mean of per-spread maxima
-        low = self._open_palm.rest_level()  # trimmed mean of the fist score
-        span = high - low
-        value = low + span * 0.5 if span > 1e-3 else DEFAULT_OPEN_PALM_RATIO
-        self.open_palm_ratio = round(_clamp(value, OPEN_PALM_RATIO_MIN, OPEN_PALM_RATIO_MAX), 3)
-        logger.info(
-            "Calibration OPEN_PALM: fist=%.3f spread=%.3f threshold=%.3f (%d reps)",
-            low,
-            high,
-            self.open_palm_ratio,
-            self._open_palm.reps,
-        )
-        self._advance(_PHASE_SWIPE)
-
-    def _observe_swipe(self, x: float) -> None:
-        self._swipe_xs.append(x)
-        if len(self._swipe_xs) < 3:
-            return
-        velocity = self._swipe_xs[-1] - self._swipe_xs[-3]
-        direction = 1 if velocity > 0.012 else (-1 if velocity < -0.012 else 0)
-        if direction == 0:
-            return
-        if self._swipe_dir == 0:
-            self._swipe_dir = direction
-            self._swing_start_x = self._swipe_xs[-3]
-        elif direction != self._swipe_dir:
-            # x has already moved a couple frames back from the turning
-            # point, so measure the finished swing from the extreme (~xs[-3]).
-            turn_x = self._swipe_xs[-3]
-            travel = abs(turn_x - self._swing_start_x)
-            if travel >= 0.05:
-                self._swipe_travels.append(travel)
-            self._swipe_dir = direction
-            self._swing_start_x = turn_x
-        if len(self._swipe_travels) >= _REQUIRED_REPS:
-            self._finish_swipe()
-
-    def _finish_swipe(self) -> None:
-        value = _trimmed_mean(self._swipe_travels) * 0.6
-        self.swipe_min_dx = round(_clamp(value, SWIPE_MIN_DX_FLOOR, SWIPE_MIN_DX_CEIL), 3)
-        logger.info(
-            "Calibration SWIPE: travels=%s swipe_min_dx=%.3f",
-            [round(t, 2) for t in self._swipe_travels],
-            self.swipe_min_dx,
+            "Calibration STEADY: tremor=%.1fpx -> deadzone=%dpx min_cutoff=%.2f",
+            jitter_px, self.deadzone_px, self.min_cutoff,
         )
         self._advance(_PHASE_CORNERS)
 
-    def _observe_corners(self, tip: tuple[float, float]) -> None:
-        self._corner_pts.append(tip)
-        if len(self._corner_pts) < CORNER_CALIBRATION_SAMPLES:
+    def _finalize_corners(self) -> None:
+        pts = self._corner_pts
+        if len(pts) < 8:
+            logger.info("Calibration CORNERS: too few samples, keeping the default zone")
+            self._advance(_PHASE_CLICK)
             return
-        xs = [p[0] for p in self._corner_pts]
-        ys = [p[1] for p in self._corner_pts]
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
         x0, x1 = min(xs) + CORNER_ZONE_PAD, max(xs) - CORNER_ZONE_PAD
         y0, y1 = min(ys) + CORNER_ZONE_PAD, max(ys) - CORNER_ZONE_PAD
         if x1 - x0 >= CORNER_ZONE_MIN_SPAN and y1 - y0 >= CORNER_ZONE_MIN_SPAN:
@@ -383,34 +315,52 @@ class CalibrationSession:
             logger.info("Calibration CORNERS: zone_bounds=%s", self.zone_bounds)
         else:
             logger.info(
-                "Calibration CORNERS: swept area too small (x %.2f-%.2f y %.2f-%.2f), keeping default zone",
+                "Calibration CORNERS: swept area too small (x %.2f-%.2f y %.2f-%.2f), keeping default",
                 x0, x1, y0, y1,
+            )
+        self._advance(_PHASE_CLICK)
+
+    def _finish_click(self) -> None:
+        closed = self._click.closed_level()   # tips together
+        open_ = self._click.open_level()      # tips apart
+        span = open_ - closed
+        if self._click.reps < 2 or span < 0.08:
+            self.click_gap_engage = CLICK_GAP_ENGAGE
+            self.click_gap_release = CLICK_GAP_RELEASE
+            logger.info(
+                "Calibration CLICK: weak data (reps=%d span=%.3f) — defaults %.2f/%.2f",
+                self._click.reps, span, self.click_gap_engage, self.click_gap_release,
+            )
+        else:
+            eng = _clamp(closed + span * 0.30, CLICK_GAP_ENG_MIN, CLICK_GAP_ENG_MAX)
+            rel = _clamp(closed + span * 0.60, eng + 0.06, CLICK_GAP_REL_MAX)
+            self.click_gap_engage = round(eng, 3)
+            self.click_gap_release = round(rel, 3)
+            logger.info(
+                "Calibration CLICK: together=%.3f apart=%.3f -> engage=%.3f release=%.3f (%d reps)",
+                closed, open_, self.click_gap_engage, self.click_gap_release, self._click.reps,
             )
         self._advance(_PHASE_DONE)
 
     def persist(self) -> AppliedCalibration:
         applied = AppliedCalibration(
-            fist_threshold=self.fist_threshold
-            if self.fist_threshold is not None
-            else DEFAULT_FIST_RATIO,
-            deadzone_px=self.deadzone_px if self.deadzone_px is not None else CURSOR_DEADZONE_PX,
             min_cutoff=self.min_cutoff if self.min_cutoff is not None else ONE_EURO_MIN_CUTOFF,
-            open_palm_ratio=self.open_palm_ratio
-            if self.open_palm_ratio is not None
-            else DEFAULT_OPEN_PALM_RATIO,
-            swipe_min_dx=self.swipe_min_dx if self.swipe_min_dx is not None else SWIPE_MIN_DX,
+            deadzone_px=self.deadzone_px if self.deadzone_px is not None else CURSOR_DEADZONE_PX,
             zone_bounds=self.zone_bounds,
+            click_gap_engage=self.click_gap_engage
+            if self.click_gap_engage is not None
+            else CLICK_GAP_ENGAGE,
+            click_gap_release=self.click_gap_release
+            if self.click_gap_release is not None
+            else CLICK_GAP_RELEASE,
         )
-        # An aborted (e.g. too-dark) run keeps the current defaults rather
-        # than writing garbage that then poisons every later session.
         if self.aborted:
             logger.warning("Calibration aborted (%s) — nothing stored", self.abort_reason)
             return applied
-        _set_fact(GESTURE_FIST_THRESHOLD_KEY, f"{applied.fist_threshold:.4f}")
-        _set_fact(GESTURE_DEADZONE_PX_KEY, str(applied.deadzone_px))
         _set_fact(GESTURE_MIN_CUTOFF_KEY, f"{applied.min_cutoff:.3f}")
-        _set_fact(GESTURE_OPEN_PALM_RATIO_KEY, f"{applied.open_palm_ratio:.3f}")
-        _set_fact(GESTURE_SWIPE_MIN_DX_KEY, f"{applied.swipe_min_dx:.3f}")
+        _set_fact(GESTURE_DEADZONE_PX_KEY, str(applied.deadzone_px))
+        _set_fact(GESTURE_CLICK_GAP_ENG_KEY, f"{applied.click_gap_engage:.3f}")
+        _set_fact(GESTURE_CLICK_GAP_REL_KEY, f"{applied.click_gap_release:.3f}")
         if applied.zone_bounds is not None:
             _set_fact(GESTURE_ZONE_KEY, ",".join(f"{v:.3f}" for v in applied.zone_bounds))
         return applied
@@ -428,29 +378,21 @@ def _load_fact_float(key: str, default: float) -> float:
         return default
 
 
-def load_fist_threshold() -> float:
-    return _load_fact_float(GESTURE_FIST_THRESHOLD_KEY, DEFAULT_FIST_RATIO)
+def load_min_cutoff() -> float:
+    return _load_fact_float(GESTURE_MIN_CUTOFF_KEY, ONE_EURO_MIN_CUTOFF)
 
 
 def load_deadzone_px() -> int:
     return int(round(_load_fact_float(GESTURE_DEADZONE_PX_KEY, float(CURSOR_DEADZONE_PX))))
 
 
-def load_min_cutoff() -> float:
-    return _load_fact_float(GESTURE_MIN_CUTOFF_KEY, ONE_EURO_MIN_CUTOFF)
-
-
-def load_open_palm_ratio() -> float:
-    return _load_fact_float(GESTURE_OPEN_PALM_RATIO_KEY, DEFAULT_OPEN_PALM_RATIO)
-
-
-def load_swipe_min_dx() -> float:
-    return _load_fact_float(GESTURE_SWIPE_MIN_DX_KEY, SWIPE_MIN_DX)
+def load_click_gap_thresholds() -> tuple[float, float]:
+    eng = _load_fact_float(GESTURE_CLICK_GAP_ENG_KEY, CLICK_GAP_ENGAGE)
+    rel = _load_fact_float(GESTURE_CLICK_GAP_REL_KEY, CLICK_GAP_RELEASE)
+    return eng, max(rel, eng + 0.04)
 
 
 def load_zone_bounds() -> tuple[float, float, float, float] | None:
-    """The personal tracking rectangle (x0, x1, y0, y1) from the corner
-    phase, or None if never calibrated (use the symmetric default zone)."""
     stored = profile_service_layer.get_fact(ProfileUnitOfWork(), GESTURE_ZONE_KEY)
     if not stored:
         return None

@@ -48,3 +48,50 @@ def test_fit_leaves_a_clean_hand_almost_unchanged() -> None:
     fitted = model.fit(clean)
     for (fx, fy), (cx, cy) in zip(fitted, clean):
         assert math.hypot(fx - cx, fy - cy) < 1e-3
+
+
+def test_fit_is_hand_scale_invariant() -> None:
+    # F2: bone lengths are learned as a fraction of palm length, so the same
+    # hand held 3x closer to the camera is not squashed back to the 1x size.
+    model = BoneModel()
+    for _ in range(BONE_SCAN_FRAMES):
+        model.observe(_hand(1.0))
+    big = _hand(3.0)
+    fitted = model.fit(big)
+    for (fx, fy), (cx, cy) in zip(fitted, big):
+        assert math.hypot(fx - cx, fy - cy) < 1e-3
+
+
+def test_fit_preserves_a_clean_curl() -> None:
+    # F3: a rotated (curled) finger whose bones kept their length must pass
+    # through — bone-fit fights stretching, not the real curl signal.
+    model = BoneModel()
+    for _ in range(BONE_SCAN_FRAMES):
+        model.observe(_hand(1.0))
+    curled = _hand(1.0)
+    curled[6] = (0.05, -0.05)  # index bones rotate ~90 deg, each still 0.05 long
+    curled[7] = (0.05, 0.0)
+    curled[8] = (0.0, 0.0)
+    fitted = model.fit(curled)
+    for (fx, fy), (cx, cy) in zip(fitted, curled):
+        assert math.hypot(fx - cx, fy - cy) < 1e-3
+
+
+def test_scan_skips_grip_frames_but_still_completes_on_clean_ones() -> None:
+    # F1: grip frames don't contribute samples, but a low-reading open hand
+    # (never excluded by an absolute bar now) still drives the model ready.
+    model = BoneModel()
+    for _ in range(BONE_SCAN_FRAMES * 2):
+        model.observe(_hand(1.0), skip=True)
+    assert model.ready is False
+    for _ in range(BONE_SCAN_FRAMES):
+        model.observe(_hand(1.0), skip=False)
+    assert model.ready is True
+
+
+def test_scan_times_out_with_a_usable_minimum_when_grips_dominate() -> None:
+    model = BoneModel()
+    for i in range(BONE_SCAN_FRAMES * 3):
+        model.observe(_hand(1.0), skip=(i % 4 != 0))  # only 1/4 clean
+    assert model.ready is True
+    assert model.scanned < BONE_SCAN_FRAMES  # readiness came from the timeout path

@@ -132,18 +132,21 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
       ) : (
         <ul className="gesture-mode__legend">
           <li>
-            <b>Рука перед камерой</b> — курсор (увеличен в 1,5×) идёт за центром ладони; работает
-            по всему компьютеру. Активна центральная часть кадра.
+            <b>Один указательный палец вверх</b> (средний и остальные поджаты): наводишь
+            кончиком указательного, курсор (крупнее в 1,5×) становится в ту же точку экрана.
+            Указал на угол кадра — курсор в углу.
           </li>
           <li>
-            <b>Сожми руку в кулак</b> — клик. Не разжимая, веди — выделение / перетаскивание.
-            Разжал — отпустил.
+            <b>Поднял ещё и средний палец</b> — курсор ЗАМИРАЕТ (готов к клику). Теперь свёл
+            кончики указательного и среднего вместе — левый клик ровно там, где стоял курсор.
+            Не разводя пальцы, веди рукой — перетаскивание.
           </li>
           <li>
-            <b>Взмах открытой ладонью влево / вправо</b> — переключение окон (Alt+Tab).
+            <b>Кулак, большой палец вверх</b> (👍) — правый клик.
           </li>
           <li>
-            <b>Две руки в стороны / вместе</b> — масштаб (Ctrl + колесо).
+            <b>Кулак / рука опущена / ладонь</b> — курсор замирает. Так переставляешь руку,
+            не двигая курсор (это и есть «клатч»).
           </li>
           <li>
             <b>Тронул физическую мышь</b> — жесты уступают на пару секунд, убрал руку — снова
@@ -165,15 +168,27 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
       ) : null}
 
       <div className="gesture-mode__actions">
-        <button
-          type="button"
-          className="gesture-mode__action"
-          disabled={busy || Boolean(calibration && !calibration.done)}
-          onClick={() => void run("gesture_calibrate")}
-        >
-          <Crosshair size={15} />
-          {calibration && !calibration.done ? "Калибровка…" : "Калибровка"}
-        </button>
+        {calibration && !calibration.done ? (
+          <button
+            type="button"
+            className="gesture-mode__action"
+            disabled={busy}
+            onClick={() => void run("gesture_calibrate_cancel")}
+          >
+            <X size={15} />
+            Отменить калибровку
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="gesture-mode__action"
+            disabled={busy}
+            onClick={() => void run("gesture_calibrate")}
+          >
+            <Crosshair size={15} />
+            Калибровка
+          </button>
+        )}
         <button
           type="button"
           className="gesture-mode__action gesture-mode__action--stop"

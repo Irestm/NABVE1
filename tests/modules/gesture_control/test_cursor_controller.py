@@ -1,8 +1,49 @@
 from __future__ import annotations
 
-from modules.gesture_control.cursor_controller import bounds_from_zone, map_hand_to_screen
+from modules.gesture_control.cursor_controller import (
+    _no_display_hint,
+    bounds_from_zone,
+    map_hand_to_screen,
+)
 
 SCREEN = (1920, 1080)
+
+
+def test_no_display_hint_calls_out_wayland(monkeypatch) -> None:
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    msg = _no_display_hint("boom")
+    assert "Wayland" in msg and "Xorg" in msg
+
+
+def test_no_display_hint_is_generic_off_wayland(monkeypatch) -> None:
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
+    monkeypatch.setenv("DISPLAY", ":0")
+    assert "Wayland" not in _no_display_hint("boom")
+
+
+def test_release_restores_pyautogui_globals(monkeypatch) -> None:
+    import sys
+    import types
+
+    fake = types.SimpleNamespace(
+        PAUSE=0.1,
+        FAILSAFE=True,
+        position=lambda: (5, 5),
+        size=lambda: (100, 80),
+        moveTo=lambda *a, **k: None,
+        mouseDown=lambda **k: None,
+        mouseUp=lambda **k: None,
+    )
+    monkeypatch.setitem(sys.modules, "pyautogui", fake)
+    from modules.gesture_control.cursor_controller import CursorController
+
+    c = CursorController()
+    assert fake.PAUSE == 0 and fake.FAILSAFE is False  # gesture mode disabled them
+    c.release()
+    assert fake.PAUSE == 0.1 and fake.FAILSAFE is True  # handed back to the process
 
 
 def test_bounds_from_zone_is_a_centred_square() -> None:

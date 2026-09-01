@@ -1,25 +1,45 @@
 from __future__ import annotations
 
 import math
+import os
+import sys
 from types import ModuleType
 
 from core.logger import get_logger
 
 logger = get_logger(__name__)
 
-_ZOOM_SCROLL_CLICKS = 2
 
 
-def _require_pyautogui() -> ModuleType:
-    import pyautogui
+def _no_display_hint(exc: object) -> str:
+    """A pyautogui/Xlib import or call failed. On Linux that is almost always
+    a Wayland session (pyautogui drives the cursor through X11) — say so."""
+    session = os.environ.get("XDG_SESSION_TYPE", "").lower()
+    if sys.platform.startswith("linux") and (session == "wayland" or not os.environ.get("DISPLAY")):
+        return (
+            "Режим жестов управляет системным курсором через X11, а текущий сеанс — "
+            f"Wayland или без DISPLAY ({exc}). На экране входа выберите «Ubuntu on Xorg» "
+            "и повторите."
+        )
+    return f"Не удалось инициализировать управление курсором: {exc}"
+
+
+def _require_pyautogui() -> tuple[ModuleType, float, bool]:
+    try:
+        import pyautogui
+    except Exception as exc:  # Xlib raises its own errors, not just ImportError
+        raise RuntimeError(_no_display_hint(exc)) from exc
 
     # Driven many times a second from hand tracking — pyautogui's global
     # 0.1s post-call PAUSE would make it unusable, and FAILSAFE (abort on a
-    # screen-corner hit) would fire on fast hand moves. Both scoped to this
-    # process, which only lives while gesture mode is on.
+    # screen-corner hit) would fire on fast hand moves. These are MODULE
+    # globals shared with every other pyautogui user in this process
+    # (os_adapter/screen, figma_control, software_installer, ui_automation),
+    # so the originals are returned and put back in CursorController.release().
+    prev_pause, prev_failsafe = pyautogui.PAUSE, pyautogui.FAILSAFE
     pyautogui.PAUSE = 0
     pyautogui.FAILSAFE = False
-    return pyautogui
+    return pyautogui, prev_pause, prev_failsafe
 
 
 def _virtual_screen_size(pyautogui: ModuleType) -> tuple[int, int]:
@@ -35,8 +55,12 @@ def _virtual_screen_size(pyautogui: ModuleType) -> tuple[int, int]:
             return int(geom.width), int(geom.height)
     except Exception:
         logger.debug("Xlib virtual screen size lookup failed, using pyautogui.size()", exc_info=True)
-    size = pyautogui.size()
-    return int(size[0]), int(size[1])
+    try:
+        size = pyautogui.size()
+        return int(size[0]), int(size[1])
+    except Exception:
+        logger.debug("pyautogui.size() failed too", exc_info=True)
+        return 0, 0
 
 
 def bounds_from_zone(zone_fraction: float) -> tuple[float, float, float, float]:
@@ -75,10 +99,13 @@ class CursorController:
     on Linux needs an X11 session (pyautogui uses Xlib)."""
 
     def __init__(self) -> None:
-        self._pyautogui = _require_pyautogui()
+        self._pyautogui, self._prev_pause, self._prev_failsafe = _require_pyautogui()
         self._button_down = False
         self._last_set: tuple[int, int] | None = None
         self.screen_size: tuple[int, int] = _virtual_screen_size(self._pyautogui)  # (w, h)
+        if self.screen_size[0] <= 0 or self.screen_size[1] <= 0:
+            self._restore_pyautogui_globals()
+            raise RuntimeError(_no_display_hint("не удалось определить размер экрана"))
 
     def current_pos(self) -> tuple[int, int]:
         point = self._pyautogui.position()
@@ -95,7 +122,21 @@ class CursorController:
 
     def move_cursor(self, x: int, y: int) -> None:
         self._pyautogui.moveTo(x, y, _pause=False)
-        self._last_set = (x, y)
+        # Record where the cursor ACTUALLY landed, not what we asked for: the
+        # OS clamps the pointer out of reserved areas (a dock / panel), and
+        # anchoring _last_set to the unreachable target made every following
+        # tick read as a physical-mouse move and freeze gesture control near
+        # that edge.
+        try:
+            self._last_set = self.current_pos()
+        except Exception:
+            self._last_set = (x, y)
+
+    def last_pos(self) -> tuple[int, int] | None:
+        """Where the cursor actually ended up after the last move (or None
+        if we've never moved it) — the caller uses this to keep its float
+        accumulator from winding up past the reachable area."""
+        return self._last_set
 
     def sync_last_set(self) -> None:
         """Re-anchor _last_set to the real cursor position — call after
@@ -113,26 +154,28 @@ class CursorController:
             self._pyautogui.mouseUp(_pause=False)
             self._button_down = False
 
+    def right_click(self) -> None:
+        """A one-shot right click (never held). Released left button first so
+        we never right-click mid-drag."""
+        self.click_up()
+        self._pyautogui.click(button="right", _pause=False)
+
     @property
     def is_holding(self) -> bool:
         return self._button_down
 
-    def trigger_zoom(self, direction: str) -> None:
-        amount = _ZOOM_SCROLL_CLICKS if direction == "in" else -_ZOOM_SCROLL_CLICKS
-        self._pyautogui.keyDown("ctrl")
+    def _restore_pyautogui_globals(self) -> None:
         try:
-            self._pyautogui.scroll(amount)
-        finally:
-            self._pyautogui.keyUp("ctrl")
-
-    def trigger_window_switch(self, direction: str) -> None:
-        if direction == "prev":
-            self._pyautogui.hotkey("alt", "shift", "tab")
-        else:
-            self._pyautogui.hotkey("alt", "tab")
+            self._pyautogui.PAUSE = self._prev_pause
+            self._pyautogui.FAILSAFE = self._prev_failsafe
+        except Exception:
+            logger.debug("restoring pyautogui globals raised", exc_info=True)
 
     def release(self) -> None:
         try:
             self.click_up()
         except Exception:
             logger.debug("click_up during release raised", exc_info=True)
+        # Hand PAUSE / FAILSAFE back to whatever the rest of the process had,
+        # so other pyautogui users keep their corner-abort safety.
+        self._restore_pyautogui_globals()

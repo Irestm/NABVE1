@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import sys
 import threading
 import time
 import urllib.request
@@ -20,6 +21,8 @@ from modules.gesture_control.config import (
     CAMERA_INDEX,
     CAMERA_MANUAL_BRIGHTNESS,
     CAMERA_MIN_ACCEPTABLE_FPS,
+    CAMERA_NO_FRAMES_FAIL_SECONDS,
+    CAMERA_REOPEN_MAX_ATTEMPTS,
     CAMERA_STALL_REOPEN_SECONDS,
     CAMERA_WIDTH,
     GESTURE_DEBUG,
@@ -37,14 +40,30 @@ from modules.gesture_control.config import (
     HAND_PRESENCE_CONFIDENCE,
     LANDMARK_BOUND,
     HAND_TRACKING_CONFIDENCE,
+    MODEL_DOWNLOAD_TIMEOUT_S,
+    MODEL_MIN_BYTES,
     MODELS_DIR,
 )
 
 logger = get_logger(__name__)
 
+# The manual-exposure ramp uses V4L2 CAP_PROP semantics ("exposure_absolute"
+# in 100 µs units, AUTO_EXPOSURE=1 meaning manual). Those values are
+# meaningless / harmful on the DirectShow / AVFoundation backends, so the
+# whole exposure machinery is Linux-only.
+_IS_LINUX = sys.platform.startswith("linux")
+
 # A hand is (x, y) pairs in normalized [0, 1] camera-frame coordinates —
 # index i is MediaPipe landmark i (0 wrist, 4 thumb tip, 8 index tip, ...).
 Landmarks = list[tuple[float, float]]
+
+
+class CameraUnavailable(RuntimeError):
+    """The camera reader hit an unrecoverable condition — it opened the
+    device but never got a frame (busy in another app), or it stalled and
+    won't reopen. HandTracker.read() raises this so the gesture worker can
+    announce the reason and shut the mode down cleanly instead of idling
+    forever behind a frozen cursor."""
 
 
 @dataclass(frozen=True)
@@ -76,14 +95,22 @@ class _CameraReader:
         self._reads = 0  # successful reads since start, for the reader-fps diagnostic
         self._stop = threading.Event()
         self._last_ok = time.monotonic()
+        self._start_t = time.monotonic()
         self._ever_ok = False
+        # Set once the reader decides the camera is unrecoverable (never
+        # delivered a frame, or stalled and won't reopen). HandTracker.read()
+        # turns this into a CameraUnavailable for the worker.
+        self._fatal: str | None = None
+        self._reopen_fail_streak = 0
         # Exposure control. _manual_exposure None = the camera's own auto
         # exposure (fine in bright light); an int = a forced short shutter,
         # either set once from NABVE_GESTURE_EXPOSURE (_exposure_forced) or
         # reached by the adaptive ramp stepping through CAMERA_EXPOSURE_STEPS
         # when the delivered fps stays too low.
-        self._exposure_forced = CAMERA_FORCE_EXPOSURE is not None
-        self._manual_exposure: int | None = CAMERA_FORCE_EXPOSURE
+        # Non-Linux: leave exposure entirely to the OS/driver — the V4L2
+        # values would do more harm than good.
+        self._exposure_forced = _IS_LINUX and CAMERA_FORCE_EXPOSURE is not None
+        self._manual_exposure: int | None = CAMERA_FORCE_EXPOSURE if _IS_LINUX else None
         self._exposure_step_idx = -1
         self._adapt_since = time.monotonic()
         self._adapt_reads_mark = 0
@@ -98,6 +125,10 @@ class _CameraReader:
         if self._manual_exposure is None:
             return "auto"
         return f"manual {self._manual_exposure}" + (" forced" if self._exposure_forced else "")
+
+    @property
+    def fatal(self) -> str | None:
+        return self._fatal
 
     def _apply_exposure(self, cap) -> None:
         """Force manual exposure at _manual_exposure + lift brightness so the
@@ -114,7 +145,12 @@ class _CameraReader:
     def _adapt_exposure(self) -> None:
         """Called from the reader loop: if the feed is delivering under
         CAMERA_MIN_ACCEPTABLE_FPS, step the shutter down one notch."""
-        if self._exposure_forced or not CAMERA_ADAPTIVE_EXPOSURE or self._adapt_exhausted:
+        if (
+            not _IS_LINUX
+            or self._exposure_forced
+            or not CAMERA_ADAPTIVE_EXPOSURE
+            or self._adapt_exhausted
+        ):
             return
         now = time.monotonic()
         elapsed = now - self._adapt_since
@@ -146,17 +182,19 @@ class _CameraReader:
             self._manual_exposure,
         )
 
-    def _reopen(self):
+    def _reopen(self) -> bool:
         try:
             self._cap.release()
         except Exception:
             pass
         cap = self._cv2.VideoCapture(self._camera_index)
-        if cap.isOpened():
+        opened = cap.isOpened()
+        if opened:
             self._configure(cap)
             self._apply_exposure(cap)  # keep the chosen shutter across a reopen
         self._cap = cap
         self._last_ok = time.monotonic()
+        return opened
 
     def _loop(self) -> None:
         try:
@@ -176,18 +214,35 @@ class _CameraReader:
                         self._reads += 1
                     self._last_ok = grabbed
                     self._ever_ok = True
+                    self._reopen_fail_streak = 0
                     self._adapt_exposure()
                 else:
                     self._stop.wait(0.03)
+                    now = time.monotonic()
+                    if not self._ever_ok:
+                        # Opened but never delivered a frame — almost always
+                        # the device is held by another app. Bail with a
+                        # reason instead of idling forever.
+                        if now - self._start_t > CAMERA_NO_FRAMES_FAIL_SECONDS:
+                            self._fatal = (
+                                "камера открылась, но не отдаёт кадры — вероятно занята "
+                                "другим приложением (Zoom, OBS, браузер)"
+                            )
+                            logger.warning("Gesture camera: %s", self._fatal)
+                            break
                     # Only treat a gap as a stall if frames were flowing
                     # before — a merely slow (few-fps) feed must not trigger
                     # a reopen loop.
-                    if (
-                        self._ever_ok
-                        and time.monotonic() - self._last_ok > CAMERA_STALL_REOPEN_SECONDS
-                    ):
+                    elif now - self._last_ok > CAMERA_STALL_REOPEN_SECONDS:
                         logger.warning("Gesture camera stalled — reopening")
-                        self._reopen()
+                        if self._reopen():
+                            self._reopen_fail_streak = 0
+                        else:
+                            self._reopen_fail_streak += 1
+                            if self._reopen_fail_streak >= CAMERA_REOPEN_MAX_ATTEMPTS:
+                                self._fatal = "камера отключилась и не переоткрывается"
+                                logger.warning("Gesture camera: %s", self._fatal)
+                                break
         finally:
             # Release the camera from *this* thread once the loop is done —
             # calling cap.release() from another thread while this one is
@@ -277,7 +332,21 @@ def ensure_model() -> None:
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     logger.info("Downloading MediaPipe HandLandmarker model to %s", HAND_LANDMARKER_TASK_PATH)
     tmp = HAND_LANDMARKER_TASK_PATH.with_suffix(".task.part")
-    urllib.request.urlretrieve(HAND_LANDMARKER_TASK_URL, tmp)  # noqa: S310 - fixed HTTPS Google URL
+    try:
+        with urllib.request.urlopen(  # noqa: S310 - fixed HTTPS Google URL
+            HAND_LANDMARKER_TASK_URL, timeout=MODEL_DOWNLOAD_TIMEOUT_S
+        ) as response:
+            data = response.read()
+    except OSError as exc:
+        raise RuntimeError(
+            f"Не удалось скачать модель распознавания рук (проверьте интернет): {exc}"
+        ) from exc
+    if len(data) < MODEL_MIN_BYTES:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"Скачанная модель распознавания рук неполна ({len(data)} байт) — повторите позже."
+        )
+    tmp.write_bytes(data)
     tmp.replace(HAND_LANDMARKER_TASK_PATH)
 
 
@@ -391,6 +460,8 @@ class HandTracker:
         self._last_timestamp_ms = -1
 
     def read(self) -> FrameResult | None:
+        if self._reader is not None and self._reader.fatal is not None:
+            raise CameraUnavailable(self._reader.fatal)
         if self._reader is None or self._landmarker is None:
             return None
         self._diag_ticks += 1
@@ -448,19 +519,15 @@ class HandTracker:
             self._diag_accepted += 1
             hands.append(points)
         hands.sort(key=lambda h: h[0][0])
-        self._log_diagnostics(len(landmark_sets), hands, frame)
+        self._log_diagnostics(len(landmark_sets), hands, brightness)
 
         return FrameResult(frame=frame, hands=hands, brightness=brightness, capture_t=frame_t)
 
-    def _log_diagnostics(self, raw_count: int, hands: list[Landmarks], frame) -> None:
+    def _log_diagnostics(self, raw_count: int, hands: list[Landmarks], brightness: float) -> None:
         self._diag_frames += 1
         elapsed = time.monotonic() - self._diag_since
         if elapsed >= 2.0:
             fps = self._diag_frames / elapsed
-            try:
-                brightness = float(frame.mean())
-            except Exception:
-                brightness = -1.0
             logger.info(
                 "Gesture worker: %.1f fps, detect %.1f ms (%s), brightness %.0f/255, %d hand(s)",
                 fps, self._diag_detect_ms, self.delegate, brightness, len(hands),

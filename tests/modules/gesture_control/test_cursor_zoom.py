@@ -7,6 +7,11 @@ import pytest
 from modules.gesture_control import cursor_zoom as cz
 
 
+@pytest.fixture(autouse=True)
+def _isolate_recovery_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(cz, "_RECOVERY_FILE", tmp_path / "cursor_size.recovery")
+
+
 class _FakeRun:
     def __init__(self, get_value: str) -> None:
         self.get_value = get_value
@@ -70,3 +75,24 @@ def test_non_linux_is_a_silent_noop(monkeypatch) -> None:
     zoom = cz.CursorZoom()
     zoom.enlarge()
     assert called is False
+
+
+def test_recover_if_stale_restores_size_from_the_recovery_file(gnome) -> None:
+    # live size (fake) is 24; the recovery marker says it should be 20
+    cz._RECOVERY_FILE.write_text("20")
+    cz.CursorZoom().recover_if_stale()
+    assert gnome.sets == [20]  # size put back
+    assert not cz._RECOVERY_FILE.exists()  # and the marker cleared
+
+
+def test_enlarge_heals_a_prior_unclean_exit_first(gnome) -> None:
+    cz._RECOVERY_FILE.write_text("20")  # left over from a killed run
+    zoom = cz.CursorZoom()
+    zoom.enlarge()
+    # first the recovery put 20 back, then the fresh enlarge scaled 24 -> 36
+    assert gnome.sets == [20, round(24 * cz.CURSOR_SCALE)]
+
+
+def test_recover_if_stale_no_file_is_a_noop(gnome) -> None:
+    cz.CursorZoom().recover_if_stale()
+    assert gnome.sets == []

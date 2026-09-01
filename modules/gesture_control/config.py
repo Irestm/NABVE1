@@ -16,10 +16,12 @@ GESTURE_DEBUG = os.environ.get("NABVE_GESTURE_DEBUG", "").strip() not in ("", "0
 # once the numbers are understood.
 GESTURE_DIAG = os.environ.get("NABVE_GESTURE_DIAG", "1").strip() not in ("0", "false", "no")
 
-# Try the MediaPipe GPU delegate for inference first (RTX 4050), fall back to
-# CPU/XNNPACK if the wheel/driver can't provide it — the worker logs which
-# one it ended up on.
-GESTURE_TRY_GPU = os.environ.get("NABVE_GESTURE_GPU", "1").strip() not in ("0", "false", "no")
+# Try the MediaPipe GPU delegate for inference (RTX 4050), else CPU/XNNPACK.
+# OFF by default: on some Linux GL/driver stacks the MediaPipe Tasks GPU
+# path doesn't raise a catchable error, it aborts the whole process — and
+# CPU/XNNPACK on the float16 model at this resolution is already ~15-30 ms.
+# Set NABVE_GESTURE_GPU=1 to try it once you've confirmed it's stable here.
+GESTURE_TRY_GPU = os.environ.get("NABVE_GESTURE_GPU", "0").strip() in ("1", "true", "yes")
 
 # MediaPipe HandLandmarker running mode. "video" (default) carries the
 # previous frame forward as a tracking prior — smoother, but it can coast on
@@ -27,48 +29,74 @@ GESTURE_TRY_GPU = os.environ.get("NABVE_GESTURE_GPU", "1").strip() not in ("0", 
 # independently (no prior), our own One-Euro does the smoothing.
 GESTURE_MP_MODE = os.environ.get("NABVE_GESTURE_MP_MODE", "video").strip().lower()
 
-# Per-user profile facts written by the calibration wizard
-# (calibration.CalibrationSession): one phase per gesture, each done 3x, each
-# deriving its own threshold. The tracking-zone override is optional and set
-# by hand, not calibrated.
-GESTURE_FIST_THRESHOLD_KEY = "gesture_fist_threshold"
-GESTURE_DEADZONE_PX_KEY = "gesture_deadzone_px"
-GESTURE_MIN_CUTOFF_KEY = "gesture_min_cutoff"
-GESTURE_OPEN_PALM_RATIO_KEY = "gesture_open_palm_ratio"
-GESTURE_SWIPE_MIN_DX_KEY = "gesture_swipe_min_dx"
-GESTURE_TRACKING_ZONE_KEY = "gesture_tracking_zone"
-# Personal tracking rectangle in normalized frame coords "x0,x1,y0,y1",
-# from the "обведите углы экрана" calibration phase. Overrides the symmetric
-# DEFAULT_TRACKING_ZONE when present.
-GESTURE_ZONE_KEY = "gesture_zone_bounds"
-
-# Click = three INDEPENDENT signals OR'd together (any one down = button
-# down). Each is catch-fast / release-slow with its own median + debounce,
-# plus a tap timeout and a hard max-hold so the OS button can never stick.
+# --- Model ----------------------------------------------------------------
+# Archand-style: ABSOLUTE mapping (a frame box -> the whole screen) + a
+# discrete FINGER-STATE click, on top of our infra (One-Euro, camera
+# reader, robustness, calibration).
+#   * Cursor follows the index fingertip, but ONLY while the hand is in the
+#     "pointing" pose (index + middle both extended). Any other pose (fist,
+#     one finger, open palm, hand dropped) => the cursor holds still — that
+#     IS the clutch: make a fist / drop your hand to reposition your arm.
+#   * Left click / drag = from the pointing pose, bring the index and middle
+#     FINGERTIPS together (index_middle_gap small). Both tips are always
+#     visible (they don't occlude like thumb-index), so MediaPipe reads this
+#     far more reliably than the old pinch. A full fist also clicks.
+#   * Right click = from the pointing pose, fold ONLY the ring finger
+#     ("peace sign, tuck the ring"). Fire-once.
 #
-# 1. HULL (primary) — gesture_recognizer.hull_compactness: convex-hull area
-#    of all 21 landmarks over hand_size^2. Uses every point, so one bad
-#    fingertip is averaged out — steadier than a 2-point distance. A fist or
-#    pinch collapses the hull; an open/pointing hand does not. Thresholds
-#    are first guesses, the diagnostics log the per-user range.
+# Per-user calibration facts (STEADY -> CORNERS -> CLICK), all applied.
+GESTURE_MIN_CUTOFF_KEY = "gesture_min_cutoff"
+GESTURE_DEADZONE_PX_KEY = "gesture_deadzone_px"
+GESTURE_ZONE_KEY = "gesture_zone_bounds"          # the absolute mapping rectangle
+GESTURE_CLICK_GAP_ENG_KEY = "gesture_click_gap_engage"
+GESTURE_CLICK_GAP_REL_KEY = "gesture_click_gap_release"
+
+# HULL (gesture_recognizer.hull_compactness) is an extra OFF-by-default
+# click signal. NABVE_GESTURE_CLICK_HULL=1 re-enables it.
+CLICK_USE_HULL = os.environ.get("NABVE_GESTURE_CLICK_HULL", "").strip() in ("1", "true", "yes")
 HULL_ENGAGE = 0.16
 HULL_RELEASE = 0.28
 HULL_SCORE_MAX = 5.0
 
-# 2. PINCH — gesture_recognizer.pinch2_gap: thumb-tip to index-tip distance,
-#    hand-size normalised. Measured for this user: pinch 0.03-0.15, open
-#    0.7-2.5. Clamped first (a degenerate set once sent it to ~4.9).
-PINCH_ENGAGE = 0.28
-PINCH_RELEASE = 0.55
-PINCH_SCORE_MAX = 3.0
+# "Pointing" pose gate: index AND middle finger STRAIGHTNESS (chord/path
+# along the joints — depth-robust, unlike a 2D ratio) must exceed this for
+# the cursor to be driven / a left click to fire. Below it the hand isn't
+# pointing -> cursor holds (= the clutch).
+MOVE_FINGER_RATIO = 0.82
+# Pose-based modes (borrowed from the AI-Virtual-Mouse tutorial): the MIDDLE
+# finger is the mode switch. Index up + middle CURLED (straightness below
+# this) = MOVE (cursor follows the index tip). Index up + middle STRAIGHT
+# (above MOVE_FINGER_RATIO) = CLICK-ARM (cursor frozen, pinch index<->middle
+# tips to click). The band between the two = hold, so a half-raised middle
+# finger doesn't thrash between modes.
+MIDDLE_DOWN_MAX = 0.60
 
-# 3. FIST (fallback) — only a DEEP, unambiguous fist, so it can't false-fire
-#    on this user's low-reading open hand. Clamp the raw ratio first.
-DEFAULT_FIST_RATIO = 0.85        # calibration / swipe still use this
-FIST_FALLBACK_RATIO = 0.72       # fallback click engage — deep only
-FIST_RELEASE_GAP = 0.17
-FIST_SCORE_MIN = 0.3
-FIST_SCORE_MAX = 3.0
+# LEFT CLICK — the ONLY left click now: index_middle_gap (index-tip to
+# middle-tip distance, hand-size normalised) drops below ENGAGE from the
+# pointing pose. Measured live: peace sign apart ~0.25-0.5, tips together
+# ~0.10-0.15. The CLICK calibration phase personalises these. (A fist is
+# no longer a left click — it's just "not pointing" = the clutch.)
+CLICK_GAP_ENGAGE = 0.16
+CLICK_GAP_RELEASE = 0.30
+CLICK_GAP_MAX = 3.0                               # clamp a degenerate frame
+CLICK_GAP_ENG_MIN, CLICK_GAP_ENG_MAX = 0.08, 0.28
+CLICK_GAP_REL_MAX = 0.55
+
+# For the RIGHT-CLICK thumbs-up test only: how curled the least-curled
+# finger must be (max of the 4 straightness values) for the hand to count
+# as "a fist".
+FIST_FALLBACK_RATIO = 0.55
+FIST_RELEASE_GAP = 0.14
+FIST_SCORE_MIN = 0.20
+FIST_SCORE_MAX = 1.15
+DEFAULT_FIST_RATIO = 0.75
+
+# RIGHT CLICK — thumbs-up: the four fingers curled (a fist) AND the thumb
+# tip well away from every fingertip (thumb_gap >= THUMB_GAP_MIN — it
+# points away from the fist instead of wrapping over it). Fire-once.
+THUMB_GAP_MIN = 0.36
+RIGHT_CLICK_FRAMES = 3
+RIGHT_CLICK_LOCKOUT_S = 0.8
 
 # A click is a TAP by default: after CLICK_TAP_SECONDS held it auto-releases
 # unless a signal is still actively squeezed (a drag). The absolute release
@@ -76,67 +104,62 @@ FIST_SCORE_MAX = 3.0
 # stayed stuck for seconds.
 CLICK_TAP_SECONDS = 0.7
 
-# Shared smoothing + debounce for both click state machines.
-CLICK_MEDIAN_WINDOW = 3
-CLICK_ENGAGE_FRAMES = 2
+# After ANY click-up, block the next click until EITHER this long has passed
+# OR the hand has clearly opened (both signals well past their release bars
+# for CLICK_RELEASE_FRAMES). That kills the machine-gun where a hand
+# oscillating around the engage threshold auto-taps every ~0.7s (it never
+# "clearly opens"), while a real release opens the hand and lifts the lock
+# at once, so a fast double-click still works.
+CLICK_REPEAT_LOCKOUT_S = 1.0
+
+# Shared smoothing + debounce for the click state machines. The gap signal
+# is noisy near the engage bar, so a wider median + one more engage frame.
+CLICK_MEDIAN_WINDOW = 5
+CLICK_ENGAGE_FRAMES = 3
 CLICK_RELEASE_FRAMES = 2
 CLICK_MAX_HOLD_SECONDS = 4.0
-DEFAULT_TRACKING_ZONE = 0.70  # central fraction of the camera frame that maps to the whole screen
 
-# --- What the cursor follows ---------------------------------------------
-# "index" (default, per user request): the index fingertip — natural to aim
-# with. A pre-click freeze (see PRECLICK_* below) locks the cursor delta the
-# instant a click signal starts closing, so the arc the tip sweeps into a
-# fist / pinch doesn't drag the pointer off target. "palm": the wrist <->
-# middle-knuckle midpoint (the hand's rigid base, unaffected by finger curl)
-# — steadier but not where the user wants to point.
-GESTURE_TRACK_POINT = os.environ.get("NABVE_GESTURE_TRACK_POINT", "index").strip().lower()
-
-# Pre-click freeze: when the smoothed hull / pinch / fist signal drops by
-# more than PRECLICK_DELTA between frames (i.e. the hand is closing), the
-# cursor delta is frozen for PRECLICK_FREEZE_FRAMES ticks so the fingertip's
-# closing arc can't move the pointer. Directional (only a drop, = closing)
-# and sized well above normal jitter, so plain aiming never trips it.
+# Pre-click freeze: when a click signal changes fast toward "engaged"
+# between frames (fingers closing), the cursor is held for PRECLICK_FREEZE_
+# FRAMES ticks so the closing arc can't nudge the pointer off target.
 PRECLICK_DELTA = 0.06
 PRECLICK_FREEZE_FRAMES = 5
 
-# --- Cursor mode -----------------------------------------------------------
-# "relative" (default): the cursor moves by the hand's frame-to-frame delta,
-# mouse-style — so you reach any screen edge without your arm ending up in a
-# bad spot, and you lift/recenter via the clutch. "absolute": the old
-# hand-position -> screen-position mapping (kept as a fallback).
-GESTURE_CURSOR_MODE = os.environ.get("NABVE_GESTURE_CURSOR_MODE", "relative").strip().lower()
+# --- Absolute mapping ----------------------------------------------------
+# The pointing rectangle in the (mirrored) camera frame that maps to the
+# whole screen: a centred inset box, or the personal rectangle from the
+# CORNERS calibration phase. Point near a frame corner -> cursor at that
+# screen corner; points outside clamp to the screen edge.
+DEFAULT_TRACKING_ZONE = 0.60   # central fraction of the frame -> whole screen
 
-# Relative-mode gain, base pixels per 1.0 of normalised hand travel.
-# Override live with NABVE_GESTURE_REL_GAIN. Higher amplified landmark
-# jitter more than it helped, so 3000.
-try:
-    REL_GAIN_PX = float(os.environ.get("NABVE_GESTURE_REL_GAIN", "3000") or "3000")
-except ValueError:
-    REL_GAIN_PX = 3000.0
-# Speed-shaped gain (the cursor never force-stops — a dwell freeze locked it
-# mid-aim; this replaces it). Below REL_SPEED_REF the effective gain scales
-# from REL_PRECISION_GAIN (slow, careful aiming = fine steps) up to 1.0;
-# above it a flick term multiplies further so a fast sweep crosses a wide
-# multi-monitor desktop in one motion (was too weak — the per-tick clamp
-# alone throttled fast sweeps to a crawl on a 3840-wide desktop).
-REL_PRECISION_GAIN = 0.35
-REL_SPEED_REF = 0.5          # hand speed (norm/s) = "moving normally"
-REL_ACCEL = 4.0
+# The cursor EASES toward the mapped point (EMA) instead of snapping there,
+# so pointing somewhere far glides and there's time to react. Higher =
+# snappier, lower = slower / heavier. Tune this one knob for feel.
+ABS_FOLLOW_RATE = 0.18
+CORNER_CALIBRATION_SAMPLES = 90
+CORNER_ZONE_PAD = 0.03         # shrink the swept rectangle inward this much
+CORNER_ZONE_MIN_SPAN = 0.18    # each axis must span at least this to be used
 
-# Clutch: while the filtered hand point is OUTSIDE this centred frame box
-# the cursor is frozen but the hand keeps tracking, so you can drop /
-# recenter your arm and carry on from the same cursor spot. Kept close to
-# the frame edge — the old (0.12, 0.88) box was so tight that just reaching
-# toward the far monitor froze the cursor.
-CLUTCH_BOX = (0.03, 0.97, 0.03, 0.97)  # x0, x1, y0, y1 in frame coords
+# On-screen cursor deadzone (px): a mapped move smaller than this is
+# ignored, killing the last of the landmark shimmer for a resting hand.
+# STEADY calibration measures the user's own fingertip tremor and stores a
+# personal value; these are the fallback + clamp band.
+CURSOR_DEADZONE_PX = 6
+DEADZONE_PX_MIN, DEADZONE_PX_MAX = 2, 30
+JITTER_LOW_PX, JITTER_HIGH_PX = 1.5, 9.0   # tremor band -> min_cutoff lerp
 
 # A landmark set that blew up (a fingertip/wrist point flew off, distances
 # exploded, every derived signal spiked to its clamp) is rejected as a
 # frame: a real hand can't be this small, and no landmark sits this far
 # outside the frame.
 HAND_MIN_SCALE = 0.04        # wrist -> middle-knuckle distance, normalised
-LANDMARK_BOUND = 1.15        # |coord| beyond this (0/1 +/- 0.15) = blowup
+# A coord this far outside [0, 1] is a blowup. Was 1.15 (only 0.15 of
+# slack) — too tight: a hand reaching toward a screen corner is legitimately
+# ~1/3 out of frame, and dropping those frames made the corner-tracing
+# calibration unable to reach the extremes it needs. 1.35 still rejects a
+# real skeleton explosion (coords at 3.0 / -2.0); HAND_MIN_SCALE + the
+# knuckle-radius check still catch scattered blobs.
+LANDMARK_BOUND = 1.35
 
 # Per-user rigid-bone fit (bone_fit.py). The first BONE_SCAN_FRAMES frames
 # with a hand present are used to learn this hand's bone lengths (median);
@@ -144,25 +167,17 @@ LANDMARK_BOUND = 1.15        # |coord| beyond this (0/1 +/- 0.15) = blowup
 # its learned length along the raw direction — a fingertip that jumps can no
 # longer stretch its segment 3x, so the derived click signals stay stable.
 BONE_SCAN_FRAMES = 90
-BONE_FIT_BLEND = 0.85  # how far to pull raw toward the rigid fit (1 = fully rigid)
+# How far to pull a raw point toward its rigid position for SMALL errors
+# (the blend ramps to 1.0 = fully rigid as the error approaches a whole bone
+# length, i.e. a blowup). Was 0.85 — too stiff, it flattened the real
+# finger-curl signal the click detector reads; 0.5 keeps spike protection
+# while letting genuine motion through.
+BONE_FIT_BLEND = 0.5
 BONE_FIT_ENABLED = os.environ.get("NABVE_GESTURE_BONE_FIT", "1").strip() not in ("0", "false", "no")
 
-# MediaPipe num_hands. 1 by default — a second (often phantom) hand was a
-# source of primary-hand flips and blowups; two-hand zoom needs 2, set
-# NABVE_GESTURE_NUM_HANDS=2 for it.
-try:
-    HAND_NUM_HANDS = int(os.environ.get("NABVE_GESTURE_NUM_HANDS", "1") or "1")
-except ValueError:
-    HAND_NUM_HANDS = 1
-HAND_NUM_HANDS = max(1, min(2, HAND_NUM_HANDS))
-
-# Ignore final on-screen cursor moves smaller than this — kills the last of
-# the landmark shimmer so a resting hand doesn't twitch the pointer. This is
-# the fallback; "калибровка дрожания" measures the user's own tremor and
-# stores a personal value under GESTURE_DEADZONE_PX_KEY.
-CURSOR_DEADZONE_PX = 8
-DEADZONE_PX_MIN = 2
-DEADZONE_PX_MAX = 40
+# MediaPipe num_hands is fixed at 1 — two-hand zoom is gone, and a second
+# (often phantom) hand was a source of primary-hand flips and blowups.
+HAND_NUM_HANDS = 1
 
 # Hard cap on cursor travel in one worker tick: the smaller of
 # MAX_CURSOR_STEP_FRAC * min(screen_w, screen_h) and MAX_CURSOR_STEP_PX.
@@ -172,19 +187,6 @@ DEADZONE_PX_MAX = 40
 # sweep on a 3840-wide desktop to a crawl).
 MAX_CURSOR_STEP_FRAC = 0.9
 MAX_CURSOR_STEP_PX = 1400
-
-# Mapping "sensitivity": the personal / default tracking rectangle is
-# scaled about its centre by 1 / sensitivity, so <1 widens it (gentler,
-# needs a bigger hand move per screen distance) and >1 narrows it
-# (twitchier). Default 1.0 — the palm centre sweeps a smaller arc than a
-# fingertip, so it needs more gain than the fingertip did to feel 1:1.
-# Tune live with NABVE_GESTURE_SENSITIVITY (lower = slower / bigger move).
-try:
-    CURSOR_SENSITIVITY = float(os.environ.get("NABVE_GESTURE_SENSITIVITY", "0.45") or "0.45")
-except ValueError:
-    CURSOR_SENSITIVITY = 0.45
-if CURSOR_SENSITIVITY <= 0:
-    CURSOR_SENSITIVITY = 0.45
 
 # Fixed cursor magnification while gesture mode is on — a locked constant,
 # not a setting. Was 2x, dialled back to 1.5 ("меньше ещё курсор сделай").
@@ -248,31 +250,34 @@ else:
 # steadier, more lag; ONE_EURO_BETA raises the cutoff with hand speed so a
 # deliberate move barely lags. The correct MediaPipe timestamp (fixed) is
 # what makes a real 1€ filter possible now.
-ONE_EURO_MIN_CUTOFF = 0.9
+ONE_EURO_MIN_CUTOFF = 0.6      # lower = steadier at rest, a touch more lag
 ONE_EURO_BETA = 1.6
 ONE_EURO_D_CUTOFF = 1.0
 
-# "Калибровка дрожания" personalises the resting cutoff: it measures the
-# fingertip tremor (px) and maps it across [JITTER_LOW_PX, JITTER_HIGH_PX]
-# to a min-cutoff between MIN_CUTOFF_CEIL (steady hand, lighter) and
-# MIN_CUTOFF_FLOOR (shaky hand, heavier), stored under GESTURE_MIN_CUTOFF_KEY.
+# STEADY phase: hold the pointing fingertip still, measure its RMS tremor
+# (in screen px, via the mapping), map it across [JITTER_LOW_PX,
+# JITTER_HIGH_PX] to a resting 1€ cutoff between MIN_CUTOFF_CEIL (steady
+# hand, lighter) and MIN_CUTOFF_FLOOR (shaky, heavier); the same tremor
+# sets the on-screen deadzone.
 MIN_CUTOFF_FLOOR = 0.45
 MIN_CUTOFF_CEIL = 1.6
-
-# "Калибровка дрожания": hold the hand still for this many frames, measure
-# the RMS tremor of the fingertip, and map it (in screen px) across this
-# band to a personal deadzone + resting cutoff.
 STEADY_CALIBRATION_SAMPLES = 60
-JITTER_LOW_PX = 1.5
-JITTER_HIGH_PX = 9.0
 
 # Calibration refuses to store a threshold learned from a bad feed: a frame
 # darker than this (mean 0-255) can't be trusted, and if more than
-# CALIBRATION_MAX_DARK_FRACTION of a phase's frames are dark the wizard
-# aborts instead of persisting garbage (a dark session once wrote the
-# deadzone/pinch clamps to their extremes and broke everything).
+# CALIBRATION_MAX_DARK_FRACTION of the frames so far are dark the wizard
+# aborts instead of persisting garbage (checked at EVERY phase boundary now,
+# not just after STEADY — a dark session once wrote the deadzone/pinch
+# clamps to their extremes and broke everything).
 CALIBRATION_MIN_BRIGHTNESS = 45.0
 CALIBRATION_MAX_DARK_FRACTION = 0.4
+
+# A calibration phase that hasn't completed after this many frames (~15-20 s)
+# is force-finished with whatever data it has (falling back to the default
+# threshold if too little) and the wizard moves on — so a gesture the
+# camera can't separate for this user can't hang the whole wizard behind a
+# frozen cursor with no way out.
+CALIBRATION_PHASE_MAX_FRAMES = 400
 
 # If the reader had frames flowing and then gets nothing for this long (a
 # real driver stall, e.g. an abrupt lighting change forcing an exposure
@@ -280,16 +285,22 @@ CALIBRATION_MAX_DARK_FRACTION = 0.4
 # Generous so a merely slow (a few fps) feed is never mistaken for a stall.
 CAMERA_STALL_REOPEN_SECONDS = 8.0
 
-# Corner-tracing phase: sweep the hand around the four screen corners for
-# this many frames; the min/max x/y (padded inward) become the personal
-# tracking rectangle. Guardrail: each axis span must be at least this wide.
-CORNER_CALIBRATION_SAMPLES = 90
-CORNER_ZONE_PAD = 0.04
-CORNER_ZONE_MIN_SPAN = 0.18
+# The reader opened the device but not a single frame has ever arrived for
+# this long — treat it as "camera busy / unavailable" (Zoom, OBS, a browser
+# tab holding it) and shut the mode down with a spoken reason instead of
+# idling forever with a frozen cursor and no error.
+CAMERA_NO_FRAMES_FAIL_SECONDS = 6.0
+# Consecutive failed reopen attempts (each ~CAMERA_STALL_REOPEN_SECONDS
+# apart) before the reader stops retrying and reports the camera as gone,
+# rather than looping reopen forever behind a dead cursor.
+CAMERA_REOPEN_MAX_ATTEMPTS = 3
 
-# A held click survives this many hand-less frames before it is released —
-# MediaPipe drops the hand for a frame or two constantly.
-FIST_LOST_GRACE_FRAMES = 3
+# A HELD click coasts through this many hand-less frames before it is
+# force-released (vs HAND_LOST_COAST_FRAMES for a bare cursor). MediaPipe
+# drops the hand constantly and far more during a pinch (fingers overlap) —
+# a live run had ~half of pinch-clicks dying mid-press at ~12 frames, so
+# ~1 s of grace here (@ ~25 fps).
+FIST_LOST_GRACE_FRAMES = 25
 # Freeze the cursor for this many ticks the instant a click engages, so the
 # press lands exactly where it was aimed.
 CLICK_FREEZE_FRAMES = 3
@@ -311,35 +322,6 @@ HAND_LOST_COAST_FRAMES = 12
 # else — 18 px is a comfortable margin over pointer rounding.
 PHYSICAL_MOUSE_THRESHOLD_PX = 18
 PHYSICAL_MOUSE_OVERRIDE_SECONDS = 1.2
-
-# Two-hand zoom: minimum spread change per frame and cooldown between nudges.
-ZOOM_DELTA_THRESHOLD = 0.04
-ZOOM_COOLDOWN_FRAMES = 8
-
-# Open-palm horizontal swipe = switch windows (Alt+Tab / Alt+Shift+Tab).
-# A whole open palm (gesture_recognizer.is_open_palm) held for
-# SWIPE_OPEN_STREAK_FRAMES puts the worker in "swipe mode": the cursor is
-# frozen and only a horizontal palm-centre travel of at least the swipe
-# distance across SWIPE_HISTORY_FRAMES (mostly horizontal) fires a switch. A
-# pointing hand never enters this mode. SWIPE_MIN_DX is the fallback travel;
-# the wizard measures the user's actual swing (theirs was shorter than this,
-# which is why "ладонь так и не сработала") into GESTURE_SWIPE_MIN_DX_KEY.
-SWIPE_HISTORY_FRAMES = 5
-SWIPE_MIN_DX = 0.20
-SWIPE_MIN_DX_FLOOR = 0.10
-SWIPE_MIN_DX_CEIL = 0.40
-SWIPE_MAX_DY_RATIO = 0.6
-SWIPE_OPEN_STREAK_FRAMES = 3
-SWIPE_COOLDOWN_FRAMES = 12
-
-# Open-palm detection: is_open_palm compares each non-thumb fingertip's
-# distance-from-wrist to that finger's PIP joint's; open_palm_score is the
-# 3rd-largest of those ratios ("at least 3 fingers this extended"). The
-# fallback threshold; the wizard stores a personal one in
-# GESTURE_OPEN_PALM_RATIO_KEY between these bounds.
-DEFAULT_OPEN_PALM_RATIO = 1.12
-OPEN_PALM_RATIO_MIN = 1.04
-OPEN_PALM_RATIO_MAX = 1.7
 
 # Rejecting false hands ("воспринимает любой объект, даже голову") WITHOUT
 # starving real recognition (over-tight thresholds broke tracking): keep
@@ -365,7 +347,11 @@ HAND_KNUCKLE_RADIUS_TOLERANCE = 2.4  # max ratio of any wrist->knuckle distance 
 HAND_WARMUP_FRAMES = 2
 
 # MediaPipe Tasks HandLandmarker model — fetched once on first use into
-# data/models/, same pattern as the Silero TTS weights.
+# data/models/, same pattern as the Silero TTS weights. The fetch must fail
+# loudly (not hang) on a slow/absent network, and a truncated download must
+# be rejected rather than handed to MediaPipe as a broken .task file.
+MODEL_DOWNLOAD_TIMEOUT_S = 30.0
+MODEL_MIN_BYTES = 1_000_000  # the float16 hand_landmarker.task is ~7-8 MB
 MODELS_DIR = DATA_DIR / "models"
 HAND_LANDMARKER_TASK_PATH = MODELS_DIR / "hand_landmarker.task"
 HAND_LANDMARKER_TASK_URL = (

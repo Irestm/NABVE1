@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import math
 
-from modules.gesture_control.config import DEFAULT_FIST_RATIO, DEFAULT_OPEN_PALM_RATIO
+from modules.gesture_control.config import DEFAULT_FIST_RATIO
 from modules.gesture_control.hand_tracker import Landmarks
+
+# Kept for the (currently unused) swipe helper — the open-palm gesture was
+# removed from the pipeline but the pure detector stays covered by tests.
+_DEFAULT_OPEN_PALM_RATIO = 1.12
 
 # MediaPipe hand landmark indices.
 _WRIST = 0
@@ -28,12 +32,79 @@ def median(values: list[float]) -> float:
 
 def _finger_ratios(hand: Landmarks) -> list[float]:
     """Per non-thumb finger: tip-distance-from-wrist over PIP-distance-from-
-    wrist. >1 = extended, <1 = curled in. Scale-invariant."""
+    wrist. >1 = extended, <1 = curled in. Scale-invariant. SORTED."""
     wrist = hand[_WRIST]
     return sorted(
         _distance(hand[tip], wrist) / max(_distance(hand[pip], wrist), 1e-4)
         for tip, pip in _FINGERS
     )
+
+
+def finger_curl_ratios(hand: Landmarks) -> tuple[float, float, float, float]:
+    """DEPRECATED (kept for older tests): UNSORTED per-finger tip-vs-PIP
+    distance-from-wrist ratio. A 2D metric — a foreshortened extended
+    finger reads the same as a curled one. Use finger_straightness()."""
+    wrist = hand[_WRIST]
+    return tuple(  # type: ignore[return-value]
+        _distance(hand[tip], wrist) / max(_distance(hand[pip], wrist), 1e-4)
+        for tip, pip in _FINGERS
+    )
+
+
+# Per non-thumb finger: (mcp, pip, dip, tip).
+_FINGER_CHAINS = ((5, 6, 7, 8), (9, 10, 11, 12), (13, 14, 15, 16), (17, 18, 19, 20))
+
+
+def _straightness(hand: Landmarks, chain: tuple[int, int, int, int]) -> float:
+    """chord (base -> tip straight line) over path length along the joints.
+    ~1.0 = a straight finger, ~0.4 = fully curled. Both quantities
+    foreshorten together, so this holds up when the hand is angled toward
+    the camera — unlike a raw 2D distance."""
+    a, b, c, d = (hand[i] for i in chain)
+    path = _distance(a, b) + _distance(b, c) + _distance(c, d)
+    return _distance(a, d) / max(path, 1e-4)
+
+
+def finger_straightness(hand: Landmarks) -> tuple[float, float, float, float]:
+    """(index, middle, ring, pinky) straightness in [~0.4 curled .. ~1.0
+    straight]. The pose gate (pointing = index & middle straight) and the
+    fist fallback read this."""
+    return tuple(_straightness(hand, ch) for ch in _FINGER_CHAINS)  # type: ignore[return-value]
+
+
+def thumb_straightness(hand: Landmarks) -> float:
+    """Thumb straightness (MCP 2 -> IP 3 -> tip 4). ~1.0 = thumb sticking
+    out straight (a thumbs-up), lower = tucked / bent into a fist."""
+    return _straightness(hand, (2, 2, 3, 4))
+
+
+def thumb_gap(hand: Landmarks) -> float:
+    """Smallest distance from the thumb TIP to any of the four fingertips,
+    hand-size normalised. In a thumbs-up the thumb points away from the
+    curled fingers -> large (~0.4-0.7); in a fist the thumb wraps over
+    them -> small (~0.10-0.25). This separates a right-click thumbs-up from
+    a left-click fist far more reliably than thumb straightness alone."""
+    t = hand[4]
+    scale = _hand_scale(hand)
+    return min(_distance(t, hand[i]) for i in (8, 12, 16, 20)) / scale
+
+
+def index_middle_gap(hand: Landmarks) -> float:
+    """Index-tip to middle-tip distance, hand-size normalised. Two adjacent
+    fingertips that are ALWAYS both visible (they don't occlude each other
+    like thumb+index), so this reads far more reliably than the old pinch.
+    Peace sign apart ~0.4-0.6; bring the two tips together ~0.10-0.20 = the
+    left click."""
+    return _distance(hand[_INDEX_TIP], hand[_MIDDLE_TIP]) / _hand_scale(hand)
+
+
+def thumb_out_ratio(hand: Landmarks) -> float:
+    """Thumb tip's distance-from-wrist over the thumb MCP's — the same
+    "extended vs curled" ratio the four fingers use, adapted to the thumb.
+    >1 = thumb sticking out (a thumbs-up), <1 = tucked into a fist. Used
+    to tell a right-click (fist + thumb out) from a left-click fist."""
+    wrist = hand[_WRIST]
+    return _distance(hand[4], wrist) / max(_distance(hand[2], wrist), 1e-4)
 
 
 def fist_score(hand: Landmarks) -> float:
@@ -56,7 +127,7 @@ def open_palm_score(hand: Landmarks) -> float:
     return _finger_ratios(hand)[1]
 
 
-def is_open_palm(hand: Landmarks, ratio_threshold: float = DEFAULT_OPEN_PALM_RATIO) -> bool:
+def is_open_palm(hand: Landmarks, ratio_threshold: float = _DEFAULT_OPEN_PALM_RATIO) -> bool:
     """A whole open hand (3+ non-thumb fingers extended). A pointing hand
     (only the index out) fails this, so it can't be mistaken for a swipe
     while the user is just aiming the cursor. The threshold is personalised
@@ -72,6 +143,21 @@ def _hand_scale(hand: Landmarks) -> float:
 
 _INDEX_MCP = 5
 _INDEX_PIP = 6
+_INDEX_DIP = 7
+
+
+def finger_direction(hand: Landmarks) -> tuple[float, float]:
+    """The index finger's pointing vector in the (mirrored) frame plane:
+    MCP (5) -> DIP (7), normalised by hand size. Uses the two stable joints
+    of the straight part of the finger (not the noisy tip 8, not the
+    exaggerated virtual-tip extrapolation). Tilt the finger right and the
+    x component grows; tilt it down and y grows; point straight at the
+    camera and the vector shrinks toward zero. The dispatcher's "point"
+    cursor mode drives the cursor from this vector's deviation from a
+    calibrated neutral, so the wrist can stay put."""
+    mcp, dip = hand[_INDEX_MCP], hand[_INDEX_DIP]
+    s = _hand_scale(hand)
+    return ((dip[0] - mcp[0]) / s, (dip[1] - mcp[1]) / s)
 
 
 def index_tip(hand: Landmarks) -> tuple[float, float]:

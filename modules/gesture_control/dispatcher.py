@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import queue
 import threading
 import time
 from typing import Any
@@ -15,47 +16,38 @@ from modules.gesture_control.config import (
     BONE_SCAN_FRAMES,
     CLICK_ENGAGE_FRAMES,
     CLICK_FREEZE_FRAMES,
+    CLICK_GAP_MAX,
     CLICK_MAX_HOLD_SECONDS,
     CLICK_MEDIAN_WINDOW,
     CLICK_RELEASE_FRAMES,
+    CLICK_REPEAT_LOCKOUT_S,
     CLICK_TAP_SECONDS,
-    CLUTCH_BOX,
-    CURSOR_SENSITIVITY,
+    CLICK_USE_HULL,
     DEFAULT_TRACKING_ZONE,
     FIST_FALLBACK_RATIO,
     FIST_LOST_GRACE_FRAMES,
     FIST_RELEASE_GAP,
     FIST_SCORE_MAX,
     FIST_SCORE_MIN,
-    GESTURE_CURSOR_MODE,
     GESTURE_DIAG,
-    GESTURE_TRACK_POINT,
-    GESTURE_TRACKING_ZONE_KEY,
     HAND_LOST_COAST_FRAMES,
     HAND_WARMUP_FRAMES,
     HULL_ENGAGE,
     HULL_RELEASE,
     HULL_SCORE_MAX,
+    ABS_FOLLOW_RATE,
     MAX_CURSOR_STEP_FRAC,
     MAX_CURSOR_STEP_PX,
-    PINCH_ENGAGE,
-    PINCH_RELEASE,
-    PINCH_SCORE_MAX,
-    PRECLICK_DELTA,
-    PRECLICK_FREEZE_FRAMES,
+    MIDDLE_DOWN_MAX,
+    MOVE_FINGER_RATIO,
     PHYSICAL_MOUSE_OVERRIDE_SECONDS,
     PHYSICAL_MOUSE_THRESHOLD_PX,
+    PRECLICK_DELTA,
+    PRECLICK_FREEZE_FRAMES,
     PROCESSING_FPS,
-    REL_ACCEL,
-    REL_GAIN_PX,
-    REL_PRECISION_GAIN,
-    REL_SPEED_REF,
-    SWIPE_COOLDOWN_FRAMES,
-    SWIPE_HISTORY_FRAMES,
-    SWIPE_MAX_DY_RATIO,
-    SWIPE_OPEN_STREAK_FRAMES,
-    ZOOM_COOLDOWN_FRAMES,
-    ZOOM_DELTA_THRESHOLD,
+    RIGHT_CLICK_FRAMES,
+    RIGHT_CLICK_LOCKOUT_S,
+    THUMB_GAP_MIN,
 )
 from modules.gesture_control.cursor_controller import (
     CursorController,
@@ -66,31 +58,25 @@ from modules.gesture_control.cursor_zoom import cursor_zoom
 from modules.gesture_control.events import GestureAnnouncement
 from modules.gesture_control.bone_fit import BoneModel
 from modules.gesture_control.gesture_recognizer import (
-    fist_score,
+    finger_straightness,
     hand_centre,
     hull_compactness,
+    index_middle_gap,
     index_tip,
-    is_open_palm,
-    open_palm_score,
-    pinch2_gap,
-    swipe_direction,
-    two_hand_spread_delta,
+    thumb_gap,
 )
-from modules.gesture_control.hand_tracker import HandTracker
+from modules.gesture_control.hand_tracker import CameraUnavailable, HandTracker
 from modules.gesture_control.one_euro_filter import OneEuroFilter
 from modules.gesture_control.overlay_state import overlay_state
-from modules.user_profile import service_layer as profile_service_layer
-from modules.user_profile.uow import ProfileUnitOfWork
 
 logger = get_logger(__name__)
 
-
-def _load_float(key: str, default: float) -> float:
-    raw = profile_service_layer.get_fact(ProfileUnitOfWork(), key)
-    try:
-        return float(raw) if raw else default
-    except ValueError:
-        return default
+# How long stop() waits for the worker thread to finish. If it overruns
+# (a wedged camera release / a hung gsettings), stop() reports failure and
+# — crucially — does NOT clear the thread handle, so a follow-up start()
+# can't spawn a second worker on top of the one still shutting down.
+# Module-level so tests can shrink it.
+_STOP_JOIN_TIMEOUT_S = 8.0
 
 
 def _hand_span(hand: list[tuple[float, float]]) -> float:
@@ -101,22 +87,6 @@ def _hand_span(hand: list[tuple[float, float]]) -> float:
 
 def _sq_dist(a: tuple[float, float], b: tuple[float, float]) -> float:
     return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
-
-
-def _apply_sensitivity(
-    bounds: tuple[float, float, float, float], sensitivity: float
-) -> tuple[float, float, float, float]:
-    """Scale the tracking rectangle about its centre by 1 / sensitivity —
-    sensitivity < 1 widens it (a bigger hand move per screen distance)."""
-    if abs(sensitivity - 1.0) < 1e-3:
-        return bounds
-    x0, x1, y0, y1 = bounds
-    out = []
-    for lo, hi in ((x0, x1), (y0, y1)):
-        centre = (lo + hi) / 2
-        half = (hi - lo) / 2 / sensitivity
-        out.extend((max(0.0, centre - half), min(1.0, centre + half)))
-    return (out[0], out[1], out[2], out[3])
 
 
 class GestureController:
@@ -131,7 +101,19 @@ class GestureController:
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        # The main asyncio loop (bound at backend startup). Spoken feedback is
+        # published onto it, off the worker's hot path — see _announce.
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._announce_q: queue.Queue[str] = queue.Queue()
+        self._announce_lock = threading.Lock()
+        self._announce_thread: threading.Thread | None = None
+        # Set by the worker itself the instant its _run() returns (any path:
+        # clean stop, camera fault, crash). is_active() consults it so the
+        # window between "worker finished" and "OS thread actually exited"
+        # doesn't read as still-active. Only stop()/start() touch _thread.
+        self._worker_done = threading.Event()
         self._recalibrate = False
+        self._cancel_calibration = False
         self._last_error: str | None = None
         # Optional diagnostic camera preview (§1). The worker only snapshots
         # the frame + landmarks while _preview_enabled; the drawing + JPEG
@@ -143,7 +125,12 @@ class GestureController:
     # --- public API (called from command handlers / API) ---
 
     def is_active(self) -> bool:
-        return self._thread is not None and self._thread.is_alive()
+        thread = self._thread
+        return (
+            thread is not None
+            and thread.is_alive()
+            and not self._worker_done.is_set()
+        )
 
     def last_error(self) -> str | None:
         return self._last_error
@@ -167,9 +154,15 @@ class GestureController:
 
     def start(self) -> bool:
         with self._lock:
+            # is_active() stays True for a worker that's alive but wedged in
+            # shutdown (a stop() whose join timed out), so this also blocks
+            # starting a second worker over one that won't die.
             if self.is_active():
                 return False
             self._stop_event.clear()
+            self._worker_done.clear()
+            self._recalibrate = False
+            self._cancel_calibration = False
             self._last_error = None
             self._thread = threading.Thread(target=self._run, name="gesture-worker", daemon=True)
             self._thread.start()
@@ -177,13 +170,25 @@ class GestureController:
 
     def stop(self) -> bool:
         with self._lock:
-            if not self.is_active():
+            thread = self._thread
+            if thread is None or not thread.is_alive():
+                # Nothing running, or the worker already self-terminated
+                # (camera fault / crash) — reap the handle and report "off".
+                self._thread = None
+                overlay_state.set(active=False)
                 return False
             self._stop_event.set()
-            thread = self._thread
-        assert thread is not None
-        thread.join(timeout=5)
-        self._thread = None
+        thread.join(timeout=_STOP_JOIN_TIMEOUT_S)
+        if thread.is_alive():
+            logger.warning(
+                "Gesture worker did not stop within %.0fs — keeping the handle so a "
+                "restart can't spawn a second worker over it",
+                _STOP_JOIN_TIMEOUT_S,
+            )
+            self._last_error = "Не удалось остановить режим жестов вовремя — попробуйте ещё раз."
+            return False
+        with self._lock:
+            self._thread = None
         overlay_state.set(active=False)
         return True
 
@@ -193,24 +198,53 @@ class GestureController:
         self._recalibrate = True
         return True
 
+    def cancel_calibration(self) -> bool:
+        if not self.is_active():
+            return False
+        self._cancel_calibration = True
+        return True
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Called once at backend startup so _announce can hand spoken
+        feedback to the running app loop instead of spinning its own."""
+        self._loop = loop
+
     # --- worker ---
 
     def _announce(self, message: str) -> None:
-        try:
-            asyncio.run(self._bus.publish(GestureAnnouncement(message=message)))
-        except Exception:
-            logger.exception("Failed to publish GestureAnnouncement")
+        """Enqueue spoken feedback and return immediately — the worker loop
+        must never block for the length of a TTS utterance. A lazily-started
+        daemon drains the queue one message at a time (so prompts don't
+        overlap) and publishes each onto the bound app loop."""
+        with self._announce_lock:
+            if self._announce_thread is None or not self._announce_thread.is_alive():
+                self._announce_thread = threading.Thread(
+                    target=self._announce_pump, name="gesture-announce", daemon=True
+                )
+                self._announce_thread.start()
+        self._announce_q.put(message)
+
+    def _announce_pump(self) -> None:
+        while True:
+            message = self._announce_q.get()
+            event = GestureAnnouncement(message=message)
+            loop = self._loop
+            try:
+                if loop is not None and loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(self._bus.publish(event), loop)
+                    future.result(timeout=30)
+                else:
+                    asyncio.run(self._bus.publish(event))
+            except Exception:
+                logger.exception("Failed to publish GestureAnnouncement")
 
     def _run(self) -> None:
-        zone = _load_float(GESTURE_TRACKING_ZONE_KEY, DEFAULT_TRACKING_ZONE)
-        bounds = _apply_sensitivity(
-            calibration.load_zone_bounds() or bounds_from_zone(zone), CURSOR_SENSITIVITY
-        )
+        # Personal values from the calibration wizard — all applied below.
+        min_cutoff = calibration.load_min_cutoff()
         deadzone_px = calibration.load_deadzone_px()
-        fist_threshold = calibration.load_fist_threshold()  # swipe guard + calibration only
-        open_palm_ratio = calibration.load_open_palm_ratio()
-        swipe_min_dx = calibration.load_swipe_min_dx()
-        euro = OneEuroFilter(min_cutoff=calibration.load_min_cutoff())
+        zone_bounds = calibration.load_zone_bounds()
+        click_gap_eng, click_gap_rel = calibration.load_click_gap_thresholds()
+        euro = OneEuroFilter(min_cutoff=min_cutoff)
 
         try:
             tracker = HandTracker()
@@ -220,21 +254,29 @@ class GestureController:
             logger.exception("Gesture worker failed to start")
             self._last_error = str(exc)
             self._announce("Не удалось включить режим жестов: " + str(exc))
-            self._thread = None
             overlay_state.set(active=False)
+            self._worker_done.set()
             return
 
-        overlay_state.set(active=True)
-        cursor_zoom.enlarge()
-        px_per_norm = cursor.screen_size[0] / max(bounds[1] - bounds[0], 1e-6)
-        relative = GESTURE_CURSOR_MODE != "absolute"
-        track_index = GESTURE_TRACK_POINT != "palm"
-        track_of = index_tip if track_index else hand_centre
+        # active + enlarged cursor are deferred to the first real frame
+        # (see `activated` below): if the camera opens but never delivers
+        # (busy elsewhere), /api/status must not report the mode as active.
+        activated = False
+        # ABSOLUTE mapping: a rectangle in the (mirrored) frame -> the whole
+        # screen. Point the index fingertip near a frame corner and the
+        # cursor is at that screen corner. The cursor is only driven while
+        # the hand is in the two-finger "pointing" pose — any other pose
+        # (fist, one finger, hand dropped) holds the cursor, which is the
+        # clutch: make a fist to reposition your arm.
+        bounds = zone_bounds or bounds_from_zone(DEFAULT_TRACKING_ZONE)
+        screen_w, screen_h = cursor.screen_size
+        px_per_norm = screen_w / max(bounds[1] - bounds[0], 1e-6)
         cursor_px, cursor_py = (float(v) for v in cursor.current_pos())
         logger.info(
-            "Gesture cursor mode: %s, tracking %s",
-            "relative" if relative else "absolute",
-            "index tip" if track_index else "palm centre",
+            "Gesture: absolute + finger-state | zone %s%s | click-gap %.2f/%.2f | "
+            "deadzone %dpx cutoff %.2f",
+            tuple(round(b, 2) for b in bounds), " (calibrated)" if zone_bounds else "",
+            click_gap_eng, click_gap_rel, deadzone_px, min_cutoff,
         )
 
         session: calibration.CalibrationSession | None = None
@@ -251,46 +293,45 @@ class GestureController:
         override_until = 0.0
         bones = BoneModel()
         bone_ready_logged = False
-        # Three independent click state machines OR'd onto the one OS button.
+        # LEFT click state machines OR'd onto the one OS button: `pinch_*`
+        # now tracks the index<->middle FINGERTIP GAP (small = tips together
+        # = click), `fist_*` the full-fist fallback, `hull_*` the opt-in.
         hull_on = False
         hull_engage_streak = 0
         hull_release_streak = 0
         hull_buf: list[float] = []
         pinch_on = False
-        pinch_engage_streak = 0
-        pinch_release_streak = 0
+        click_gap_engage_streak = 0
+        click_gap_release_streak = 0
         pinch_buf: list[float] = []
         fist_on = False
         fist_engage_streak = 0
         fist_release_streak = 0
         fist_buf: list[float] = []
         click_down_t = 0.0
-        fist_lost = 0
+        click_lock_until = 0.0
+        click_held_through = False  # hand hasn't clearly opened since the last click
+        open_streak = 0  # consecutive frames the hand has been clearly open
         hand_lost = 0
         click_freeze = 0
         preclick_freeze = 0
         hull_prev = pinch_prev = fist_prev = None  # for the pre-click "closing" test
+        right_streak = 0        # ring-folded frames toward a right click
+        right_lock_until = 0.0  # right-click fired -> locked until this time / ring extends
         prev_filtered: tuple[float, float] | None = None
         prev_t = 0.0
         prev_primary: tuple[float, float] | None = None
-        last_track: tuple[float, float] | None = None
-        palm_streak = 0
-        swipe_x: list[float] = []
-        swipe_y: list[float] = []
-        swipe_cooldown = 0
-        prev_spread: float | None = None
-        zoom_cooldown = 0
 
-        # --- diagnostics, flushed to a few INFO lines every 2s. Verbose on
-        # purpose: distances, per-tick cursor step (pre/post clamp), where the
-        # hand roams in the frame, how deep past the clutch box it goes, and
-        # a per-cause breakdown of what the cursor did each tick.
-        screen_w, screen_h = cursor.screen_size
+        # --- diagnostics, flushed to a few INFO lines every 2s.
         diag_since = time.monotonic()
         diag_ticks = 0
         diag_fist: list[float] = []
         diag_pinch2: list[float] = []
         diag_hull: list[float] = []
+        diag_idx: list[float] = []
+        diag_mid: list[float] = []
+        diag_ring: list[float] = []
+        diag_pnk: list[float] = []
         diag_speed: list[float] = []
         diag_dhx: list[float] = []
         diag_dhy: list[float] = []
@@ -303,34 +344,52 @@ class GestureController:
         diag_clamped = 0
         diag_phys = 0
         diag_n_clutch = 0
+        diag_n_arm = 0
         diag_n_preclick = 0
         diag_n_clickfreeze = 0
         diag_n_moved = 0
         diag_travel = 0.0
 
         def _release_click() -> None:
-            nonlocal hull_on, pinch_on, fist_on
+            nonlocal hull_on, pinch_on, fist_on, click_held_through
             nonlocal hull_engage_streak, hull_release_streak
-            nonlocal pinch_engage_streak, pinch_release_streak
+            nonlocal click_gap_engage_streak, click_gap_release_streak
             nonlocal fist_engage_streak, fist_release_streak
             if cursor.is_holding:
                 cursor.click_up()
                 logger.info("Gesture click: released (hand lost / mouse override)")
             hull_on = pinch_on = fist_on = False
             hull_engage_streak = hull_release_streak = 0
-            pinch_engage_streak = pinch_release_streak = 0
+            click_gap_engage_streak = click_gap_release_streak = 0
             fist_engage_streak = fist_release_streak = 0
+            click_held_through = False  # hand-lost / override clears the repeat lock
+
+        def _reset_tracking(*, hard: bool) -> None:
+            """The one place every "abandon the current cursor drive" path
+            resets shared state, so a path can't silently forget a field.
+            `hard` (hand lost past the coast window) also steps the warmup
+            streak back; `hard=False` is the physical-mouse yield.
+            """
+            nonlocal prev_filtered, prev_primary, click_freeze, preclick_freeze
+            nonlocal hull_prev, pinch_prev, fist_prev, seen
+            _release_click()
+            euro.reset()
+            prev_filtered = None
+            prev_primary = None
+            click_freeze = 0
+            preclick_freeze = 0
+            hull_prev = pinch_prev = fist_prev = None
+            if hard:
+                seen = max(0, seen - 1)
 
         max_step_px = min(MAX_CURSOR_STEP_FRAC * min(screen_w, screen_h), float(MAX_CURSOR_STEP_PX))
 
         def _drive_cursor(tx: float, ty: float) -> tuple[float, float]:
             """Move the cursor toward an absolute screen point: clamp the
             per-tick step so a bad frame can't fling it across the display,
-            apply the deadzone, and re-anchor the physical-mouse reference
-            every tick (even when we don't move). Returns the FLOAT target
-            after clamping — the caller keeps that as its accumulator, so
-            sub-pixel motion below the deadzone still adds up (needed for
-            fine aiming in relative mode) instead of being discarded."""
+            re-anchor the physical-mouse reference every tick (even when we
+            don't move). Returns the FLOAT target after clamping — the caller
+            keeps that as its accumulator so sub-pixel motion still adds up."""
             nonlocal diag_clamped, diag_n_moved, diag_travel
             cx, cy = cursor.current_pos()
             dx, dy = tx - cx, ty - cy
@@ -343,7 +402,7 @@ class GestureController:
                 dx, dy = tx - cx, ty - cy
                 if GESTURE_DIAG:
                     diag_clamped += 1
-            dz = 1.0 if relative else float(deadzone_px)
+            dz = float(deadzone_px)  # personal on-screen deadzone (STEADY calibration)
             step = math.hypot(dx, dy)
             if GESTURE_DIAG:
                 diag_step_out.append(step)
@@ -352,9 +411,17 @@ class GestureController:
                 if GESTURE_DIAG:
                     diag_n_moved += 1
                     diag_travel += step
+                actual = cursor.last_pos()
+                if actual is not None and (
+                    abs(actual[0] - tx) > 4 or abs(actual[1] - ty) > 4
+                ):
+                    # OS clamped the pointer short of the target (dock/panel)
+                    # — keep the accumulator on the reachable point so it
+                    # can't wind up and jam control against that edge.
+                    return float(actual[0]), float(actual[1])
                 return tx, ty
             cursor.sync_last_set()
-            return (tx, ty) if relative else (float(cx), float(cy))
+            return tx, ty
 
         try:
             while not self._stop_event.is_set():
@@ -369,40 +436,44 @@ class GestureController:
                         return f"{min(vals):{fmt}}..{max(vals):{fmt}} (avg {sum(vals) / len(vals):{fmt}})"
 
                     cxp, cyp = cursor.current_pos()
-                    cx0, cx1, cy0, cy1 = CLUTCH_BOX
                     logger.info(
                         "Gesture cursor: at (%d,%d) on %dx%d | edge-dist L=%d R=%d T=%d B=%d | "
-                        "travelled %d px over %.1fs | step-raw %s | step-applied %s | "
-                        "clamp hit %d/%d ticks (cap %d px) | gain %s",
+                        "travelled %d px over %.1fs | step %s | clamp hit %d/%d (cap %d px)",
                         cxp, cyp, screen_w, screen_h,
                         cxp, screen_w - cxp, cyp, screen_h - cyp,
-                        int(diag_travel), elapsed,
-                        _rng(diag_step_raw, ".0f"), _rng(diag_step_out, ".0f"),
-                        diag_clamped, diag_ticks, int(max_step_px), _rng(diag_gain, ".2f"),
+                        int(diag_travel), elapsed, _rng(diag_step_out, ".0f"),
+                        diag_clamped, diag_ticks, int(max_step_px),
                     )
                     logger.info(
-                        "Gesture hand: pos x %s y %s | per-tick move x %s y %s | speed %s norm/s "
-                        "| clutch box x[%.2f-%.2f] y[%.2f-%.2f], went %.3f past it | "
-                        "ticks: moved %d%% clutch %d%% preclick %d%% clickfreeze %d%% | phys-yield %d | bones %s",
+                        "Gesture hand: tip x %s y %s | zone x[%.2f-%.2f] y[%.2f-%.2f] | "
+                        "ticks: moved %d%% clutch %d%% click-arm %d%% preclick %d%% "
+                        "clickfreeze %d%% | phys-yield %d | bones %s",
                         _rng(diag_hx), _rng(diag_hy),
-                        _rng(diag_dhx, ".4f"), _rng(diag_dhy, ".4f"), _rng(diag_speed),
-                        cx0, cx1, cy0, cy1, diag_clutch_margin,
+                        bounds[0], bounds[1], bounds[2], bounds[3],
                         100 * diag_n_moved // n, 100 * diag_n_clutch // n,
+                        100 * diag_n_arm // n,
                         100 * diag_n_preclick // n, 100 * diag_n_clickfreeze // n,
                         diag_phys, "ready" if bones.ready else "scanning",
                     )
                     logger.info(
-                        "Gesture click-signals: hull* %s (eng<=%.2f rel>=%.2f) | pinch %s "
-                        "(eng<=%.2f rel>=%.2f) | fist %s (fb<=%.2f)",
-                        _rng(diag_hull), HULL_ENGAGE, HULL_RELEASE,
-                        _rng(diag_pinch2), PINCH_ENGAGE, PINCH_RELEASE,
+                        "Gesture click-signals: gap* %s (eng<=%.2f rel>=%.2f) | fist* %s "
+                        "(fb<=%.2f) | hull %s (%s) | straight idx %s mid %s (pt>%.2f) "
+                        "ring %s pinky %s",
+                        _rng(diag_pinch2), click_gap_eng, click_gap_rel,
                         _rng(diag_fist), FIST_FALLBACK_RATIO,
+                        _rng(diag_hull), "on" if CLICK_USE_HULL else "off",
+                        _rng(diag_idx), _rng(diag_mid), MOVE_FINGER_RATIO,
+                        _rng(diag_ring), _rng(diag_pnk),
                     )
                     diag_since = loop_start
                     diag_ticks = 0
                     diag_fist = []
                     diag_pinch2 = []
                     diag_hull = []
+                    diag_idx = []
+                    diag_mid = []
+                    diag_ring = []
+                    diag_pnk = []
                     diag_speed = []
                     diag_dhx = []
                     diag_dhy = []
@@ -415,6 +486,7 @@ class GestureController:
                     diag_clamped = 0
                     diag_phys = 0
                     diag_n_clutch = 0
+                    diag_n_arm = 0
                     diag_n_preclick = 0
                     diag_n_clickfreeze = 0
                     diag_n_moved = 0
@@ -424,11 +496,28 @@ class GestureController:
                     session = calibration.CalibrationSession(px_per_norm=px_per_norm)
                     self._drain_calibration_prompt(session)
                     overlay_state.set_calibration(session.progress())
+                if self._cancel_calibration:
+                    self._cancel_calibration = False
+                    if session is not None:
+                        session = None
+                        overlay_state.set_calibration(None)
+                        self._announce("Калибровка отменена.")
 
-                result = tracker.read()
+                try:
+                    result = tracker.read()
+                except CameraUnavailable as exc:
+                    logger.warning("Gesture worker stopping: %s", exc)
+                    self._last_error = str(exc)
+                    self._announce(f"Режим жестов остановлен: {exc}.")
+                    break
                 if result is None:
                     self._stop_event.wait(frame_interval)
                     continue
+
+                if not activated:
+                    activated = True
+                    overlay_state.set(active=True)
+                    cursor_zoom.enlarge()
 
                 if self._preview_enabled:
                     with self._preview_lock:
@@ -440,15 +529,8 @@ class GestureController:
                     diag_phys += 1
                     _release_click()
                 if loop_start < override_until:
-                    _release_click()
+                    _reset_tracking(hard=False)
                     cursor.sync_last_set()
-                    euro.reset()
-                    prev_primary = None
-                    last_track = None
-                    prev_filtered = None
-                    click_freeze = 0
-                    preclick_freeze = 0
-                    hull_prev = pinch_prev = fist_prev = None
                     cursor_px, cursor_py = (float(v) for v in cursor.current_pos())
                     self._pace(loop_start, frame_interval)
                     continue
@@ -462,29 +544,19 @@ class GestureController:
                     cursor.sync_last_set()
                     cursor_px, cursor_py = (float(v) for v in cursor.current_pos())
                     prev_filtered = None
-                    if cursor.is_holding and fist_lost < FIST_LOST_GRACE_FRAMES:
-                        fist_lost += 1
+                    # A held click gets a much longer coast — a pinch hides
+                    # the hand from MediaPipe far more than an open hand, and
+                    # ~half of pinch-clicks were dying mid-press otherwise.
+                    coast_limit = (
+                        FIST_LOST_GRACE_FRAMES if cursor.is_holding else HAND_LOST_COAST_FRAMES
+                    )
+                    if hand_lost <= coast_limit:
                         self._pace(loop_start, frame_interval)
                         continue
-                    if hand_lost <= HAND_LOST_COAST_FRAMES:
-                        self._pace(loop_start, frame_interval)
-                        continue
-                    _release_click()
-                    seen = max(0, seen - 1)
-                    euro.reset()
-                    last_track = None
-                    prev_primary = None
-                    click_freeze = 0
-                    preclick_freeze = 0
-                    hull_prev = pinch_prev = fist_prev = None
-                    swipe_x.clear()
-                    swipe_y.clear()
-                    palm_streak = 0
-                    prev_spread = None
+                    _reset_tracking(hard=True)
                     self._pace(loop_start, frame_interval)
                     continue
                 hand_lost = 0
-                fist_lost = 0
 
                 # Lock onto one hand across frames: the detection nearest to
                 # last frame's primary, not just the leftmost — a second (or
@@ -500,42 +572,67 @@ class GestureController:
 
                 # --- per-user rigid-bone fit: learn this hand's bone lengths,
                 # then snap every later frame so a jumped landmark can't
-                # stretch its segment (kills signal spikes at the source).
-                # Scan only on frames that are a plain open hand (no
-                # calibration session, not a fist / pinch) so a closed pose
-                # can't skew the learned lengths. ---
-                pre_fist = fist_score(primary)
-                pre_pinch = pinch2_gap(primary)
+                # stretch its segment. Skip scan frames that are an active
+                # grip (a curled finger would bias the learned lengths). ---
+                pre_str = finger_straightness(primary)
+                pre_gap = index_middle_gap(primary)
                 if BONE_FIT_ENABLED:
                     if not bones.ready:
-                        if session is None and pre_fist > 1.1 and pre_pinch > 0.5:
-                            bones.observe(primary)
+                        if session is None:
+                            is_grip = pre_gap <= click_gap_eng or max(pre_str) <= FIST_FALLBACK_RATIO
+                            bones.observe(primary, skip=is_grip)
                         if bones.ready and not bone_ready_logged:
                             bone_ready_logged = True
                             logger.info(
-                                "Gesture bone model: ready (scanned %d frames)", BONE_SCAN_FRAMES
+                                "Gesture bone model: ready (%d clean frames)", bones.scanned
                             )
                     else:
                         primary = bones.fit(primary)
 
-                palm = prev_primary = hand_centre(primary)
-                fist_s = min(FIST_SCORE_MAX, max(FIST_SCORE_MIN, fist_score(primary)))
-                pinch_s = min(PINCH_SCORE_MAX, pinch2_gap(primary))
-                hull_s = min(HULL_SCORE_MAX, hull_compactness(primary))  # primary click signal
-                palm_open_s = open_palm_score(primary)
+                prev_primary = hand_centre(primary)
+                tracked_pt = index_tip(primary)
+                idx_s, mid_s, ring_s, pinky_s = finger_straightness(primary)
+                thumb_g = thumb_gap(primary)
+                # Pose-based modes: the MIDDLE finger is the switch.
+                #   index up + middle CURLED  -> MOVE  (cursor follows the tip)
+                #   index up + middle STRAIGHT -> CLICK-ARM (cursor frozen,
+                #                                 pinch idx<->mid tips = click)
+                # The band between MIDDLE_DOWN_MAX and MOVE_FINGER_RATIO holds
+                # the cursor, so a half-raised middle finger can't thrash.
+                index_up = idx_s > MOVE_FINGER_RATIO
+                middle_up = mid_s > MOVE_FINGER_RATIO
+                move_pose = index_up and mid_s < MIDDLE_DOWN_MAX
+                click_arm = index_up and middle_up
+                # `pointing` (kept for calibration + diag) = the aiming hand is
+                # up at all, either mode.
+                pointing = index_up
+                # fist_s = MEDIAN straightness of the four fingers (mean of the
+                # middle two). Median, not max, so one stray half-extended
+                # finger can't break an otherwise-closed fist -> the 👍 right
+                # click stops firing "через раз".
+                _s_sorted = sorted((idx_s, mid_s, ring_s, pinky_s))
+                fist_s = min(
+                    FIST_SCORE_MAX,
+                    max(FIST_SCORE_MIN, 0.5 * (_s_sorted[1] + _s_sorted[2])),
+                )
+                gap_s = min(CLICK_GAP_MAX, index_middle_gap(primary))
+                hull_s = min(HULL_SCORE_MAX, hull_compactness(primary))
                 if GESTURE_DIAG:
                     diag_fist.append(fist_s)
-                    diag_pinch2.append(pinch_s)
+                    diag_pinch2.append(gap_s)
                     diag_hull.append(hull_s)
+                    diag_idx.append(idx_s)
+                    diag_mid.append(mid_s)
+                    diag_ring.append(ring_s)
+                    diag_pnk.append(pinky_s)
 
                 # --- calibration wizard ---
                 if session is not None and not session.done:
                     session.observe(
                         calibration.CalibrationFrame(
-                            fist_score=fist_s,
-                            open_palm_score=palm_open_s,
-                            raw_tip=palm,
-                            palm_centre=palm,
+                            tip=tracked_pt,
+                            index_middle_gap=gap_s,
+                            pointing=pointing,
                             brightness=result.brightness,
                         )
                     )
@@ -544,13 +641,19 @@ class GestureController:
                     if session.done:
                         applied = session.persist()
                         if not session.aborted:
-                            fist_threshold = applied.fist_threshold
+                            click_gap_eng = applied.click_gap_engage
+                            click_gap_rel = applied.click_gap_release
                             deadzone_px = applied.deadzone_px
-                            open_palm_ratio = applied.open_palm_ratio
-                            swipe_min_dx = applied.swipe_min_dx
+                            euro.set_min_cutoff(applied.min_cutoff)
                             if applied.zone_bounds is not None:
                                 bounds = applied.zone_bounds
-                            euro.set_min_cutoff(applied.min_cutoff)
+                                px_per_norm = screen_w / max(bounds[1] - bounds[0], 1e-6)
+                            logger.info(
+                                "Gesture: calibration applied — zone %s click-gap %.2f/%.2f "
+                                "deadzone %dpx cutoff %.2f",
+                                tuple(round(b, 2) for b in bounds),
+                                click_gap_eng, click_gap_rel, deadzone_px, applied.min_cutoff,
+                            )
                         session = None
                         overlay_state.set_calibration(None)
                     self._pace(loop_start, frame_interval)
@@ -567,45 +670,12 @@ class GestureController:
                     announced = True
                     self._announce("Режим жестов включён.")
 
-                fist_now = fist_s <= fist_threshold
-
-                # --- open-palm swipe = switch windows ---
-                if not fist_now and not cursor.is_holding and is_open_palm(primary, open_palm_ratio):
-                    palm_streak += 1
-                else:
-                    palm_streak = 0
-                    swipe_x.clear()
-                    swipe_y.clear()
-
-                if swipe_cooldown > 0:
-                    swipe_cooldown -= 1
-                    cursor.sync_last_set()
-                    self._pace(loop_start, frame_interval)
-                    continue
-
-                if palm_streak >= SWIPE_OPEN_STREAK_FRAMES:
-                    swipe_x.append(palm[0])
-                    swipe_y.append(palm[1])
-                    if len(swipe_x) > SWIPE_HISTORY_FRAMES:
-                        swipe_x.pop(0)
-                        swipe_y.pop(0)
-                    direction = swipe_direction(swipe_x, swipe_y, swipe_min_dx, SWIPE_MAX_DY_RATIO)
-                    if direction != 0:
-                        cursor.trigger_window_switch("next" if direction > 0 else "prev")
-                        swipe_cooldown = SWIPE_COOLDOWN_FRAMES
-                        swipe_x.clear()
-                        swipe_y.clear()
-                        palm_streak = 0
-                    cursor.sync_last_set()
-                    self._pace(loop_start, frame_interval)
-                    continue
-
                 # --- medians: the click decisions need a stable signal ---
                 fist_buf.append(fist_s)
                 if len(fist_buf) > CLICK_MEDIAN_WINDOW:
                     fist_buf.pop(0)
                 fist_med = sorted(fist_buf)[len(fist_buf) // 2]
-                pinch_buf.append(pinch_s)
+                pinch_buf.append(gap_s)
                 if len(pinch_buf) > CLICK_MEDIAN_WINDOW:
                     pinch_buf.pop(0)
                 pinch_med = sorted(pinch_buf)[len(pinch_buf) // 2]
@@ -615,9 +685,10 @@ class GestureController:
                 hull_med = sorted(hull_buf)[len(hull_buf) // 2]
 
                 # --- pre-click freeze: any click signal dropping fast (hand
-                # closing) freezes the cursor delta, so the fingertip's
-                # closing arc can't drag the pointer off target. Directional
-                # and well above jitter — plain aiming never trips it. ---
+                # closing) freezes the cursor delta for a few ticks, so the
+                # fingertip's closing arc into a fist / pinch can't drag the
+                # pointer off target. Directional (only a drop = closing) and
+                # sized well above jitter, so plain aiming never trips it. ---
                 closing = (
                     (hull_prev is not None and hull_prev - hull_med > PRECLICK_DELTA)
                     or (pinch_prev is not None and pinch_prev - pinch_med > PRECLICK_DELTA)
@@ -627,129 +698,133 @@ class GestureController:
                 if closing:
                     preclick_freeze = PRECLICK_FREEZE_FRAMES
 
-                # --- cursor point + hand speed (from the filtered point) ---
-                track = last_track = track_of(primary)
-                filtered = euro.update(track, result.capture_t)
+                # --- filtered fingertip ---
+                filtered = euro.update(tracked_pt, result.capture_t)
                 now_t = result.capture_t
                 if prev_filtered is not None and now_t > prev_t:
-                    dt = now_t - prev_t
                     d_hand = (filtered[0] - prev_filtered[0], filtered[1] - prev_filtered[1])
-                    hand_speed = math.hypot(*d_hand) / dt
                 else:
-                    d_hand, hand_speed = (0.0, 0.0), 0.0
+                    d_hand = (0.0, 0.0)
                 prev_filtered, prev_t = filtered, now_t
-
-                # --- clutch: hand outside the comfort box -> freeze, keep
-                # tracking, so you can drop / recenter your arm ---
-                cx0, cx1, cy0, cy1 = CLUTCH_BOX
-                clutched = not (cx0 <= filtered[0] <= cx1 and cy0 <= filtered[1] <= cy1)
 
                 if click_freeze > 0:
                     click_freeze -= 1
                 if preclick_freeze > 0:
                     preclick_freeze -= 1
 
-                gain = 0.0
                 if GESTURE_DIAG:
                     diag_ticks += 1
-                    diag_speed.append(hand_speed)
                     diag_hx.append(filtered[0])
                     diag_hy.append(filtered[1])
-                    diag_dhx.append(d_hand[0])
-                    diag_dhy.append(d_hand[1])
-                    if clutched:
+                    if not move_pose and not cursor.is_holding:
                         diag_n_clutch += 1
-                        over = max(
-                            cx0 - filtered[0], filtered[0] - cx1,
-                            cy0 - filtered[1], filtered[1] - cy1, 0.0,
-                        )
-                        diag_clutch_margin = max(diag_clutch_margin, over)
+                    if click_arm:
+                        diag_n_arm += 1
                     if preclick_freeze > 0:
                         diag_n_preclick += 1
                     if click_freeze > 0:
                         diag_n_clickfreeze += 1
 
-                # The cursor never force-stops on its own (a dwell freeze
-                # locked it mid-aim). It holds only during a click freeze, a
-                # pre-click freeze, or a clutch; otherwise it moves, with a
-                # speed-shaped gain — fine when slow, accelerated when flicked.
-                if click_freeze > 0 or preclick_freeze > 0 or clutched:
+                # ABSOLUTE mapping. The cursor is driven ONLY in the MOVE pose
+                # (index up, middle curled) — raising the middle finger to arm
+                # a click freezes it in place, and any other pose is the
+                # clutch. A drag is the exception: once the button is held the
+                # cursor follows again even though the middle finger is up.
+                # Also holds during a click / pre-click freeze so the press
+                # lands where it was aimed.
+                can_move = move_pose or cursor.is_holding
+                hold_cursor = (
+                    not can_move
+                    or click_freeze > 0
+                    or (preclick_freeze > 0 and not cursor.is_holding)
+                )
+                if hold_cursor:
                     cursor.sync_last_set()
                     cursor_px, cursor_py = (float(v) for v in cursor.current_pos())
-                elif relative:
-                    norm = min(hand_speed / REL_SPEED_REF, 1.0)
-                    precision = REL_PRECISION_GAIN + (1.0 - REL_PRECISION_GAIN) * norm
-                    flick = 1.0 + REL_ACCEL * max(hand_speed - REL_SPEED_REF, 0.0) / REL_SPEED_REF
-                    gain = REL_GAIN_PX * precision * flick
-                    if GESTURE_DIAG:
-                        diag_gain.append(gain)
-                    nx = min(max(cursor_px + d_hand[0] * gain, 0.0), screen_w - 1.0)
-                    ny = min(max(cursor_py + d_hand[1] * gain, 0.0), screen_h - 1.0)
-                    cursor_px, cursor_py = _drive_cursor(nx, ny)
                 else:
-                    tx, ty = map_hand_to_screen(filtered, cursor.screen_size, bounds)
-                    cursor_px, cursor_py = _drive_cursor(tx, ty)
+                    tx, ty = map_hand_to_screen(filtered, (screen_w, screen_h), bounds)
+                    # Ease toward the mapped point instead of snapping there
+                    # (EMA): pointing somewhere far glides over ~0.3 s, so
+                    # there's time to react. ABS_FOLLOW_RATE is the one knob.
+                    cx, cy = cursor.current_pos()
+                    cursor_px = cx + ABS_FOLLOW_RATE * (tx - cx)
+                    cursor_py = cy + ABS_FOLLOW_RATE * (ty - cy)
+                    cursor_px, cursor_py = _drive_cursor(cursor_px, cursor_py)
 
-                # --- click: HULL compactness (primary), PINCH, DEEP FIST —
-                # three independent catch-fast / release-slow state machines
-                # OR'd onto the one OS button, with a tap timeout + hard
-                # max-hold so it can never stay stuck ---
-                if not hull_on:
-                    hull_engage_streak = (
-                        hull_engage_streak + 1 if hull_med <= HULL_ENGAGE else 0
-                    )
-                    if hull_engage_streak >= CLICK_ENGAGE_FRAMES:
-                        hull_on, hull_engage_streak = True, 0
-                else:
-                    hull_release_streak = (
-                        hull_release_streak + 1 if hull_med >= HULL_RELEASE else 0
-                    )
-                    if hull_release_streak >= CLICK_RELEASE_FRAMES:
-                        hull_on, hull_release_streak = False, 0
+                # --- click: PINCH (thumb-index) + DEEP FIST, catch-fast /
+                # release-slow, OR'd onto the one OS button, with a tap
+                # timeout and a hard max-hold. HULL is off by default — its
+                # frame-to-frame noise fired false clicks. ---
+                if CLICK_USE_HULL:
+                    if not hull_on:
+                        hull_engage_streak = (
+                            hull_engage_streak + 1 if hull_med <= HULL_ENGAGE else 0
+                        )
+                        if hull_engage_streak >= CLICK_ENGAGE_FRAMES:
+                            hull_on, hull_engage_streak = True, 0
+                    else:
+                        hull_release_streak = (
+                            hull_release_streak + 1 if hull_med >= HULL_RELEASE else 0
+                        )
+                        if hull_release_streak >= CLICK_RELEASE_FRAMES:
+                            hull_on, hull_release_streak = False, 0
 
+                # The index<->middle GAP click only counts in the CLICK-ARM
+                # pose (both fingers up). In MOVE / fist / thumbs-up the two
+                # tips are near each other anyway, so gate engage on
+                # `click_arm`.
                 if not pinch_on:
-                    pinch_engage_streak = (
-                        pinch_engage_streak + 1 if pinch_med <= PINCH_ENGAGE else 0
-                    )
-                    if pinch_engage_streak >= CLICK_ENGAGE_FRAMES:
-                        pinch_on, pinch_engage_streak = True, 0
-                else:
-                    pinch_release_streak = (
-                        pinch_release_streak + 1 if pinch_med >= PINCH_RELEASE else 0
-                    )
-                    if pinch_release_streak >= CLICK_RELEASE_FRAMES:
-                        pinch_on, pinch_release_streak = False, 0
-
-                if not fist_on:
-                    fist_engage_streak = (
-                        fist_engage_streak + 1 if fist_med <= FIST_FALLBACK_RATIO else 0
-                    )
-                    if fist_engage_streak >= CLICK_ENGAGE_FRAMES:
-                        fist_on, fist_engage_streak = True, 0
-                else:
-                    fist_release_streak = (
-                        fist_release_streak + 1
-                        if fist_med >= FIST_FALLBACK_RATIO + FIST_RELEASE_GAP
+                    click_gap_engage_streak = (
+                        click_gap_engage_streak + 1
+                        if (click_arm and pinch_med <= click_gap_eng)
                         else 0
                     )
-                    if fist_release_streak >= CLICK_RELEASE_FRAMES:
-                        fist_on, fist_release_streak = False, 0
+                    if click_gap_engage_streak >= CLICK_ENGAGE_FRAMES:
+                        pinch_on, click_gap_engage_streak = True, 0
+                else:
+                    click_gap_release_streak = (
+                        click_gap_release_streak + 1
+                        if (not click_arm or pinch_med >= click_gap_rel)
+                        else 0
+                    )
+                    if click_gap_release_streak >= CLICK_RELEASE_FRAMES:
+                        pinch_on, click_gap_release_streak = False, 0
 
-                want_click = hull_on or pinch_on or fist_on
+                # LEFT click = the index<->middle gap only. A fist is NOT a
+                # left click any more (too easy to false-fire) — it's just
+                # "not pointing" = the clutch. `thumbs_up` (fist + thumb tip
+                # well away from the fingers) below is the right click.
+                thumb_out = thumb_g >= THUMB_GAP_MIN
+                fist_on = False  # (kept for the shared reset lines)
+
+                want_click = pinch_on or (CLICK_USE_HULL and hull_on)
                 held = cursor.is_holding
                 still_squeezed = (
-                    hull_med <= HULL_ENGAGE
-                    or pinch_med <= PINCH_ENGAGE
-                    or fist_med <= FIST_FALLBACK_RATIO
+                    (click_arm and pinch_med <= click_gap_eng)
+                    or (CLICK_USE_HULL and hull_med <= HULL_ENGAGE)
                 )
+                # "Clearly open" = the signal well past its release bar, not
+                # just above the engage bar. The repeat lock (armed on every
+                # click-up) lifts only after the hand has held this for
+                # CLICK_RELEASE_FRAMES — a genuine release re-clicks at once
+                # (double-click) but a hand oscillating around the engage
+                # threshold, which never gets here, can't machine-gun.
+                hand_open_now = (
+                    (not click_arm or pinch_med >= click_gap_rel)
+                    and (not CLICK_USE_HULL or hull_med >= HULL_RELEASE)
+                )
+                open_streak = open_streak + 1 if hand_open_now else 0
+                if open_streak >= CLICK_RELEASE_FRAMES:
+                    click_held_through = False
+                repeat_locked = click_held_through and loop_start < click_lock_until
                 held_for = loop_start - click_down_t
                 # A click is a tap by default: once it's been down a moment
                 # and no signal is still actively squeezed, end it — don't
                 # wait for the absolute release bars, which sit in this
                 # user's relaxed-hand noise.
                 tap_done = held and held_for > CLICK_TAP_SECONDS and not still_squeezed
-                sig = "hull" if hull_on else "pinch" if pinch_on else "fist"
-                if want_click and not held:
+                sig = "gap" if pinch_on else "hull"
+                if want_click and not held and not repeat_locked:
                     cursor.click_down()
                     click_down_t = loop_start
                     click_freeze = CLICK_FREEZE_FRAMES
@@ -759,8 +834,15 @@ class GestureController:
                     )
                 elif held and (not want_click or tap_done):
                     cursor.click_up()
+                    # Arm the repeat lock unconditionally; it lifts as soon as
+                    # the hand is clearly open (open_streak above) or after
+                    # CLICK_REPEAT_LOCKOUT_S. Zero the engage streaks too so a
+                    # lingering sub-threshold signal can't instantly re-arm.
+                    click_held_through = True
+                    click_lock_until = loop_start + CLICK_REPEAT_LOCKOUT_S
                     hull_on = pinch_on = fist_on = False
-                    hull_release_streak = pinch_release_streak = fist_release_streak = 0
+                    hull_release_streak = click_gap_release_streak = fist_release_streak = 0
+                    hull_engage_streak = click_gap_engage_streak = fist_engage_streak = 0
                     logger.info(
                         "Gesture click: up after %.2fs%s (hull=%.3f pinch=%.3f fist=%.2f)",
                         held_for, " [tap]" if tap_done and want_click else "",
@@ -768,26 +850,33 @@ class GestureController:
                     )
                 elif held and held_for > CLICK_MAX_HOLD_SECONDS:
                     cursor.click_up()
+                    click_held_through = True
+                    click_lock_until = loop_start + CLICK_REPEAT_LOCKOUT_S
                     hull_on = pinch_on = fist_on = False
-                    hull_release_streak = pinch_release_streak = fist_release_streak = 0
+                    hull_release_streak = click_gap_release_streak = fist_release_streak = 0
+                    hull_engage_streak = click_gap_engage_streak = fist_engage_streak = 0
                     logger.warning(
                         "Gesture click: force-released after %.1fs (hull=%.3f pinch=%.3f fist=%.2f)",
                         held_for, hull_med, pinch_med, fist_med,
                     )
 
-                # --- two-hand spread = zoom ---
-                if len(hands) >= 2:
-                    prev_spread, delta = two_hand_spread_delta(hands[0], hands[1], prev_spread)
-                    if zoom_cooldown > 0:
-                        zoom_cooldown -= 1
-                    elif delta > ZOOM_DELTA_THRESHOLD:
-                        cursor.trigger_zoom("in")
-                        zoom_cooldown = ZOOM_COOLDOWN_FRAMES
-                    elif delta < -ZOOM_DELTA_THRESHOLD:
-                        cursor.trigger_zoom("out")
-                        zoom_cooldown = ZOOM_COOLDOWN_FRAMES
-                else:
-                    prev_spread = None
+                # --- right click: a THUMBS-UP (fingers curled + thumb out).
+                # Fire-once, then locked until the pose ends or the lockout.
+                thumbs_up = fist_med <= FIST_FALLBACK_RATIO and thumb_g >= THUMB_GAP_MIN
+                if not thumbs_up:
+                    right_streak = 0
+                    if loop_start >= right_lock_until:
+                        right_lock_until = 0.0
+                elif right_lock_until == 0.0:
+                    right_streak += 1
+                    if right_streak >= RIGHT_CLICK_FRAMES and not cursor.is_holding:
+                        cursor.right_click()
+                        right_streak = 0
+                        right_lock_until = loop_start + RIGHT_CLICK_LOCKOUT_S
+                        logger.info(
+                            "Gesture click: RIGHT (thumbs-up, fist=%.2f thumb=%.2f)",
+                            fist_med, thumb_g,
+                        )
 
                 self._pace(loop_start, frame_interval)
         except Exception:
@@ -809,6 +898,9 @@ class GestureController:
                     logger.exception("Gesture worker cleanup step failed")
             with self._preview_lock:
                 self._preview_source = None
+            # Last: mark the worker finished so is_active() flips even before
+            # the OS thread has fully unwound, and stop() can reap the handle.
+            self._worker_done.set()
 
     def _drain_calibration_prompt(self, session: calibration.CalibrationSession) -> None:
         message = session.take_announcement()
@@ -847,6 +939,12 @@ async def _handle_gesture_calibrate(_params: dict[str, Any]) -> dict[str, Any]:
     return {"message": "Начинаю калибровку. Голос и экран проведут по каждому жесту — повторите каждый пять раз."}
 
 
+async def _handle_gesture_calibrate_cancel(_params: dict[str, Any]) -> dict[str, Any]:
+    if not gesture_controller.cancel_calibration():
+        return {"message": "Калибровка не запущена."}
+    return {"message": "Отменяю калибровку."}
+
+
 def register_commands(dispatcher: CommandDispatcher) -> None:
     dispatcher.register(
         "gesture_start",
@@ -865,4 +963,10 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         _handle_gesture_calibrate,
         dangerous=False,
         description="Пошаговый мастер калибровки жестов под текущего пользователя (режим жестов должен быть активен).",
+    )
+    dispatcher.register(
+        "gesture_calibrate_cancel",
+        _handle_gesture_calibrate_cancel,
+        dangerous=False,
+        description="Прервать идущий мастер калибровки жестов (ничего не сохраняется).",
     )

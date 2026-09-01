@@ -6,10 +6,16 @@ import subprocess
 import sys
 import threading
 
+from core.config import DATA_DIR
 from core.logger import get_logger
 from modules.gesture_control.config import CURSOR_SCALE
 
 logger = get_logger(__name__)
+
+# The pre-enlarge cursor size is also written here so it can be recovered if
+# the backend is killed (SIGKILL / power loss) before restore() runs and the
+# user is otherwise left with a permanently oversized desktop pointer.
+_RECOVERY_FILE = DATA_DIR / "gesture_cursor_size.recovery"
 
 # The enlarged cursor while gesture mode is on is the OS's *own* pointer,
 # resized in place — not a separate overlay window that trails behind it
@@ -32,25 +38,56 @@ class CursorZoom:
         self._lock = threading.Lock()
         self._original: int | None = None
 
+    def recover_if_stale(self) -> None:
+        """If a previous run left the recovery file (killed before restore),
+        put the cursor size back. Safe to call at backend startup."""
+        with self._lock:
+            self._recover_locked()
+
+    def _recover_locked(self) -> None:
+        try:
+            raw = _RECOVERY_FILE.read_text().strip()
+        except OSError:
+            return
+        try:
+            stale = int(raw)
+        except ValueError:
+            _RECOVERY_FILE.unlink(missing_ok=True)
+            return
+        if 1 <= stale <= _MAX_CURSOR_SIZE and self._read_gnome_cursor_size() != stale:
+            self._write_gnome_cursor_size(stale)
+            logger.info("Gesture mode: recovered cursor size to %d after an unclean exit", stale)
+        _RECOVERY_FILE.unlink(missing_ok=True)
+
     def enlarge(self) -> None:
         with self._lock:
             if self._original is not None:
                 return
+            self._recover_locked()  # heal a prior crash before we change anything
             current = self._read_gnome_cursor_size()
             if current is None:
                 return
             target = min(_MAX_CURSOR_SIZE, max(current + 1, round(current * CURSOR_SCALE)))
+            try:
+                _RECOVERY_FILE.parent.mkdir(parents=True, exist_ok=True)
+                _RECOVERY_FILE.write_text(str(current))
+            except OSError:
+                logger.debug("Could not write cursor-size recovery file", exc_info=True)
             if self._write_gnome_cursor_size(target):
                 self._original = current
                 logger.info("Gesture mode: cursor size %d -> %d", current, target)
+            else:
+                _RECOVERY_FILE.unlink(missing_ok=True)
 
     def restore(self) -> None:
         with self._lock:
             if self._original is None:
+                _RECOVERY_FILE.unlink(missing_ok=True)
                 return
             self._write_gnome_cursor_size(self._original)
             logger.info("Gesture mode: cursor size restored to %d", self._original)
             self._original = None
+            _RECOVERY_FILE.unlink(missing_ok=True)
 
     def _gsettings(self) -> str | None:
         if not sys.platform.startswith("linux"):

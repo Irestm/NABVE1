@@ -117,6 +117,7 @@ from modules.conversation_log import conversation_log
 from modules.delayed_execution import service_layer as delayed_execution_service_layer
 from modules.delayed_execution.uow import DelayedExecutionUnitOfWork
 from modules.gesture_control import gesture_controller
+from modules.gesture_control.cursor_zoom import cursor_zoom as gesture_cursor_zoom
 from modules.gesture_control.overlay_state import overlay_state as gesture_overlay_state
 from modules.custom_commands import dispatcher as custom_commands_registry
 from modules.custom_commands import service_layer as custom_commands_service_layer
@@ -174,6 +175,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # (covers a clean power-off and a crash alike). The "Контекст" button
     # in the text-chat panel clears it on demand within a session.
     await asyncio.to_thread(conversation_log.clear)
+    # Gesture mode publishes spoken feedback onto this loop from its worker
+    # thread; and if a previous run was killed before it could shrink the
+    # desktop cursor back, undo that now.
+    gesture_controller.bind_loop(asyncio.get_running_loop())
+    await asyncio.to_thread(gesture_cursor_zoom.recover_if_stale)
     if settings.voice_autostart:
         voice_loop.start()
     reminder_checker.start()

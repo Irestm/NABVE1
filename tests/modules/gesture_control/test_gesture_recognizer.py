@@ -173,3 +173,28 @@ def test_index_tip_follows_the_finger_swinging_sideways() -> None:
     right = _spread_hand()
     right[5], right[6] = (0.50, 0.50), (0.58, 0.42)
     assert gr.index_tip(right)[0] > gr.index_tip(left)[0]  # tracks the swing
+
+
+def test_finger_direction_points_where_the_finger_tilts() -> None:
+    hand = _spread_hand()
+    hand[9] = (0.5, 0.6)  # sets hand_scale via wrist(0.5,0.9)->mcp9
+
+    straight = list(hand)
+    straight[5], straight[7] = (0.50, 0.55), (0.50, 0.35)  # finger pointing up
+    right = list(hand)
+    right[5], right[7] = (0.50, 0.55), (0.66, 0.45)        # tilted to the right
+
+    dx_s, _ = gr.finger_direction(straight)
+    dx_r, _ = gr.finger_direction(right)
+    assert abs(dx_s) < 0.05          # near-zero x when pointing straight
+    assert dx_r > dx_s + 0.2         # x grows when tilted right
+
+
+def test_finger_direction_is_hand_size_invariant() -> None:
+    hand = _spread_hand()
+    hand[9] = (0.5, 0.6)
+    hand[5], hand[7] = (0.50, 0.55), (0.62, 0.45)
+    big = [(x * 2, y * 2) for x, y in hand]
+    a = gr.finger_direction(hand)
+    b = gr.finger_direction(big)
+    assert abs(a[0] - b[0]) < 1e-6 and abs(a[1] - b[1]) < 1e-6
