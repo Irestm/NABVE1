@@ -46,10 +46,19 @@ extraResources:
   # shell's own `files: dist/**/*` copy of the very same build output.
   - from: dist
     to: backend/frontend/dist
-# No auto-update/publish target configured — `npm run package` is meant to
-# produce a local installer/AppImage to test and hand to a user directly,
-# not push to a release feed.
-publish: null
+# electron-updater feed. A packaged install checks this repo's GitHub
+# Releases on launch (see electron/main.ts's initAutoUpdate) and self-
+# updates from the newest published release. Configuring `publish` is also
+# what makes electron-builder emit the update metadata — latest.yml /
+# latest-linux.yml and the .blockmap files — into dist-builder during
+# `npm run package`; the release workflow uploads those next to the
+# installer so the feed is complete. `npm run package` still pushes
+# nothing on its own (CI passes `--publish never` and does the upload in a
+# separate job); publishing happens only via the tag-triggered workflow.
+publish:
+  provider: github
+  owner: Irestm
+  repo: NABVE1
 win:
   target: nsis
   icon: assets/icons/icon.png

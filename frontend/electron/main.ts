@@ -1,4 +1,5 @@
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, shell } from "electron";
+import { autoUpdater } from "electron-updater";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { startBackend, stopBackend } from "./backend";
@@ -335,6 +336,38 @@ if (!app.requestSingleInstanceLock()) {
     await attempt();
   }
 
+  // Silent auto-update: a packaged install asks this repo's GitHub Releases
+  // for a newer version on launch and every few hours after, downloads it
+  // in the background, and installs it the next time the app quits
+  // (electron-updater's autoInstallOnAppQuit default). No prompt, no button
+  // — the same "it just stays current" behaviour os_adapter's own update
+  // check implies for the OS. No-op in dev (app.isPackaged === false, and
+  // there's no dev-app-update.yml); offline / rate-limited / no-release-yet
+  // failures are logged to the packaged app's own log and retried on the
+  // interval, never shown as a dialog.
+  const AUTO_UPDATE_RECHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+  function initAutoUpdate(): void {
+    if (!app.isPackaged) {
+      return;
+    }
+    autoUpdater.autoDownload = true;
+    autoUpdater.on("error", (error: Error) => {
+      process.stderr.write(`[main] auto-update error: ${error?.message ?? String(error)}\n`);
+    });
+    autoUpdater.on("update-downloaded", (info: { version: string }) => {
+      process.stderr.write(`[main] auto-update: ${info.version} downloaded, installs on quit\n`);
+    });
+    const check = (): void => {
+      void autoUpdater.checkForUpdates().catch(() => {
+        // Offline, rate-limited, or no release published yet — retried on
+        // the interval below.
+      });
+    };
+    check();
+    setInterval(check, AUTO_UPDATE_RECHECK_INTERVAL_MS);
+  }
+
   app
     .whenReady()
     .then(async () => {
@@ -343,6 +376,7 @@ if (!app.requestSingleInstanceLock()) {
       } else {
         await launchNormally();
       }
+      initAutoUpdate();
     })
     .catch((error: unknown) => {
       // Without this .catch(), a failure here (including backend.ts's

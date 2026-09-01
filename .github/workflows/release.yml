@@ -30,7 +30,7 @@ jobs:
 
       - name: Build installer
         working-directory: frontend
-        run: npm run package
+        run: npm run package -- --publish never
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -39,6 +39,8 @@ jobs:
           path: |
             frontend/dist-builder/*.exe
             frontend/dist-builder/*.AppImage
+            frontend/dist-builder/latest*.yml
+            frontend/dist-builder/*.blockmap
 
   release:
     needs: build
@@ -54,5 +56,7 @@ jobs:
           files: |
             artifacts/**/*.exe
             artifacts/**/*.AppImage
+            artifacts/**/latest*.yml
+            artifacts/**/*.blockmap
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
