@@ -118,3 +118,58 @@ def test_is_open_palm_threshold_is_configurable() -> None:
     hand = _open_hand()  # score 2.0
     assert gr.is_open_palm(hand, ratio_threshold=1.5) is True
     assert gr.is_open_palm(hand, ratio_threshold=2.5) is False
+
+
+def _spread_hand() -> list[tuple[float, float]]:
+    """A hand whose 21 points cover a wide area — an open, splayed palm."""
+    hand = _flat_hand()
+    hand[0] = (0.5, 0.9)  # wrist
+    hand[9] = (0.5, 0.6)  # middle knuckle -> hand_scale ~0.3
+    spots = [
+        (0.20, 0.30), (0.30, 0.20), (0.40, 0.15), (0.50, 0.12),
+        (0.60, 0.15), (0.70, 0.20), (0.80, 0.30),
+    ]
+    for i, xy in zip(range(1, 21), spots * 3):
+        if i != 9:
+            hand[i] = xy
+    return hand
+
+
+def test_hull_compactness_large_for_open_small_for_pinch() -> None:
+    open_hand = _spread_hand()
+    pinch = _spread_hand()
+    for i in range(1, 21):  # collapse every finger onto the palm
+        if i != 9:
+            pinch[i] = (0.5, 0.62)
+    assert gr.hull_compactness(open_hand) > gr.hull_compactness(pinch) * 3
+
+
+def test_hull_compactness_is_scale_invariant() -> None:
+    hand = _spread_hand()
+    bigger = [(x * 2, y * 2) for x, y in hand]
+    assert gr.hull_compactness(hand) == pytest.approx(gr.hull_compactness(bigger), rel=1e-6)
+
+
+def test_pinch2_gap_small_when_thumb_meets_index() -> None:
+    hand = _spread_hand()
+    hand[4] = (0.50, 0.30)
+    hand[8] = (0.51, 0.31)
+    assert gr.pinch2_gap(hand) < 0.2
+
+
+def test_index_tip_extrapolates_along_the_finger_from_stable_joints() -> None:
+    hand = _spread_hand()
+    hand[5] = (0.50, 0.50)   # MCP
+    hand[6] = (0.50, 0.40)   # PIP, 0.1 further along -y
+    hand[8] = (0.99, 0.99)   # a glitched raw tip that must be ignored
+    vx, vy = gr.index_tip(hand)
+    assert vx == pytest.approx(0.50)
+    assert vy == pytest.approx(0.40 - 0.10 * 1.1)  # projected past the PIP, away from the MCP
+
+
+def test_index_tip_follows_the_finger_swinging_sideways() -> None:
+    left = _spread_hand()
+    left[5], left[6] = (0.50, 0.50), (0.45, 0.42)
+    right = _spread_hand()
+    right[5], right[6] = (0.50, 0.50), (0.58, 0.42)
+    assert gr.index_tip(right)[0] > gr.index_tip(left)[0]  # tracks the swing
