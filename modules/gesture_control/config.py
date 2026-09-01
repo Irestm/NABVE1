@@ -71,16 +71,20 @@ MOVE_FINGER_RATIO = 0.82
 # finger doesn't thrash between modes.
 MIDDLE_DOWN_MAX = 0.60
 
-# LEFT CLICK — the ONLY left click now: index_middle_gap (index-tip to
-# middle-tip distance, hand-size normalised) drops below ENGAGE from the
-# pointing pose. Measured live: peace sign apart ~0.25-0.5, tips together
-# ~0.10-0.15. The CLICK calibration phase personalises these. (A fist is
-# no longer a left click — it's just "not pointing" = the clutch.)
-CLICK_GAP_ENGAGE = 0.16
-CLICK_GAP_RELEASE = 0.30
-CLICK_GAP_MAX = 3.0                               # clamp a degenerate frame
-CLICK_GAP_ENG_MIN, CLICK_GAP_ENG_MAX = 0.08, 0.28
-CLICK_GAP_REL_MAX = 0.55
+# LEFT CLICK — curl ALL FOUR fingers (index..pinky) into a fist, thumb
+# NOT sticking out (thumb out = the 👍 right click). The signal is
+# `fist_med` = MEDIAN finger straightness (chord/path): open hand ~0.9+,
+# a real fist ~0.30-0.45. Catch below ENGAGE, release above RELEASE
+# (hysteresis). Chosen over the old index<->middle "tips together" gap:
+# MediaPipe holds a closing fist in view where it loses two tips meeting.
+# The CLICK calibration phase personalises ENGAGE/RELEASE.
+FIST_CLICK_ENGAGE = 0.60
+FIST_CLICK_RELEASE = 0.75
+FIST_CLICK_ENG_MIN, FIST_CLICK_ENG_MAX = 0.35, 0.72
+FIST_CLICK_REL_MAX = 0.88
+# index_middle_gap is still computed (diag + the old calibration math
+# fallback); clamp a degenerate frame.
+CLICK_GAP_MAX = 3.0
 
 # For the RIGHT-CLICK thumbs-up test only: how curled the least-curled
 # finger must be (max of the 4 straightness values) for the hand to count
@@ -94,9 +98,33 @@ DEFAULT_FIST_RATIO = 0.75
 # RIGHT CLICK — thumbs-up: the four fingers curled (a fist) AND the thumb
 # tip well away from every fingertip (thumb_gap >= THUMB_GAP_MIN — it
 # points away from the fist instead of wrapping over it). Fire-once.
+# THUMB_TUCKED_MAX is the LOWER bar for a LEFT-click fist: the thumb must be
+# clearly wrapped in. The 0.28..0.36 band is a dead zone — neither click
+# fires — which is where a fist-open thumb blip lands.
 THUMB_GAP_MIN = 0.36
+THUMB_TUCKED_MAX = 0.28
 RIGHT_CLICK_FRAMES = 3
 RIGHT_CLICK_LOCKOUT_S = 0.8
+RIGHT_AFTER_LEFT_LOCKOUT_S = 0.35  # brief right-click block after a left click
+
+# SCROLL — index AND middle both clearly extended (a "peace sign"): the
+# cursor holds and vertical travel of the fingertip turns the mouse wheel.
+# The middle-finger threshold is high + debounced so its noisy straightness
+# can't flip in and out of scroll mode while you're just pointing.
+# The middle-finger straightness is noisy on this camera (swings ~0.45-1.0
+# frame to frame), so the pose test runs on a MEDIAN over SCROLL_MID_WINDOW
+# frames, with a wide hysteresis gap and a few frames of dwell.
+SCROLL_MID_WINDOW = 5          # median window on the middle-finger signal
+SCROLL_MIDDLE_MIN = 0.80       # median straightness to ENTER scroll
+SCROLL_MIDDLE_STAY = 0.50      # ...to STAY (hysteresis — wide gap)
+SCROLL_ENTER_FRAMES = 3        # consecutive frames both-up before scroll starts
+SCROLL_EXIT_FRAMES = 3         # consecutive frames middle-down before it ends
+SCROLL_DEADZONE_NORM = 0.006   # ignore vertical drift below this (normalised)
+SCROLL_STEP_NORM = 0.014       # normalised vertical travel per one wheel click
+SCROLL_MAX_CLICKS_PER_TICK = 3
+# False (default): finger up -> page scrolls up. Set NABVE_GESTURE_SCROLL_INVERT=1
+# for the opposite (natural / touchpad-style).
+SCROLL_INVERT = os.environ.get("NABVE_GESTURE_SCROLL_INVERT", "").strip() in ("1", "true", "yes")
 
 # A click is a TAP by default: after CLICK_TAP_SECONDS held it auto-releases
 # unless a signal is still actively squeezed (a drag). The absolute release
@@ -251,8 +279,12 @@ else:
 # deliberate move barely lags. The correct MediaPipe timestamp (fixed) is
 # what makes a real 1€ filter possible now.
 ONE_EURO_MIN_CUTOFF = 0.6      # lower = steadier at rest, a touch more lag
-ONE_EURO_BETA = 1.6
-ONE_EURO_D_CUTOFF = 1.0
+# Lowered from 1.6 / 1.0: a hand turned side-on to the camera makes the
+# index tip jitter, which reads as "speed" and used to open the filter and
+# let the jitter through. Less speed-coupling + a smoother speed estimate
+# trades a little lag on fast deliberate moves for a calmer cursor.
+ONE_EURO_BETA = 1.1
+ONE_EURO_D_CUTOFF = 0.7
 
 # STEADY phase: hold the pointing fingertip still, measure its RMS tremor
 # (in screen px, via the mapping), map it across [JITTER_LOW_PX,
@@ -312,7 +344,7 @@ CLICK_FREEZE_FRAMES = 3
 # point verbatim on re-acquire, which is what threw the cursor hundreds of
 # px across the screen (seen in the diagnostics). Only a longer gap does the
 # full state reset.
-HAND_LOST_COAST_FRAMES = 12
+HAND_LOST_COAST_FRAMES = 18
 
 # The physical mouse always wins: the instant the real cursor moves by
 # more than this (px) from where the worker last put it, gesture control
@@ -334,12 +366,19 @@ PHYSICAL_MOUSE_OVERRIDE_SECONDS = 1.2
 # right hand" is irrelevant to cursor control — the geometry check below
 # rejected nothing real over a full session, so it carries the false-hand
 # duty alone.
+# Detection stays strict (first lock-on), but presence/tracking are loose so
+# MediaPipe HOLDS the hand through a hard-to-read pose — turned side-on to
+# point at the monitor — instead of dropping it and forcing a re-detect.
 HAND_DETECTION_CONFIDENCE = 0.6
-HAND_PRESENCE_CONFIDENCE = 0.6
-HAND_TRACKING_CONFIDENCE = 0.55
+HAND_PRESENCE_CONFIDENCE = 0.4
+HAND_TRACKING_CONFIDENCE = 0.35
 HAND_BBOX_MIN = 0.03  # fraction of the frame — smaller = noise
 HAND_BBOX_MAX = 0.85  # larger = fills the frame, not a hand held up to the camera
-HAND_KNUCKLE_RADIUS_TOLERANCE = 2.4  # max ratio of any wrist->knuckle distance to their mean
+# Max ratio of any wrist->knuckle distance to their mean. A hand turned
+# edge-on foreshortens the knuckles unevenly (pinky MCP crowds the wrist in
+# 2D), so this is deliberately loose — a real skeleton explosion is caught
+# by `blowup`/`bbox` regardless.
+HAND_KNUCKLE_RADIUS_TOLERANCE = 4.0
 # A hand must be seen this many consecutive frames before it drives the
 # cursor, so a one-frame false blip can't jerk the pointer. hand_seen_streak
 # decays by 1 on a missed frame rather than resetting, so a brief tracking

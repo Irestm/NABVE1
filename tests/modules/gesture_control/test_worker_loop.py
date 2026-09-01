@@ -15,10 +15,10 @@ from modules.gesture_control.hand_tracker import FrameResult
 # straightness metric (chord/path) reads them as curled (~0.3), extended
 # ones read ~0.97.
 #   "point"    = ONLY the index straight (middle/ring/pinky curled) -> MOVE.
-#   "arm"      = index + middle straight and apart -> CLICK-ARM (cursor held).
-#   "click"    = "arm" but the index & middle FINGERTIPS brought together.
-#   "onlymid"  = middle straight, index curled -> neither mode (cursor held).
-#   "fist"     = all four fingers curled, thumb tucked   -> the clutch.
+#   "arm"      = index + middle straight and apart -> cursor held, no click.
+#   "click"    = all four fingers curled, thumb tucked -> LEFT click (a fist).
+#   "onlymid"  = middle straight, index curled -> nothing (cursor held).
+#   "fist"     = same as "click" (all curled, thumb tucked) -> LEFT click.
 #   "thumbsup" = all curled + thumb tip far from fingers -> right click.
 _STRAIGHT_INDEX = {5: (-0.05, -0.13), 6: (-0.06, -0.22), 7: (-0.07, -0.28), 8: (-0.10, -0.34)}
 _STRAIGHT_MIDDLE = {9: (0.00, -0.15), 10: (0.01, -0.24), 11: (0.02, -0.30), 12: (0.04, -0.36)}
@@ -35,7 +35,7 @@ def _hand(cx: float, cy: float, pose: str = "point") -> list[tuple[float, float]
     parts.update(_CURL_RING)
     parts.update(_CURL_PINKY)
     parts.update(_THUMB_TUCKED)
-    if pose in ("fist", "thumbsup"):
+    if pose in ("fist", "thumbsup", "click"):
         parts.update(_CURL_INDEX)
         parts.update(_CURL_MIDDLE)
         if pose == "thumbsup":
@@ -46,12 +46,13 @@ def _hand(cx: float, cy: float, pose: str = "point") -> list[tuple[float, float]
     elif pose == "point":
         parts.update(_STRAIGHT_INDEX)
         parts.update(_CURL_MIDDLE)
-    else:  # "arm" / "click" — index + middle both straight
+    elif pose == "open":  # index+middle straight AND thumb spread -> do nothing
         parts.update(_STRAIGHT_INDEX)
         parts.update(_STRAIGHT_MIDDLE)
-        if pose == "click":
-            parts[8] = (-0.02, -0.34)   # index tip toward the middle
-            parts[12] = (0.01, -0.36)   # ~0.03 apart
+        parts.update(_THUMB_OUT)
+    else:  # "arm" — index + middle both straight, apart, thumb tucked
+        parts.update(_STRAIGHT_INDEX)
+        parts.update(_STRAIGHT_MIDDLE)
     return [(cx + dx, cy + dy) for _i, (dx, dy) in sorted(parts.items())]
 
 
@@ -99,6 +100,7 @@ class _RecordingCursor:
         self.downs = 0
         self.ups = 0
         self.rights = 0
+        self.scrolls: list[int] = []
         self._button = False
         self._phantom = 0
 
@@ -115,6 +117,10 @@ class _RecordingCursor:
 
     def sync_last_set(self) -> None:
         self._last_set = self.current_pos()
+
+    def scroll(self, clicks: int) -> None:
+        if clicks:
+            self.scrolls.append(int(clicks))
 
     def arm_physical_move(self, frames: int = 1) -> None:
         self._phantom = frames
@@ -152,7 +158,7 @@ def _stub_env(monkeypatch):
     monkeypatch.setattr(gd.calibration.profile_service_layer, "set_fact", lambda *a, **k: None)
     monkeypatch.setattr(gd.calibration, "load_min_cutoff", lambda: 1.0)
     monkeypatch.setattr(gd.calibration, "load_deadzone_px", lambda: 2)
-    monkeypatch.setattr(gd.calibration, "load_click_gap_thresholds", lambda: (0.22, 0.40))
+    monkeypatch.setattr(gd.calibration, "load_click_gap_thresholds", lambda: (0.55, 0.75))
     monkeypatch.setattr(gd.calibration, "load_zone_bounds", lambda: None)
     monkeypatch.setattr(gd.cursor_zoom, "enlarge", lambda: None)
     monkeypatch.setattr(gd.cursor_zoom, "restore", lambda: None)
@@ -240,26 +246,6 @@ def test_non_pointing_pose_holds_the_cursor(monkeypatch) -> None:
     assert all(abs(m[0] - settled) < 40 for m in cursor.moves[10:])
 
 
-def test_raising_the_middle_finger_freezes_the_cursor(monkeypatch) -> None:
-    # MOVE pose (index only) drives the cursor; raising the middle finger
-    # switches to CLICK-ARM and the cursor must stop even though the hand
-    # keeps travelling.
-    tracker, cursor, controller = _make(monkeypatch, fps=200)
-    for i in range(20):
-        tracker.feed([_hand(0.35 + i * 0.01, 0.55, "point")])
-    for i in range(20):
-        tracker.feed([_hand(0.55 + i * 0.01, 0.55, "arm")])
-    controller.start()
-    try:
-        _pump(tracker, 40)
-    finally:
-        controller.stop()
-    moved_while_arm = [m for m in cursor.moves[22:]]
-    frozen_x = cursor.moves[19][0] if len(cursor.moves) > 19 else cursor.moves[-1][0]
-    assert all(abs(m[0] - frozen_x) < 40 for m in moved_while_arm)
-    assert cursor.downs == 0
-
-
 def test_middle_finger_alone_does_nothing(monkeypatch) -> None:
     tracker, cursor, controller = _make(monkeypatch, fps=200)
     for _ in range(10):
@@ -288,15 +274,67 @@ def test_no_hand_leaves_the_cursor_alone(monkeypatch) -> None:
     assert cursor.moves == []
 
 
+# --- scroll: two fingers up -----------------------------------------
+
+
+def test_two_fingers_up_scrolls_on_vertical_travel(monkeypatch) -> None:
+    tracker, cursor, controller = _make(monkeypatch, fps=200)
+    for _ in range(10):
+        tracker.feed([_hand(0.5, 0.60, "arm")])            # settle into scroll pose
+    for i in range(40):
+        tracker.feed([_hand(0.5, 0.60 - i * 0.01, "arm")])  # fingertip travels UP
+    controller.start()
+    try:
+        _pump(tracker, 50)
+    finally:
+        controller.stop()
+    assert cursor.scrolls, "two-finger vertical travel produced no wheel events"
+    assert sum(cursor.scrolls) > 0                         # finger up -> wheel up
+    assert cursor.downs == 0                               # not a click
+    # the cursor is held while scrolling
+    assert not cursor.moves or all(m == cursor.moves[0] for m in cursor.moves)
+
+
+def test_open_palm_does_nothing(monkeypatch) -> None:
+    # A fully open palm (index up + thumb spread) is the "reposition" pose:
+    # cursor held, no scroll, no click, whatever the hand does.
+    tracker, cursor, controller = _make(monkeypatch, fps=200)
+    for _ in range(10):
+        tracker.feed([_hand(0.5, 0.55, "point")])          # establish a position
+    for i in range(30):
+        tracker.feed([_hand(0.30 + i * 0.01, 0.35, "open")])  # travel with open palm
+    controller.start()
+    try:
+        _pump(tracker, 40)
+    finally:
+        controller.stop()
+    settled = cursor.moves[9][0] if len(cursor.moves) > 9 else cursor.moves[-1][0]
+    assert all(abs(m[0] - settled) < 40 for m in cursor.moves[10:])
+    assert cursor.downs == 0 and cursor.rights == 0 and cursor.scrolls == []
+
+
+def test_two_fingers_still_do_not_scroll(monkeypatch) -> None:
+    tracker, cursor, controller = _make(monkeypatch, fps=200)
+    for _ in range(40):
+        tracker.feed([_hand(0.5, 0.55, "arm")])            # both up but not moving
+    controller.start()
+    try:
+        _pump(tracker, 40)
+    finally:
+        controller.stop()
+    assert cursor.scrolls == []
+
+
 # --- click: finger state ----------------------------------------------
 
 
-def test_fingertips_together_is_a_left_click(monkeypatch) -> None:
+def test_fist_is_a_left_click(monkeypatch) -> None:
+    # LEFT click = curl all four fingers into a fist (thumb tucked).
     tracker, cursor, controller = _make(monkeypatch, fps=200)
     for _ in range(6):
         tracker.feed([_hand(0.5, 0.55, "point")])
     for _ in range(8):
-        tracker.feed([_hand(0.5, 0.55, "click")])
+        tracker.feed([_hand(0.5, 0.55, "fist")])
     for _ in range(8):
         tracker.feed([_hand(0.5, 0.55, "point")])
     controller.start()
@@ -305,21 +343,27 @@ def test_fingertips_together_is_a_left_click(monkeypatch) -> None:
     finally:
         controller.stop()
     assert cursor.downs >= 1 and cursor.ups >= 1
+    assert cursor.rights == 0  # a plain fist must NOT right-click
 
 
-def test_fist_does_not_click_it_just_holds(monkeypatch) -> None:
-    # A fist is no longer a left click — it's "not pointing" = the clutch.
+def test_opening_a_fist_does_not_stray_right_click(monkeypatch) -> None:
+    # Opening a fist pops the thumb out while the fingers are still curled;
+    # that briefly looks like a thumbs-up. The post-left-click lockout must
+    # swallow it.
     tracker, cursor, controller = _make(monkeypatch, fps=200)
     for _ in range(6):
         tracker.feed([_hand(0.5, 0.55, "point")])
-    for _ in range(15):
-        tracker.feed([_hand(0.5, 0.55, "fist")])
+    for _ in range(8):
+        tracker.feed([_hand(0.5, 0.55, "fist")])       # left click
+    for _ in range(8):
+        tracker.feed([_hand(0.5, 0.55, "thumbsup")])   # fist-open blip -> would-be right
     controller.start()
     try:
-        _pump(tracker, 21)
+        _pump(tracker, 22)
     finally:
         controller.stop()
-    assert cursor.downs == 0 and cursor.rights == 0
+    assert cursor.downs >= 1        # the left click happened
+    assert cursor.rights == 0       # ...and no stray right click followed
 
 
 def test_thumbs_up_is_a_right_click(monkeypatch) -> None:

@@ -6,10 +6,10 @@ from modules.gesture_control import calibration
 from modules.gesture_control.calibration import CalibrationFrame
 from modules.gesture_control.config import (
     CALIBRATION_PHASE_MAX_FRAMES,
-    CLICK_GAP_ENGAGE,
-    CLICK_GAP_RELEASE,
     CORNER_CALIBRATION_SAMPLES,
     CURSOR_DEADZONE_PX,
+    FIST_CLICK_ENGAGE,
+    FIST_CLICK_RELEASE,
     ONE_EURO_MIN_CUTOFF,
     STEADY_CALIBRATION_SAMPLES,
 )
@@ -17,9 +17,11 @@ from modules.gesture_control.config import (
 _REPS = calibration._REQUIRED_REPS  # 5
 
 
-def _frame(tip=(0.5, 0.5), gap=0.5, pointing=True, brightness=120.0) -> CalibrationFrame:
+def _frame(
+    tip=(0.5, 0.5), gap=0.5, pointing=True, brightness=120.0, fist=1.0
+) -> CalibrationFrame:
     return CalibrationFrame(
-        tip=tip, index_middle_gap=gap, pointing=pointing, brightness=brightness
+        tip=tip, index_middle_gap=gap, pointing=pointing, brightness=brightness, fist=fist
     )
 
 
@@ -38,8 +40,8 @@ def _do_corners(session) -> None:
 
 def _do_click(session) -> None:
     for _ in range(_REPS + 1):
-        session.observe(_frame(gap=0.55))  # tips apart
-        session.observe(_frame(gap=0.12))  # tips together
+        session.observe(_frame(fist=0.95))  # hand open
+        session.observe(_frame(fist=0.30))  # fist closed
 
 
 def _do_all(session) -> None:
@@ -85,11 +87,11 @@ def test_corners_learns_a_zone_rectangle() -> None:
     assert x1 - x0 > 0.4 and y1 - y0 > 0.4
 
 
-def test_click_gap_engage_between_together_and_apart() -> None:
+def test_click_engage_between_fist_and_open() -> None:
     s = calibration.CalibrationSession(px_per_norm=3000.0)
     _do_all(s)
     assert s.click_gap_engage is not None and s.click_gap_release is not None
-    assert 0.12 <= s.click_gap_engage < s.click_gap_release < 0.6
+    assert 0.30 <= s.click_gap_engage < s.click_gap_release < 0.95
 
 
 def test_non_pointing_frames_are_ignored_in_steady() -> None:
@@ -125,15 +127,15 @@ def test_persist_falls_back_to_defaults_when_unfinished(monkeypatch) -> None:
     assert applied.min_cutoff == ONE_EURO_MIN_CUTOFF
     assert applied.deadzone_px == CURSOR_DEADZONE_PX
     assert applied.zone_bounds is None
-    assert applied.click_gap_engage == CLICK_GAP_ENGAGE
-    assert applied.click_gap_release == CLICK_GAP_RELEASE
+    assert applied.click_gap_engage == FIST_CLICK_ENGAGE
+    assert applied.click_gap_release == FIST_CLICK_RELEASE
 
 
 def test_loaders_fall_back_to_defaults(monkeypatch) -> None:
     monkeypatch.setattr(calibration.profile_service_layer, "get_fact", lambda uow, key: None)
     assert calibration.load_min_cutoff() == ONE_EURO_MIN_CUTOFF
     assert calibration.load_deadzone_px() == CURSOR_DEADZONE_PX
-    assert calibration.load_click_gap_thresholds() == (CLICK_GAP_ENGAGE, CLICK_GAP_RELEASE)
+    assert calibration.load_click_gap_thresholds() == (FIST_CLICK_ENGAGE, FIST_CLICK_RELEASE)
     assert calibration.load_zone_bounds() is None
 
 
@@ -176,7 +178,7 @@ def test_click_phase_times_out_and_uses_defaults() -> None:
     for _ in range(CALIBRATION_PHASE_MAX_FRAMES + 2):
         s.observe(_frame(gap=0.5))  # flat -> never a rep
     assert s._phase != calibration._PHASE_CLICK
-    assert s.click_gap_engage == CLICK_GAP_ENGAGE
+    assert s.click_gap_engage == FIST_CLICK_ENGAGE
     assert s.aborted is False
 
 

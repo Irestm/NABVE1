@@ -46,6 +46,31 @@ def test_release_restores_pyautogui_globals(monkeypatch) -> None:
     assert fake.PAUSE == 0.1 and fake.FAILSAFE is True  # handed back to the process
 
 
+def test_physical_move_check_tolerates_lagging_position_reads(monkeypatch) -> None:
+    import sys
+    import types
+
+    pos = {"xy": (0, 0)}
+    fake = types.SimpleNamespace(
+        PAUSE=0,
+        FAILSAFE=False,
+        position=lambda: pos["xy"],
+        size=lambda: (1920, 1080),
+        moveTo=lambda *a, **k: None,  # NB: does NOT update pos -> simulates lag
+        mouseDown=lambda **k: None,
+        mouseUp=lambda **k: None,
+    )
+    monkeypatch.setitem(sys.modules, "pyautogui", fake)
+    from modules.gesture_control.cursor_controller import CursorController
+
+    c = CursorController()
+    c.move_cursor(900, 500)                 # commanded far; position() still (0,0)
+    pos["xy"] = (900, 500)                  # OS pointer catches up next tick
+    assert c.physical_mouse_moved(18) is False  # our own move landing, not the mouse
+    pos["xy"] = (200, 700)                  # now something else yanked it away
+    assert c.physical_mouse_moved(18) is True
+
+
 def test_bounds_from_zone_is_a_centred_square() -> None:
     assert bounds_from_zone(0.6) == (0.2, 0.8, 0.2, 0.8)
     assert bounds_from_zone(1.0) == (0.0, 1.0, 0.0, 1.0)

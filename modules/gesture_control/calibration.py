@@ -8,17 +8,17 @@ from modules.gesture_control.config import (
     CALIBRATION_MAX_DARK_FRACTION,
     CALIBRATION_MIN_BRIGHTNESS,
     CALIBRATION_PHASE_MAX_FRAMES,
-    CLICK_GAP_ENG_MAX,
-    CLICK_GAP_ENG_MIN,
-    CLICK_GAP_ENGAGE,
-    CLICK_GAP_REL_MAX,
-    CLICK_GAP_RELEASE,
     CORNER_CALIBRATION_SAMPLES,
     CORNER_ZONE_MIN_SPAN,
     CORNER_ZONE_PAD,
     CURSOR_DEADZONE_PX,
     DEADZONE_PX_MAX,
     DEADZONE_PX_MIN,
+    FIST_CLICK_ENG_MAX,
+    FIST_CLICK_ENG_MIN,
+    FIST_CLICK_ENGAGE,
+    FIST_CLICK_REL_MAX,
+    FIST_CLICK_RELEASE,
     GESTURE_CLICK_GAP_ENG_KEY,
     GESTURE_CLICK_GAP_REL_KEY,
     GESTURE_DEADZONE_PX_KEY,
@@ -54,7 +54,7 @@ _PROMPTS = {
         "Теперь теми же двумя пальцами наведитесь по очереди на четыре угла экрана."
     ),
     _PHASE_CLICK: (
-        "Теперь пять раз сведите кончики указательного и среднего пальцев вместе и разведите."
+        "Теперь пять раз сожмите руку в кулак (все пальцы, кроме большого) и разожмите."
     ),
     _PHASE_DONE: "Калибровка завершена. Управление подстроено под вас.",
 }
@@ -62,16 +62,17 @@ _PROMPTS = {
 _PHASE_META = {
     _PHASE_STEADY: (1, "Неподвижная рука", "Два пальца вытянуты, держите руку неподвижно"),
     _PHASE_CORNERS: (2, "Углы экрана", "Наведитесь двумя пальцами на четыре угла экрана"),
-    _PHASE_CLICK: (3, "Клик", "Сведите кончики указательного и среднего пальцев и разведите"),
+    _PHASE_CLICK: (3, "Клик", "Сожмите кулак и разожмите — пять раз"),
 }
 
 
 @dataclass(frozen=True)
 class CalibrationFrame:
     tip: tuple[float, float]     # the index fingertip (what the cursor follows), normalised
-    index_middle_gap: float      # index-tip to middle-tip distance / hand size
+    index_middle_gap: float      # index-tip to middle-tip distance / hand size (diag only now)
     pointing: bool               # is the hand in the two-finger pointing pose?
     brightness: float = -1.0
+    fist: float = 1.0            # median finger straightness: low = fist (drives the CLICK phase)
 
 
 @dataclass(frozen=True)
@@ -247,10 +248,12 @@ class CalibrationSession:
                 if len(self._corner_pts) >= CORNER_CALIBRATION_SAMPLES:
                     self._finalize_corners()
         elif self._phase == _PHASE_CLICK:
-            if frame.pointing:
-                self._click.observe(frame.index_middle_gap)
-                if self._click.reps >= _REQUIRED_REPS:
-                    self._finish_click()
+            # A fist is not the "pointing" pose, so observe every hand frame
+            # here; `_RepCounter` (active-low) counts the curl/open reps off
+            # the median-straightness signal.
+            self._click.observe(frame.fist)
+            if self._click.reps >= _REQUIRED_REPS:
+                self._finish_click()
         if not self.done and self._frames_in_phase > CALIBRATION_PHASE_MAX_FRAMES:
             self._force_finish_phase()
 
@@ -321,23 +324,23 @@ class CalibrationSession:
         self._advance(_PHASE_CLICK)
 
     def _finish_click(self) -> None:
-        closed = self._click.closed_level()   # tips together
-        open_ = self._click.open_level()      # tips apart
+        closed = self._click.closed_level()   # deepest fist (straightness low)
+        open_ = self._click.open_level()      # hand open (straightness high)
         span = open_ - closed
         if self._click.reps < 2 or span < 0.08:
-            self.click_gap_engage = CLICK_GAP_ENGAGE
-            self.click_gap_release = CLICK_GAP_RELEASE
+            self.click_gap_engage = FIST_CLICK_ENGAGE
+            self.click_gap_release = FIST_CLICK_RELEASE
             logger.info(
                 "Calibration CLICK: weak data (reps=%d span=%.3f) — defaults %.2f/%.2f",
                 self._click.reps, span, self.click_gap_engage, self.click_gap_release,
             )
         else:
-            eng = _clamp(closed + span * 0.30, CLICK_GAP_ENG_MIN, CLICK_GAP_ENG_MAX)
-            rel = _clamp(closed + span * 0.60, eng + 0.06, CLICK_GAP_REL_MAX)
+            eng = _clamp(closed + span * 0.30, FIST_CLICK_ENG_MIN, FIST_CLICK_ENG_MAX)
+            rel = _clamp(closed + span * 0.60, eng + 0.06, FIST_CLICK_REL_MAX)
             self.click_gap_engage = round(eng, 3)
             self.click_gap_release = round(rel, 3)
             logger.info(
-                "Calibration CLICK: together=%.3f apart=%.3f -> engage=%.3f release=%.3f (%d reps)",
+                "Calibration CLICK: fist=%.3f open=%.3f -> engage=%.3f release=%.3f (%d reps)",
                 closed, open_, self.click_gap_engage, self.click_gap_release, self._click.reps,
             )
         self._advance(_PHASE_DONE)
@@ -349,10 +352,10 @@ class CalibrationSession:
             zone_bounds=self.zone_bounds,
             click_gap_engage=self.click_gap_engage
             if self.click_gap_engage is not None
-            else CLICK_GAP_ENGAGE,
+            else FIST_CLICK_ENGAGE,
             click_gap_release=self.click_gap_release
             if self.click_gap_release is not None
-            else CLICK_GAP_RELEASE,
+            else FIST_CLICK_RELEASE,
         )
         if self.aborted:
             logger.warning("Calibration aborted (%s) — nothing stored", self.abort_reason)
@@ -387,8 +390,9 @@ def load_deadzone_px() -> int:
 
 
 def load_click_gap_thresholds() -> tuple[float, float]:
-    eng = _load_fact_float(GESTURE_CLICK_GAP_ENG_KEY, CLICK_GAP_ENGAGE)
-    rel = _load_fact_float(GESTURE_CLICK_GAP_REL_KEY, CLICK_GAP_RELEASE)
+    # Unit is median finger-straightness now (fist click), not the old gap.
+    eng = _load_fact_float(GESTURE_CLICK_GAP_ENG_KEY, FIST_CLICK_ENGAGE)
+    rel = _load_fact_float(GESTURE_CLICK_GAP_REL_KEY, FIST_CLICK_RELEASE)
     return eng, max(rel, eng + 0.04)
 
 

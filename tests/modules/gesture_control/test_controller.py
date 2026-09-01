@@ -49,6 +49,9 @@ class _FakeCursor:
     def move_cursor(self, _x: int, _y: int) -> None:
         pass
 
+    def scroll(self, _clicks: int) -> None:
+        pass
+
     def last_pos(self) -> tuple[int, int] | None:
         return None
 

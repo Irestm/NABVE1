@@ -102,6 +102,11 @@ class CursorController:
         self._pyautogui, self._prev_pause, self._prev_failsafe = _require_pyautogui()
         self._button_down = False
         self._last_set: tuple[int, int] | None = None
+        # The target we last *commanded*. pyautogui.moveTo can return before
+        # the OS pointer has settled, so an immediate position() read after a
+        # move lags behind — checking against the commanded target too stops
+        # that lag from reading as a physical-mouse move on the next tick.
+        self._last_cmd: tuple[int, int] | None = None
         self.screen_size: tuple[int, int] = _virtual_screen_size(self._pyautogui)  # (w, h)
         if self.screen_size[0] <= 0 or self.screen_size[1] <= 0:
             self._restore_pyautogui_globals()
@@ -118,10 +123,19 @@ class CursorController:
         if self._last_set is None:
             return False
         cx, cy = self.current_pos()
-        return math.hypot(cx - self._last_set[0], cy - self._last_set[1]) > threshold_px
+        far_from_set = math.hypot(cx - self._last_set[0], cy - self._last_set[1]) > threshold_px
+        if not far_from_set:
+            return False
+        if self._last_cmd is not None:
+            # Close to where we last told it to go -> it's our own move
+            # catching up, not the physical mouse.
+            if math.hypot(cx - self._last_cmd[0], cy - self._last_cmd[1]) <= threshold_px:
+                return False
+        return True
 
     def move_cursor(self, x: int, y: int) -> None:
         self._pyautogui.moveTo(x, y, _pause=False)
+        self._last_cmd = (x, y)
         # Record where the cursor ACTUALLY landed, not what we asked for: the
         # OS clamps the pointer out of reserved areas (a dock / panel), and
         # anchoring _last_set to the unreachable target made every following
@@ -139,10 +153,12 @@ class CursorController:
         return self._last_set
 
     def sync_last_set(self) -> None:
-        """Re-anchor _last_set to the real cursor position — call after
-        yielding to the physical mouse so we don't immediately re-trigger
-        the physical-move check on the frame we resume."""
-        self._last_set = self.current_pos()
+        """Re-anchor both references to the real cursor position — call after
+        yielding to the physical mouse (or any frame we don't move) so we
+        don't immediately re-trigger the physical-move check next tick."""
+        pos = self.current_pos()
+        self._last_set = pos
+        self._last_cmd = pos
 
     def click_down(self) -> None:
         if not self._button_down:
@@ -159,6 +175,11 @@ class CursorController:
         we never right-click mid-drag."""
         self.click_up()
         self._pyautogui.click(button="right", _pause=False)
+
+    def scroll(self, clicks: int) -> None:
+        """Turn the mouse wheel `clicks` notches (positive = up)."""
+        if clicks:
+            self._pyautogui.scroll(int(clicks), _pause=False)
 
     @property
     def is_holding(self) -> bool:
