@@ -94,3 +94,11 @@ def test_migrations_are_idempotent(uow_factory: Callable[[], EnglishUnitOfWork])
     for _ in range(3):
         with uow_factory() as uow:
             assert uow.series.list_all() == []
+
+
+def test_vtt_upload_is_converted(uow_factory: Callable[[], EnglishUnitOfWork]) -> None:
+    vtt = b"WEBVTT\n\n00:01.000 --> 00:02.000\nWe decided to be honest.\n"
+
+    result = _import(uow_factory, raw=vtt)
+
+    assert {word.lemma for word in result.words} == {"decide", "honest"}

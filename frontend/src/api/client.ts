@@ -134,6 +134,22 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
   return (await response.json()) as T;
 }
 
+export async function requestForm<T>(path: string, form: FormData): Promise<T> {
+  const response = await fetch(`${BASE_URL}${path}`, { method: "POST", body: form, headers: authHeaders() });
+  if (!response.ok) {
+    const detail = await response
+      .json()
+      .then((body: unknown) =>
+        typeof body === "object" && body !== null && "detail" in body
+          ? String((body as { detail: unknown }).detail)
+          : null,
+      )
+      .catch(() => null);
+    throw new Error(detail ?? `Request to ${path} failed with status ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
 export function getStatus(): Promise<StatusResponse> {
   return requestJson<StatusResponse>("/api/status");
 }

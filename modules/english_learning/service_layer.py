@@ -7,7 +7,7 @@ from core.logger import get_logger
 from modules.english_learning import cefr, subtitle_store
 from modules.english_learning.domain import Card, Episode, EpisodeSource, EpisodeWord, Series
 from modules.english_learning.lemmatizer import Lemmatizer, get_lemmatizer
-from modules.english_learning.srt_parser import decode_srt, parse_srt
+from modules.english_learning.srt_parser import cues_to_srt, decode_srt, parse_srt, parse_vtt
 from modules.english_learning.uow import EnglishUnitOfWork
 from modules.english_learning.word_selection import select_words
 
@@ -139,6 +139,10 @@ def import_subtitles(
     return ImportResult(series=series, episode=stored_episode, words=words)
 
 
+def _as_srt(text: str) -> str:
+    return cues_to_srt(parse_vtt(text)) if text.lstrip("\ufeff").startswith("WEBVTT") else text
+
+
 def import_srt_file(
     *,
     series_title: str,
@@ -155,7 +159,7 @@ def import_srt_file(
         series_title=series_title,
         season=season,
         episode=episode,
-        srt_text=decode_srt(raw),
+        srt_text=_as_srt(decode_srt(raw)),
         source="manual",
         imdb_id=imdb_id,
         episode_title=episode_title,

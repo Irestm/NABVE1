@@ -8,7 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from core.secret_store import SecretStoreUnavailableError
-from modules.english_learning import credentials, link_import, service_layer
+from modules.english_learning import credentials, learn, link_import, service_layer
 from modules.english_learning.cefr import CEFRJ_ATTRIBUTION, CefrUnavailableError
 from modules.english_learning.domain import Card, Episode, EpisodeWord
 from modules.english_learning.jobs import CardJob, card_jobs
@@ -360,7 +360,87 @@ async def get_job(job_id: int) -> JobModel:
     return _job_model(job)
 
 
-@router.delete("/cards/{card_id}", status_code=204)
-async def delete_card(card_id: int) -> None:
+class DeletedModel(BaseModel):
+    deleted: bool
+
+
+@router.delete("/cards/{card_id}", response_model=DeletedModel)
+async def delete_card(card_id: int) -> DeletedModel:
     if not await asyncio.to_thread(service_layer.delete_card, card_id):
         raise HTTPException(status_code=404, detail="Карточка не найдена")
+    return DeletedModel(deleted=True)
+
+
+class SessionStartBody(BaseModel):
+    shuffle: bool = True
+    direction: Literal["en_ru", "ru_en"] = "en_ru"
+    mode: Literal["choice", "input", "mixed"] = "mixed"
+
+
+class SessionModel(BaseModel):
+    id: int
+    episode_id: int
+    settings: dict[str, object]
+
+
+class AnswerBody(BaseModel):
+    card_id: int
+    mode: Literal["choice", "input"]
+    answer: str = Field(..., max_length=200)
+
+
+class AnswerModel(BaseModel):
+    correct: bool
+    exact: bool
+    matched: str | None
+    expected: list[str]
+
+
+class HardWordModel(BaseModel):
+    card: CardModel
+    mistakes: int
+
+
+class SummaryModel(BaseModel):
+    session_id: int
+    mistakes: int
+    hard_words: list[HardWordModel]
+
+
+@router.post("/episodes/{episode_id}/sessions", response_model=SessionModel)
+async def start_session(episode_id: int, body: SessionStartBody) -> SessionModel:
+    settings = learn.LearnSettings(shuffle=body.shuffle, direction=body.direction, mode=body.mode)
+    try:
+        session = await asyncio.to_thread(learn.start_session, episode_id, settings)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return SessionModel(id=session.id or 0, episode_id=session.episode_id, settings=session.settings)
+
+
+@router.post("/sessions/{session_id}/answers", response_model=AnswerModel)
+async def post_answer(session_id: int, body: AnswerBody) -> AnswerModel:
+    try:
+        outcome = await asyncio.to_thread(learn.answer, session_id, body.card_id, body.mode, body.answer)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return AnswerModel(
+        correct=outcome.result.correct,
+        exact=outcome.result.exact,
+        matched=outcome.result.matched,
+        expected=outcome.expected,
+    )
+
+
+@router.post("/sessions/{session_id}/finish", response_model=SummaryModel)
+async def finish_session(session_id: int) -> SummaryModel:
+    try:
+        summary = await asyncio.to_thread(learn.finish, session_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return SummaryModel(
+        session_id=session_id,
+        mistakes=summary.mistakes,
+        hard_words=[HardWordModel(card=_card_model(item.card), mistakes=item.mistakes) for item in summary.hard_words],
+    )

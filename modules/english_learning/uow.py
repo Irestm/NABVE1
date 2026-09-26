@@ -10,6 +10,8 @@ from modules.english_learning.repository import (
     CefrRepository,
     EpisodeRepository,
     EpisodeWordRepository,
+    LearnSessionRepository,
+    ReviewRepository,
     SeriesRepository,
 )
 
@@ -22,6 +24,8 @@ class EnglishUnitOfWork(SqliteUnitOfWork):
     words: EpisodeWordRepository
     cards: CardRepository
     cefr: CefrRepository
+    sessions: LearnSessionRepository
+    reviews: ReviewRepository
 
     def __init__(self, db_path: Path | None = None) -> None:
         super().__init__(db_path or ENGLISH_DB_PATH)
@@ -35,4 +39,6 @@ class EnglishUnitOfWork(SqliteUnitOfWork):
         self.words = EpisodeWordRepository(self.connection)
         self.cards = CardRepository(self.connection)
         self.cefr = CefrRepository(self.connection)
+        self.sessions = LearnSessionRepository(self.connection)
+        self.reviews = ReviewRepository(self.connection)
         return self

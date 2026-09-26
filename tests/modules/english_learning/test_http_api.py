@@ -93,7 +93,7 @@ def test_import_starts_a_job_and_cards_endpoints(uow_factory: Callable[[], Engli
     assert cards.json()[0]["translations_ru"] == ["понять"]
 
     card_id = cards.json()[0]["id"]
-    assert client.delete(f"/api/english/cards/{card_id}", headers=AUTH).status_code == 204
+    assert client.delete(f"/api/english/cards/{card_id}", headers=AUTH).json() == {"deleted": True}
     assert client.delete(f"/api/english/cards/{card_id}", headers=AUTH).status_code == 404
     assert client.get("/api/english/episodes/424242/cards", headers=AUTH).status_code == 404
 

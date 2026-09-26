@@ -28,6 +28,7 @@ import { FitnessProgressPhotoGallery } from "./components/FitnessProgressPhotoGa
 import { ImageGenerationPanel } from "./components/ImageGenerationPanel";
 import { IntegrationsPanel } from "./components/IntegrationsPanel";
 import { ProvidersPanel } from "./components/ProvidersPanel";
+import { LearningPage } from "./learning/LearningPage";
 import { GestureInfo } from "./components/GestureInfo";
 import { LanQrPanel } from "./components/LanQrPanel";
 import { MessagingPanel } from "./components/MessagingPanel";
@@ -299,6 +300,10 @@ export function App(): JSX.Element {
               <CollapsibleCard title="Чат с помощником" icon={<MessageCircle size={16} />} accent="cyan">
                 <FitnessChatWidget />
               </CollapsibleCard>
+            </div>
+          ) : activePage === "learning" ? (
+            <div key="learning" className="app-page">
+              <LearningPage />
             </div>
           ) : activePage === "providers" ? (
             <div key="providers" className="app-page">

@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from datetime import datetime
 
 from core.ports import AbstractRepository
-from modules.english_learning.domain import Card, Episode, EpisodeWord, Series
+from modules.english_learning.domain import Card, Episode, EpisodeWord, LearnSession, ReviewEntry, Series
 
 
 def _parse_time(value: str | None) -> datetime | None:
@@ -255,3 +255,58 @@ class CefrRepository:
     def load_index(self) -> dict[tuple[str, str], str]:
         rows = self._conn.execute("SELECT headword, pos, level FROM english_cefr_words").fetchall()
         return {(row["headword"], row["pos"]): row["level"] for row in rows}
+
+
+class LearnSessionRepository(AbstractRepository[LearnSession, int]):
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._conn = connection
+
+    def add(self, item: LearnSession) -> int:
+        item.started_at = item.started_at or datetime.now()
+        cursor = self._conn.execute(
+            "INSERT INTO english_learn_sessions (episode_id, settings, started_at, mistakes) VALUES (?, ?, ?, ?)",
+            (item.episode_id, json.dumps(item.settings), item.started_at.isoformat(), item.mistakes),
+        )
+        item.id = int(cursor.lastrowid)
+        return item.id
+
+    def get(self, key: int) -> LearnSession | None:
+        row = self._conn.execute("SELECT * FROM english_learn_sessions WHERE id = ?", (key,)).fetchone()
+        if row is None:
+            return None
+        return LearnSession(
+            id=row["id"],
+            episode_id=row["episode_id"],
+            settings=dict(json.loads(row["settings"])),
+            started_at=_parse_time(row["started_at"]),
+            finished_at=_parse_time(row["finished_at"]),
+            mistakes=row["mistakes"],
+        )
+
+    def finish(self, key: int, mistakes: int) -> None:
+        self._conn.execute(
+            "UPDATE english_learn_sessions SET finished_at = ?, mistakes = ? WHERE id = ?",
+            (datetime.now().isoformat(), mistakes, key),
+        )
+
+
+class ReviewRepository:
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._conn = connection
+
+    def add(self, entry: ReviewEntry) -> int:
+        entry.ts = entry.ts or datetime.now()
+        cursor = self._conn.execute(
+            "INSERT INTO english_review_log (card_id, session_id, mode, correct, answer, ts) VALUES (?, ?, ?, ?, ?, ?)",
+            (entry.card_id, entry.session_id, entry.mode, int(entry.correct), entry.answer, entry.ts.isoformat()),
+        )
+        entry.id = int(cursor.lastrowid)
+        return entry.id
+
+    def mistakes_by_card(self, session_id: int) -> dict[int, int]:
+        rows = self._conn.execute(
+            "SELECT card_id, COUNT(*) AS wrong FROM english_review_log WHERE session_id = ? AND correct = 0 "
+            "GROUP BY card_id ORDER BY wrong DESC",
+            (session_id,),
+        ).fetchall()
+        return {row["card_id"]: row["wrong"] for row in rows}
