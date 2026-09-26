@@ -36,3 +36,14 @@ def _isolate_providers_config(
     monkeypatch.setattr(
         providers_config, "USER_CONFIG_PATH", tmp_path_factory.mktemp("providers") / "providers.yaml"
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_english_learning_storage(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from modules.english_learning import subtitle_store, uow
+
+    root = tmp_path_factory.mktemp("english_learning")
+    monkeypatch.setattr(uow, "ENGLISH_DB_PATH", root / "english_learning.db")
+    monkeypatch.setattr(subtitle_store, "SUBTITLES_DIR", root / "subtitles")

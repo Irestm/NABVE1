@@ -230,6 +230,13 @@ class CardRepository(AbstractRepository[Card, int]):
         row = self._conn.execute("SELECT COUNT(*) FROM english_cards WHERE episode_id = ?", (episode_id,)).fetchone()
         return int(row[0])
 
+    def existing_keys(self, episode_id: int) -> set[tuple[str, str]]:
+        rows = self._conn.execute("SELECT lemma, pos FROM english_cards WHERE episode_id = ?", (episode_id,)).fetchall()
+        return {(row["lemma"], row["pos"]) for row in rows}
+
+    def delete(self, key: int) -> bool:
+        return self._conn.execute("DELETE FROM english_cards WHERE id = ?", (key,)).rowcount > 0
+
 
 class CefrRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:

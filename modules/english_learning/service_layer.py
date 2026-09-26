@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from core.logger import get_logger
 from modules.english_learning import cefr, subtitle_store
-from modules.english_learning.domain import Episode, EpisodeSource, EpisodeWord, Series
+from modules.english_learning.domain import Card, Episode, EpisodeSource, EpisodeWord, Series
 from modules.english_learning.lemmatizer import Lemmatizer, get_lemmatizer
 from modules.english_learning.srt_parser import decode_srt, parse_srt
 from modules.english_learning.uow import EnglishUnitOfWork
@@ -21,11 +21,29 @@ class ImportResult:
     words: list[EpisodeWord]
 
 
+def words_label(count: int) -> str:
+    tail = count % 100
+    if 11 <= tail <= 14:
+        noun = "слов"
+    elif count % 10 == 1:
+        noun = "слово"
+    elif 2 <= count % 10 <= 4:
+        noun = "слова"
+    else:
+        noun = "слов"
+    return f"{count} {noun}"
+
+
+def folder_name(series_title: str, episode: Episode, count: int) -> str:
+    return f"{series_title} — {episode.code} — {words_label(count)}"
+
+
 @dataclass(frozen=True)
 class EpisodeSummary:
     episode: Episode
     word_count: int
     card_count: int
+    display_name: str
 
 
 @dataclass(frozen=True)
@@ -162,19 +180,26 @@ def stored_source(
         return stored.source if stored is not None else None
 
 
+def _episode_summary(uow: EnglishUnitOfWork, series: Series, episode: Episode) -> EpisodeSummary:
+    if episode.id is None:
+        raise ValueError("Episode has no id")
+    word_count = uow.words.count_for_episode(episode.id)
+    card_count = uow.cards.count_for_episode(episode.id)
+    return EpisodeSummary(
+        episode=episode,
+        word_count=word_count,
+        card_count=card_count,
+        display_name=folder_name(series.title, episode, card_count or word_count),
+    )
+
+
 def library(uow_factory: Callable[[], EnglishUnitOfWork] = EnglishUnitOfWork) -> list[SeriesSummary]:
     with uow_factory() as uow:
         result: list[SeriesSummary] = []
         for series in uow.series.list_all():
-            assert series.id is not None
-            episodes = [
-                EpisodeSummary(
-                    episode=episode,
-                    word_count=uow.words.count_for_episode(episode.id) if episode.id is not None else 0,
-                    card_count=uow.cards.count_for_episode(episode.id) if episode.id is not None else 0,
-                )
-                for episode in uow.episodes.list_for_series(series.id)
-            ]
+            if series.id is None:
+                continue
+            episodes = [_episode_summary(uow, series, episode) for episode in uow.episodes.list_for_series(series.id)]
             result.append(SeriesSummary(series=series, episodes=episodes))
         return result
 
@@ -184,3 +209,17 @@ def episode_words(episode_id: int, uow_factory: Callable[[], EnglishUnitOfWork] 
         if uow.episodes.get(episode_id) is None:
             raise LookupError(f"Эпизод {episode_id} не найден")
         return uow.words.list_for_episode(episode_id)
+
+
+def episode_cards(episode_id: int, uow_factory: Callable[[], EnglishUnitOfWork] = EnglishUnitOfWork) -> list[Card]:
+    with uow_factory() as uow:
+        if uow.episodes.get(episode_id) is None:
+            raise LookupError(f"Эпизод {episode_id} не найден")
+        return uow.cards.list_for_episode(episode_id)
+
+
+def delete_card(card_id: int, uow_factory: Callable[[], EnglishUnitOfWork] = EnglishUnitOfWork) -> bool:
+    with uow_factory() as uow:
+        deleted = uow.cards.delete(card_id)
+        uow.commit()
+        return deleted

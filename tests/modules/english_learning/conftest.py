@@ -71,3 +71,15 @@ def _subtitles_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture
 def fake_lemmatizer() -> FakeLemmatizer:
     return FakeLemmatizer()
+
+
+@pytest.fixture(autouse=True)
+def _inert_card_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
+    from modules.english_learning import http_api
+    from modules.english_learning.card_generation import GenerationProgress
+    from modules.english_learning.jobs import CardJobRegistry
+
+    async def no_generation(episode_id: int, **kwargs: object) -> GenerationProgress:
+        return GenerationProgress(done=0, total=0, created=0, skipped=0)
+
+    monkeypatch.setattr(http_api, "card_jobs", CardJobRegistry(no_generation))

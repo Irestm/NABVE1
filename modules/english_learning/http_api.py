@@ -10,7 +10,8 @@ from pydantic import BaseModel, Field
 from core.secret_store import SecretStoreUnavailableError
 from modules.english_learning import credentials, link_import, service_layer
 from modules.english_learning.cefr import CEFRJ_ATTRIBUTION, CefrUnavailableError
-from modules.english_learning.domain import Episode, EpisodeWord
+from modules.english_learning.domain import Card, Episode, EpisodeWord
+from modules.english_learning.jobs import CardJob, card_jobs
 from modules.english_learning.lemmatizer import LemmatizerUnavailableError
 from modules.english_learning.service_layer import ImportResult
 from modules.english_learning.srt_parser import SrtParseError
@@ -30,6 +31,7 @@ class EpisodeModel(BaseModel):
     source: str
     word_count: int = 0
     card_count: int = 0
+    display_name: str = ""
 
 
 class SeriesModel(BaseModel):
@@ -51,10 +53,36 @@ class WordModel(BaseModel):
     surface: str
 
 
+class CardModel(BaseModel):
+    id: int
+    episode_id: int
+    word: str
+    lemma: str
+    pos: str
+    cefr: str | None
+    translations_ru: list[str]
+    definition_en: str
+    example: str
+    timestamp_ms: int
+    category: str
+
+
+class JobModel(BaseModel):
+    id: int
+    episode_id: int
+    state: str
+    done: int
+    total: int
+    created: int
+    skipped: int
+    error: str | None
+
+
 class ImportResponse(BaseModel):
     series: SeriesModel
     episode: EpisodeModel
     words: list[WordModel]
+    job: JobModel | None = None
 
 
 class LibraryResponse(BaseModel):
@@ -62,7 +90,9 @@ class LibraryResponse(BaseModel):
     cefr_attribution: str
 
 
-def _episode_model(episode: Episode, word_count: int = 0, card_count: int = 0) -> EpisodeModel:
+def _episode_model(
+    episode: Episode, word_count: int = 0, card_count: int = 0, display_name: str = ""
+) -> EpisodeModel:
     if episode.id is None:
         raise ValueError("Episode has no id")
     return EpisodeModel(
@@ -75,6 +105,38 @@ def _episode_model(episode: Episode, word_count: int = 0, card_count: int = 0) -
         source=episode.source,
         word_count=word_count,
         card_count=card_count,
+        display_name=display_name,
+    )
+
+
+def _card_model(card: Card) -> CardModel:
+    if card.id is None:
+        raise ValueError("Card has no id")
+    return CardModel(
+        id=card.id,
+        episode_id=card.episode_id,
+        word=card.word,
+        lemma=card.lemma,
+        pos=card.pos,
+        cefr=card.cefr,
+        translations_ru=card.translations_ru,
+        definition_en=card.definition_en,
+        example=card.example,
+        timestamp_ms=card.timestamp_ms,
+        category=card.category,
+    )
+
+
+def _job_model(job: CardJob) -> JobModel:
+    return JobModel(
+        id=job.id,
+        episode_id=job.episode_id,
+        state=job.state,
+        done=job.done,
+        total=job.total,
+        created=job.created,
+        skipped=job.skipped,
+        error=job.error,
     )
 
 
@@ -93,12 +155,14 @@ def _word_model(word: EpisodeWord) -> WordModel:
 
 
 def _import_response(result: ImportResult) -> ImportResponse:
+    job = card_jobs.start(result.episode.id) if result.episode.id is not None and result.words else None
     return ImportResponse(
         series=SeriesModel(
             id=result.series.id or 0, title=result.series.title, imdb_id=result.series.imdb_id, episodes=[]
         ),
         episode=_episode_model(result.episode, word_count=len(result.words)),
         words=[_word_model(word) for word in result.words],
+        job=_job_model(job) if job is not None else None,
     )
 
 
@@ -111,7 +175,10 @@ async def get_library() -> LibraryResponse:
                 id=summary.series.id or 0,
                 title=summary.series.title,
                 imdb_id=summary.series.imdb_id,
-                episodes=[_episode_model(item.episode, item.word_count, item.card_count) for item in summary.episodes],
+                episodes=[
+                    _episode_model(item.episode, item.word_count, item.card_count, item.display_name)
+                    for item in summary.episodes
+                ],
             )
             for summary in summaries
         ],
@@ -265,3 +332,35 @@ async def put_credentials(update: CredentialsUpdate) -> CredentialsStatusModel:
     except SecretStoreUnavailableError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return _credentials_model(status)
+
+
+@router.get("/episodes/{episode_id}/cards", response_model=list[CardModel])
+async def get_episode_cards(episode_id: int) -> list[CardModel]:
+    try:
+        cards = await asyncio.to_thread(service_layer.episode_cards, episode_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return [_card_model(card) for card in cards]
+
+
+@router.post("/episodes/{episode_id}/cards", response_model=JobModel)
+async def start_card_generation(episode_id: int) -> JobModel:
+    try:
+        await asyncio.to_thread(service_layer.episode_words, episode_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _job_model(card_jobs.start(episode_id))
+
+
+@router.get("/jobs/{job_id}", response_model=JobModel)
+async def get_job(job_id: int) -> JobModel:
+    job = card_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    return _job_model(job)
+
+
+@router.delete("/cards/{card_id}", status_code=204)
+async def delete_card(card_id: int) -> None:
+    if not await asyncio.to_thread(service_layer.delete_card, card_id):
+        raise HTTPException(status_code=404, detail="Карточка не найдена")
