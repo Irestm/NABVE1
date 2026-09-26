@@ -104,11 +104,14 @@ _GMAIL_SUFFIX_PATTERN = re.compile(
 # Any name not listed here (there isn't one currently) falls back to that
 # same default text rather than a KeyError.
 _AI_ADAPTER_PROGRESS_DETAIL = {
-    "local": "Пробую локальную модель",
+    "ollama": "Пробую локальную модель",
     "groq_api": "Пробую быстрый облачный ИИ",
     "gemini_api": "Пробую Gemini",
-    "claude_api": "Пробую Claude",
-    "ai_bridge": "Локально не получилось, открываю браузер",
+    "anthropic_api": "Пробую Claude",
+    "anthropic_subscription": "Пробую Claude",
+    "openai_api": "Пробую ChatGPT",
+    "deepseek_api": "Пробую DeepSeek",
+    "browser_chain": "Открываю браузерный режим",
 }
 
 

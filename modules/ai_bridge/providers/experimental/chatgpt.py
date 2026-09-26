@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from modules.ai_bridge.providers.base import BrowserProviderAdapter
+from modules.ai_bridge.providers.experimental.base import BrowserProviderAdapter
 
 
 class ChatGPTAdapter(BrowserProviderAdapter):

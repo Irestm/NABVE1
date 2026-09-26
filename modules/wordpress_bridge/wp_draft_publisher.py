@@ -42,7 +42,7 @@ def _profile_dir_for(site_url: str) -> Path:
 
 class WordPressSession:
     """One persistent, ALWAYS-VISIBLE Playwright browser session per WP
-    site — deliberately not sharing modules.ai_bridge.providers.base's
+    site — deliberately not sharing modules.ai_bridge.providers.experimental.base's
     hidden-Xvfb-by-default machinery: the whole point of this module is
     that the user watches Jarvis fill in the draft in real time, so this
     never launches on a virtual display, only the real screen.

@@ -10,7 +10,7 @@ KeyT = TypeVar("KeyT")
 @runtime_checkable
 class PromptProviderPort(Protocol):
     """Anything that can answer a free-text prompt: browser-automated cloud
-    providers (modules.ai_bridge.provider_manager.ProviderManager) and the
+    providers (modules.ai_bridge.providers.experimental.provider_manager.ProviderManager) and the
     local on-device model (modules.hardware_adaptive.local_ai.LocalEngineAdapter)
     both already exposed this exact shape by convention; this Protocol makes
     it an explicit, structurally-checked contract so core/voice/ai_router.py

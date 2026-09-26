@@ -3,7 +3,11 @@ from __future__ import annotations
 import base64
 
 from core.logger import get_logger
-from modules.ai_bridge.provider_manager import get_provider_manager
+from modules.ai_bridge.providers.config import load_config
+from modules.ai_bridge.providers.experimental.browser_chain import BrowserChainProvider
+from modules.ai_bridge.providers.experimental.provider_manager import get_provider_manager
+
+BROWSER_CHAIN_NAME = BrowserChainProvider.name
 
 logger = get_logger(__name__)
 
@@ -24,8 +28,13 @@ class BrowserImageGenerationError(RuntimeError):
 async def generate_image(prompt: str) -> bytes:
     """Falls back to the same authenticated Gemini browser session
     modules.ai_bridge already maintains for text chat (see
-    modules.ai_bridge.providers.gemini.GeminiAdapter) rather than opening a
+    modules.ai_bridge.providers.experimental.gemini.GeminiAdapter) rather than opening a
     second, separate browser context — one login, reused for both."""
+    if not load_config().is_enabled(BROWSER_CHAIN_NAME):
+        raise BrowserImageGenerationError(
+            "Нет Gemini API-ключа, а экспериментальный браузерный режим выключен — "
+            "добавьте ключ или включите его на странице «Провайдеры»."
+        )
     adapter = get_provider_manager().get_adapter("gemini")
     page = await adapter.open()
 

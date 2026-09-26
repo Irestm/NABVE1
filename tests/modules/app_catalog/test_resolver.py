@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 import core.ai_adapter_chain as ai_adapter_chain
+from tests.ai_chain_fakes import use_ai_chain
 import modules.app_catalog.resolver as resolver
 from modules.app_catalog.domain import InstalledApp
 from modules.app_catalog.resolver import ResolvedApp, _parse_resolution
@@ -90,8 +91,7 @@ def test_resolve_uses_confident_local_answer_without_trying_cloud(monkeypatch: p
     monkeypatch.setattr(resolver.catalog, "list_installed_apps", lambda: _apps())
     local = _FakeAdapter("local", '{"index": 0, "confidence": 90}')
     cloud = _FakeAdapter("ai_bridge", '{"index": 1, "confidence": 95}')
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: local)
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: cloud)
+    use_ai_chain(monkeypatch, local, cloud)
 
     resolved = asyncio.run(resolver.resolve("дед селс"))
 
@@ -104,8 +104,7 @@ def test_resolve_escalates_to_cloud_when_local_confidence_is_low(monkeypatch: py
     monkeypatch.setattr(resolver.catalog, "list_installed_apps", lambda: _apps())
     local = _FakeAdapter("local", '{"index": 0, "confidence": 20}')
     cloud = _FakeAdapter("ai_bridge", '{"index": 1, "confidence": 95}')
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: local)
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: cloud)
+    use_ai_chain(monkeypatch, local, cloud)
 
     resolved = asyncio.run(resolver.resolve("что-то невнятное"))
 
@@ -118,8 +117,7 @@ def test_resolve_returns_best_low_confidence_guess_when_nobody_is_sure(monkeypat
     monkeypatch.setattr(resolver.catalog, "list_installed_apps", lambda: _apps())
     local = _FakeAdapter("local", '{"index": 0, "confidence": 20}')
     cloud = _FakeAdapter("ai_bridge", '{"index": 1, "confidence": 40}')
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: local)
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: cloud)
+    use_ai_chain(monkeypatch, local, cloud)
 
     resolved = asyncio.run(resolver.resolve("непонятно что"))
 
@@ -131,8 +129,7 @@ def test_resolve_returns_best_low_confidence_guess_when_nobody_is_sure(monkeypat
 def test_resolve_falls_through_a_failing_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resolver.catalog, "list_installed_apps", lambda: _apps())
     cloud = _FakeAdapter("ai_bridge", '{"index": 0, "confidence": 80}')
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: _FailingAdapter())
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: cloud)
+    use_ai_chain(monkeypatch, _FailingAdapter(), cloud)
 
     resolved = asyncio.run(resolver.resolve("дед селс"))
 
@@ -142,7 +139,6 @@ def test_resolve_falls_through_a_failing_adapter(monkeypatch: pytest.MonkeyPatch
 
 def test_resolve_returns_none_when_every_adapter_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resolver.catalog, "list_installed_apps", lambda: _apps())
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: None)
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: _FailingAdapter())
+    use_ai_chain(monkeypatch, _FailingAdapter())
 
     assert asyncio.run(resolver.resolve("дед селс")) is None

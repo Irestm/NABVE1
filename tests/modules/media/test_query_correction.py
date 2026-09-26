@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 import core.ai_adapter_chain as ai_adapter_chain
+from tests.ai_chain_fakes import use_ai_chain
 from modules.media.query_correction import correct_query
 
 
@@ -25,8 +26,7 @@ class _FailingAdapter:
 
 
 def test_correct_query_returns_ai_corrected_text(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: _FakeAdapter("local", "Dead Cells"))
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: _FailingAdapter())
+    use_ai_chain(monkeypatch, _FakeAdapter("local", "Dead Cells"), _FailingAdapter())
 
     result = asyncio.run(correct_query("дед селс"))
 
@@ -34,8 +34,7 @@ def test_correct_query_returns_ai_corrected_text(monkeypatch: pytest.MonkeyPatch
 
 
 def test_correct_query_strips_surrounding_quotes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: _FakeAdapter("local", '"Rick and Morty"'))
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: _FailingAdapter())
+    use_ai_chain(monkeypatch, _FakeAdapter("local", '"Rick and Morty"'), _FailingAdapter())
 
     result = asyncio.run(correct_query("рик энд морти"))
 
@@ -43,8 +42,7 @@ def test_correct_query_strips_surrounding_quotes(monkeypatch: pytest.MonkeyPatch
 
 
 def test_correct_query_falls_through_to_cloud_when_local_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: _FailingAdapter())
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: _FakeAdapter("ai_bridge", "Stranger Things"))
+    use_ai_chain(monkeypatch, _FailingAdapter(), _FakeAdapter("ai_bridge", "Stranger Things"))
 
     result = asyncio.run(correct_query("стрейнджер тингс"))
 
@@ -55,8 +53,7 @@ def test_correct_query_falls_back_to_original_text_when_every_adapter_fails(monk
     # Unlike modules.media.recommender.recommend (which has nothing sane to
     # fall back to and returns None), an uncorrected search query is still
     # strictly better than giving up on the search entirely.
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: None)
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: _FailingAdapter())
+    use_ai_chain(monkeypatch, _FailingAdapter())
 
     result = asyncio.run(correct_query("дед селс"))
 
@@ -64,8 +61,7 @@ def test_correct_query_falls_back_to_original_text_when_every_adapter_fails(monk
 
 
 def test_correct_query_falls_back_to_original_text_on_empty_reply(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: _FakeAdapter("local", "   "))
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: _FailingAdapter())
+    use_ai_chain(monkeypatch, _FakeAdapter("local", "   "), _FailingAdapter())
 
     result = asyncio.run(correct_query("дед селс"))
 
@@ -75,13 +71,9 @@ def test_correct_query_falls_back_to_original_text_on_empty_reply(monkeypatch: p
 def test_correct_query_returns_empty_string_unchanged_without_calling_any_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[str] = []
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: calls.append("local") or None)
-    monkeypatch.setattr(
-        ai_adapter_chain, "get_provider_manager", lambda: calls.append("cloud") or _FailingAdapter()
-    )
+    fake = use_ai_chain(monkeypatch, _FailingAdapter())
 
     result = asyncio.run(correct_query("   "))
 
     assert result == ""
-    assert calls == []
+    assert fake.requests == 0

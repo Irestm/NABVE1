@@ -201,9 +201,9 @@ def test_ai_bridge_progress_updates_state_detail_via_on_progress(monkeypatch) ->
     seen_details: list[str] = []
 
     async def fake_resolve_free_text(text, commands, *, on_stream_chunk=None, on_progress=None, context_hint=None):
-        on_progress("local")
+        on_progress("ollama")
         seen_details.append(state_manager.detail)
-        on_progress("ai_bridge")
+        on_progress("anthropic_api")
         seen_details.append(state_manager.detail)
         return None, "Ответ от облака."
 
@@ -215,7 +215,7 @@ def test_ai_bridge_progress_updates_state_detail_via_on_progress(monkeypatch) ->
 
     loop._classify_via_ai_bridge("вопрос", _FakeSTT([]), tts=None, response_language="ru")
 
-    assert seen_details == ["Пробую локальную модель", "Локально не получилось, открываю браузер"]
+    assert seen_details == ["Пробую локальную модель", "Пробую Claude"]
     assert state_manager.state == AssistantState.SPEAKING  # set after resolve_free_text returns
 
 

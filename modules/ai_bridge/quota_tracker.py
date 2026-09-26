@@ -30,7 +30,7 @@ class _ProviderUsage:
 class QuotaTracker:
     """Tracks recent request timestamps per free-API provider name and
     answers "is it safe to use this provider right now" proactively. Not
-    tied to any specific provider — modules/ai_bridge/api_providers.py is
+    tied to any specific provider — modules/ai_bridge/providers/ (gemini_api, groq_api) is
     the only caller today, but any future free-API adapter can share this
     same tracker instance.
 

@@ -3,13 +3,9 @@ import type { CSSProperties } from "react";
 import {
   SiBlender,
   SiBlenderHex,
-  SiClaude,
-  SiClaudeHex,
   SiFigma,
   SiFigmaHex,
   SiGithub,
-  SiGooglegemini,
-  SiGooglegeminiHex,
   SiSpotify,
   SiSpotifyHex,
   SiTelegram,
@@ -21,21 +17,15 @@ import {
 } from "@icons-pack/react-simple-icons";
 import { Briefcase, Globe } from "lucide-react";
 import {
-  deleteClaudeApiKey,
-  deleteGeminiApiKey,
   deleteGithubPat,
   deleteYoutubeApiKey,
   disconnectSpotify,
   getBlenderAddonDownloadUrl,
-  getClaudeKeyStatus,
   getFigmaPluginDownloadUrl,
-  getGeminiKeyStatus,
   getGithubPatStatus,
   getSpotifyStatus,
   getWordpressPluginDownloadUrl,
   getYoutubeStatus,
-  saveClaudeApiKey,
-  saveGeminiApiKey,
   saveGithubPat,
   saveSpotifyClientId,
   saveYoutubeApiKey,
@@ -45,7 +35,7 @@ import { ApiKeyField } from "./ApiKeyField";
 import { IntegrationTile } from "./IntegrationTile";
 import { StatusPanel } from "./StatusPanel";
 import { TelegramIntegrationPanel } from "./TelegramIntegrationPanel";
-import type { ClaudeKeyStatus, GeminiKeyStatus, GithubStatus, SpotifyStatus, YouTubeStatus } from "../types";
+import type { GithubStatus, SpotifyStatus, YouTubeStatus } from "../types";
 import "./IntegrationTile.css";
 import "./IntegrationsPanel.css";
 
@@ -78,19 +68,6 @@ const YOUTUBE_API_KEY_GUIDE_STEPS = [
   "Скопируйте полученный ключ и вставьте его в поле ниже.",
 ];
 
-const GEMINI_API_KEY_GUIDE_STEPS = [
-  "Откройте aistudio.google.com и войдите с обычным Google-аккаунтом.",
-  "Нажмите «Get API key» → «Create API key» (можно в новом или существующем проекте).",
-  "Скопируйте ключ и вставьте его в поле ниже.",
-];
-
-const CLAUDE_API_KEY_GUIDE_STEPS = [
-  "Откройте console.anthropic.com и зарегистрируйтесь (нужно подтвердить телефон).",
-  "В разделе «API Keys» нажмите «Create Key».",
-  "Пополните баланс — платно, но недорого при обычном использовании; минимум на пополнение стоит свериться прямо в консоли.",
-  "Скопируйте ключ и вставьте его в поле ниже.",
-];
-
 const SPOTIFY_SETUP_GUIDE_STEPS = [
   "Откройте developer.spotify.com/dashboard и войдите со своим аккаунтом Spotify.",
   "Нажмите «Create app», укажите любое имя/описание.",
@@ -116,7 +93,7 @@ const AI_SESSIONS_GUIDE_STEPS = [
   "Ниже — список браузерных ИИ-провайдеров (Gemini/ChatGPT/DeepSeek/Grok).",
   "Нажмите «Войти» у нужного провайдера — откроется окно браузера с обычной страницей входа.",
   "Войдите в свой аккаунт как обычно и закройте окно — статус обновится на «подключено».",
-  "Эта цепочка используется автоматически как бесплатный запасной вариант, когда не задан свой API-ключ.",
+  "Цепочка участвует в ответах, только если включена на странице «Провайдеры ИИ».",
 ];
 
 interface DownloadableIntegration {
@@ -251,11 +228,7 @@ export function IntegrationsPanel(): JSX.Element {
   const [youtubeStatus, setYoutubeStatus] = useState<YouTubeStatus | null>(null);
   const [youtubeError, setYoutubeError] = useState("");
 
-  const [geminiStatus, setGeminiStatus] = useState<GeminiKeyStatus | null>(null);
-  const [geminiError, setGeminiError] = useState("");
 
-  const [claudeKeyStatus, setClaudeKeyStatus] = useState<ClaudeKeyStatus | null>(null);
-  const [claudeKeyError, setClaudeKeyError] = useState("");
 
   const [spotifyStatus, setSpotifyStatus] = useState<SpotifyStatus | null>(null);
   const [spotifyError, setSpotifyError] = useState("");
@@ -273,24 +246,6 @@ export function IntegrationsPanel(): JSX.Element {
       .catch((error) => {
         console.error("Failed to load YouTube integration status:", error);
         setYoutubeError("Не удалось загрузить статус интеграции с YouTube.");
-      });
-  }, []);
-
-  useEffect(() => {
-    getGeminiKeyStatus()
-      .then(setGeminiStatus)
-      .catch((error) => {
-        console.error("Failed to load Gemini key status:", error);
-        setGeminiError("Не удалось загрузить статус ключа Gemini.");
-      });
-  }, []);
-
-  useEffect(() => {
-    getClaudeKeyStatus()
-      .then(setClaudeKeyStatus)
-      .catch((error) => {
-        console.error("Failed to load Claude key status:", error);
-        setClaudeKeyError("Не удалось загрузить статус ключа Claude.");
       });
   }, []);
 
@@ -387,8 +342,6 @@ export function IntegrationsPanel(): JSX.Element {
     { id: "figma", name: "Figma", icon: <SiFigma size={20} color={SiFigmaHex} />, color: SiFigmaHex },
     { id: "blender", name: "Blender", icon: <SiBlender size={20} color={SiBlenderHex} />, color: SiBlenderHex },
     { id: "youtube", name: "YouTube", icon: <SiYoutube size={20} color={SiYoutubeHex} />, color: SiYoutubeHex },
-    { id: "gemini", name: "Gemini", icon: <SiGooglegemini size={20} color={SiGooglegeminiHex} />, color: SiGooglegeminiHex },
-    { id: "claude", name: "Claude", icon: <SiClaude size={20} color={SiClaudeHex} />, color: SiClaudeHex },
     { id: "spotify", name: "Spotify", icon: <SiSpotify size={20} color={SiSpotifyHex} />, color: SiSpotifyHex },
     { id: "github", name: "GitHub", icon: <SiGithub size={20} color={GITHUB_TILE_COLOR} />, color: GITHUB_TILE_COLOR },
     { id: "telegram", name: "Telegram", icon: <SiTelegram size={20} color={SiTelegramHex} />, color: SiTelegramHex },
@@ -447,50 +400,6 @@ export function IntegrationsPanel(): JSX.Element {
                       guideSteps={YOUTUBE_API_KEY_GUIDE_STEPS}
                       onSave={async (apiKey) => setYoutubeStatus(await saveYoutubeApiKey(apiKey))}
                       onDelete={async () => setYoutubeStatus(await deleteYoutubeApiKey())}
-                    />
-                  )}
-                </>
-              )}
-
-              {openTile.id === "gemini" && (
-                <>
-                  <p className="status-detail">
-                    Бесплатно (с лимитом, ассистент сам подстрахуется и переключится на локальную модель/браузер,
-                    если лимит близко). Ускоряет голосовой чат и распознавание команд.
-                  </p>
-                  {geminiError && <p className="status-error">{geminiError}</p>}
-                  {geminiStatus && (
-                    <ApiKeyField
-                      label="Gemini API-ключ (бесплатно)"
-                      configured={geminiStatus.key_configured}
-                      configuredText={`Ключ активен — использовано ${geminiStatus.requests_used_today} из ${geminiStatus.daily_limit} запросов сегодня.`}
-                      notConfiguredText="Ключ не задан — используется локальная модель/браузер."
-                      guideTitle="Как получить бесплатный ключ"
-                      guideSteps={GEMINI_API_KEY_GUIDE_STEPS}
-                      onSave={async (apiKey) => setGeminiStatus(await saveGeminiApiKey(apiKey))}
-                      onDelete={async () => setGeminiStatus(await deleteGeminiApiKey())}
-                    />
-                  )}
-                </>
-              )}
-
-              {openTile.id === "claude" && (
-                <>
-                  <p className="status-detail">
-                    Платно (реалистично: единицы долларов в месяц при обычном использовании одним человеком), зато
-                    заметно надёжнее и качественнее на сложных запросах.
-                  </p>
-                  {claudeKeyError && <p className="status-error">{claudeKeyError}</p>}
-                  {claudeKeyStatus && (
-                    <ApiKeyField
-                      label="Claude (Anthropic) API-ключ"
-                      configured={claudeKeyStatus.key_configured}
-                      configuredText="Ключ активен — используется для сложных запросов."
-                      notConfiguredText="Ключ не задан — используется браузерная цепочка (Gemini/ChatGPT/DeepSeek/Grok)."
-                      guideTitle="Как получить ключ и сколько это стоит"
-                      guideSteps={CLAUDE_API_KEY_GUIDE_STEPS}
-                      onSave={async (apiKey) => setClaudeKeyStatus(await saveClaudeApiKey(apiKey))}
-                      onDelete={async () => setClaudeKeyStatus(await deleteClaudeApiKey())}
                     />
                   )}
                 </>
@@ -596,8 +505,12 @@ export function IntegrationsPanel(): JSX.Element {
               {openTile.id === "ai_sessions" && (
                 <>
                   <p className="status-detail">
-                    Браузерная цепочка ИИ-провайдеров (Gemini/ChatGPT/DeepSeek/Grok) — фоллбэк, когда нет своего
-                    API-ключа. Здесь можно войти в аккаунт или импортировать уже открытую сессию браузера.
+                    Экспериментальная браузерная цепочка (Gemini/ChatGPT/DeepSeek/Grok). По умолчанию выключена —
+                    включается на странице «Провайдеры ИИ». Здесь можно войти в аккаунт или импортировать уже
+                    открытую сессию браузера.
+                  </p>
+                  <p className="status-error">
+                    На свой риск: автоматизация веб-интерфейсов может нарушать условия использования этих сервисов.
                   </p>
                   <StatusPanel />
                   <InstructionToggle steps={AI_SESSIONS_GUIDE_STEPS} />

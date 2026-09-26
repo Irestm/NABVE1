@@ -1,0 +1,19 @@
+claude_connection: api_key
+chains:
+  default: [gemini_api, groq_api, ollama, anthropic_subscription, anthropic_api, openai_api, deepseek_api, browser_chain]
+  complex: [anthropic_subscription, anthropic_api, openai_api, gemini_api, deepseek_api, browser_chain, groq_api, ollama]
+enabled:
+  ollama: true
+  anthropic_subscription: true
+  anthropic_api: true
+  openai_api: true
+  gemini_api: true
+  deepseek_api: true
+  groq_api: true
+  browser_chain: false
+models:
+  anthropic_api: claude-sonnet-5
+  openai_api: gpt-5-mini
+  gemini_api: gemini-2.5-flash
+  deepseek_api: deepseek-chat
+  groq_api: llama-3.3-70b-versatile

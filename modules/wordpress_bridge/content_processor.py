@@ -100,7 +100,7 @@ async def rewrite_html_for_blog(html_body: str) -> str:
     failure (no provider logged in, browser automation error, ...) the
     original HTML is returned unchanged rather than blocking the whole
     draft on it — the user still gets a usable draft to edit by hand."""
-    from modules.ai_bridge.provider_manager import get_provider_manager
+    from modules.ai_bridge.providers.router import get_router
 
     prompt = (
         "Отформатируй следующий HTML-текст для публикации в блоге WordPress: "
@@ -109,7 +109,7 @@ async def rewrite_html_for_blog(html_body: str) -> str:
         f"пояснений.\n\n{html_body}"
     )
     try:
-        return await get_provider_manager().send_prompt(prompt, fast_mode=True)
+        return (await get_router().ask(prompt)).text
     except Exception:
         logger.exception("AI rewrite of WordPress draft HTML failed; using the unrewritten HTML")
         return html_body

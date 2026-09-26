@@ -63,3 +63,6 @@ AGENT_NOTES.md
 # Claude Code's project-instructions file — local guidance only, not for the
 # repo. Purged from history 2026-09-02.
 CLAUDE.md
+
+# Per-user AI provider chain/config (modules/ai_bridge/providers/config.py)
+data/providers.yaml

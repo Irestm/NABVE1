@@ -6,7 +6,7 @@ import httpx
 
 from core.logger import get_logger
 from core.secret_store import get_secret
-from modules.ai_bridge.api_providers import GEMINI_API_KEY_SECRET_NAME
+from modules.ai_bridge.providers.keys import GEMINI_API_KEY_SECRET_NAME
 
 logger = get_logger(__name__)
 

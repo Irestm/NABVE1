@@ -7,7 +7,7 @@ from difflib import SequenceMatcher
 
 from core.logger import get_logger
 from core.models import CommandDescriptor
-from modules.ai_bridge.provider_manager import ProviderManager
+from core.ports import PromptProviderPort
 
 logger = get_logger(__name__)
 
@@ -155,7 +155,7 @@ def _parse_classification(raw: str, commands: list[CommandDescriptor]) -> Classi
 async def classify(
     text: str,
     commands: list[CommandDescriptor],
-    provider_manager: ProviderManager,
+    provider_manager: PromptProviderPort,
     *,
     similarity_threshold: float = _DIRECT_MATCH_SIMILARITY_THRESHOLD,
     context_hint: str | None = None,

@@ -9,7 +9,7 @@ from modules.ui_automation.domain import UIStep
 # free/read step is cheap and the RPM throttle already bounds wall time.
 MAX_STEPS = 15
 
-# Half of modules.ai_bridge.api_providers.GEMINI_RPM_LIMIT (6) — the agreed
+# Half of modules.ai_bridge.providers.gemini_api.GEMINI_RPM_LIMIT (6) — the agreed
 # "twice as strict" margin for the riskiest feature in the project. Checked
 # against the same shared modules.ai_bridge.quota_tracker counter every other
 # Gemini caller uses, just with a lower ceiling.

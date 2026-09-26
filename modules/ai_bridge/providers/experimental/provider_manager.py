@@ -5,8 +5,8 @@ from datetime import date
 from typing import Any
 
 from core.logger import get_logger
-from modules.ai_bridge.providers import PROVIDER_CLASSES, PROVIDER_ORDER
-from modules.ai_bridge.providers.base import BrowserProviderAdapter
+from modules.ai_bridge.providers.experimental import PROVIDER_CLASSES, PROVIDER_ORDER
+from modules.ai_bridge.providers.experimental.base import BrowserProviderAdapter
 from modules.ai_bridge.state_store import StateStore
 from modules.ai_bridge.system_prompt import apply_system_prompt
 
@@ -16,7 +16,7 @@ _ACTIVE_KEY = "active_provider"
 _LAST_RESET_KEY = "last_reset_date"
 
 # Every individual Playwright wait inside a provider adapter already has its
-# own timeout (see modules/ai_bridge/providers/base.py's
+# own timeout (see modules/ai_bridge/providers/experimental/base.py's
 # RESPONSE_WAIT_TIMEOUT_SECONDS etc.) - those bound *that* call, but a truly
 # wedged browser process (observed in practice under Xvfb with no GPU
 # acceleration - Firefox's software renderer can lock up outright) can leave
@@ -109,8 +109,9 @@ class ProviderManager:
         # Applied once, here, for every provider and every caller (ai_bridge_ask,
         # intent classification, voice question fallback) so the assistant's tone
         # never depends on which provider ends up answering.
-        prompt = apply_system_prompt(text)
+        return await self.send_raw(apply_system_prompt(text), fast_mode=fast_mode)
 
+    async def send_raw(self, prompt: str, *, fast_mode: bool = True) -> str:
         async with self._lock:
             self._maybe_daily_reset()
 

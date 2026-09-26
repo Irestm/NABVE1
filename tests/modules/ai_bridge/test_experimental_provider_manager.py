@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import modules.ai_bridge.provider_manager as provider_manager_module
-from modules.ai_bridge.provider_manager import AllProvidersExhaustedError, ProviderManager
-from modules.ai_bridge.providers import PROVIDER_ORDER
+import modules.ai_bridge.providers.experimental.provider_manager as provider_manager_module
+from modules.ai_bridge.providers.experimental.provider_manager import AllProvidersExhaustedError, ProviderManager
+from modules.ai_bridge.providers.experimental import PROVIDER_ORDER
 from modules.ai_bridge.state_store import StateStore
 
 

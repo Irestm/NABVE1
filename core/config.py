@@ -90,7 +90,7 @@ class Settings:
         os.environ.get("ASSISTANT_MEETING_MAX_SIZE_BYTES", str(500 * 1024 * 1024))
     )
     # Optional free-tier Groq API key (https://console.groq.com) — used by
-    # modules/ai_bridge/api_providers.py::GroqApiAdapter as a fast tier ahead
+    # modules/ai_bridge/providers/groq_api.py::GroqApiProvider as a fast tier ahead
     # of the local model and the ai_bridge browser-automation chain (see
     # core/ai_adapter_chain.py::free_api_first_chain). Absent by default: no
     # key means that adapter simply doesn't exist and every AI call behaves

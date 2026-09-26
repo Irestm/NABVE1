@@ -25,3 +25,14 @@ def _isolate_conversation_log(
 
     log_path = tmp_path_factory.mktemp("conversation_log") / "conversation_log.jsonl"
     monkeypatch.setattr(conversation_log, "_path", log_path)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_providers_config(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from modules.ai_bridge.providers import config as providers_config
+
+    monkeypatch.setattr(
+        providers_config, "USER_CONFIG_PATH", tmp_path_factory.mktemp("providers") / "providers.yaml"
+    )

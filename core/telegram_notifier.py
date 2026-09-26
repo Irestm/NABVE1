@@ -32,7 +32,7 @@ class TelegramNotifier:
 
     Silently does nothing when not configured — see _configured below —
     same "absent config = feature off" convention as
-    modules.ai_bridge.api_providers.GroqApiAdapter, never a hard failure
+    modules.ai_bridge.providers.groq_api.GroqApiProvider, never a hard failure
     for users who don't want this."""
 
     def __init__(self, app_settings: Settings = settings) -> None:

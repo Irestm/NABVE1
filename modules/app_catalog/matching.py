@@ -37,7 +37,7 @@ def shortlist_candidates(query: str, apps: Sequence[InstalledApp], limit: int = 
     `limit` most plausible matches for `query`, before any of them are sent
     to an AI adapter — necessary both for prompt size and, more importantly,
     so a single "open X" doesn't leak the user's entire software inventory
-    to a third-party cloud provider (see modules.ai_bridge.provider_manager)
+    to a third-party cloud provider (see modules.ai_bridge.providers.experimental.provider_manager)
     every time. Intentionally crude (SequenceMatcher over raw + transliterated
     text, no real phonetics) — the actual "is this really what they meant"
     judgment call is left entirely to the AI resolution step that follows;

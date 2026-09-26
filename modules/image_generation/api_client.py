@@ -8,7 +8,7 @@ _GEMINI_API_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/mod
 # Nano Banana 2 — the older Gemini 2.5 Flash Image (Nano Banana 1) is
 # scheduled to shut down 2026-10-02, so this deliberately targets the
 # current model, not the one used elsewhere in this codebase for text
-# (modules/ai_bridge/api_providers.py's gemini-2.5-flash, unaffected by this
+# (modules/ai_bridge/providers/gemini_api.py's gemini-2.5-flash, unaffected by this
 # specific shutdown). Swap here if Google renames/retires this one too —
 # nothing else in this module hardcodes a model name.
 _GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image-preview"

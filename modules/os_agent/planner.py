@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 from core.logger import get_logger
-from modules.ai_bridge import api_providers
+from core.ai_adapter_chain import cloud_api_chain, has_cloud_api_key
 from modules.ai_bridge.quota_tracker import quota_tracker
 from modules.os_agent.domain import DECISION_KINDS, OS_AGENT_RPM_LIMIT, AgentDecision, AgentSession
 from modules.ui_automation.domain import ACTIONS, UIElement, UIStep
@@ -91,21 +91,18 @@ def _available_adapters() -> list[Any]:
     the slow browser-automated ai_bridge providers, exactly what the agreed
     plan rules out for a decision loop ("браузерного фоллбэка НЕТ —
     слишком медленно для цикла решений")."""
-    adapters = []
-    gemini = api_providers.get_gemini_adapter()
-    if gemini is not None and not quota_tracker.is_near_limit(gemini.name, limit=OS_AGENT_RPM_LIMIT):
-        adapters.append(gemini)
-    claude = api_providers.get_claude_adapter()
-    if claude is not None and not quota_tracker.is_near_limit(claude.name, limit=OS_AGENT_RPM_LIMIT):
-        adapters.append(claude)
-    return adapters
+    return [
+        adapter
+        for adapter in cloud_api_chain()
+        if not quota_tracker.is_near_limit(adapter.name, limit=OS_AGENT_RPM_LIMIT)
+    ]
 
 
 def has_configured_key() -> bool:
     """Checked once at mode activation (core/voice/pipeline.py's
     _resolve_os_agent_start) — a hard refusal before the mode even turns on
     if neither key is configured, per the agreed plan."""
-    return api_providers.get_gemini_adapter() is not None or api_providers.get_claude_adapter() is not None
+    return has_cloud_api_key()
 
 
 def has_available_adapter() -> bool:

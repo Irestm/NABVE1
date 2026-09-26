@@ -6,6 +6,7 @@ from datetime import datetime
 import pytest
 
 import core.ai_adapter_chain as ai_adapter_chain
+from tests.ai_chain_fakes import use_ai_chain
 from modules.calendar.domain import RecurrenceRule
 from modules.calendar.extraction import ExtractedEvent, _parse_extraction, extract_event
 
@@ -102,8 +103,7 @@ def test_negative_remind_before_is_clamped_to_zero() -> None:
 
 def test_extract_event_uses_local_adapter_first(monkeypatch: pytest.MonkeyPatch) -> None:
     local = _FakeAdapter("local", '{"title": "Купить молока", "event_time": "2026-08-06T09:00:00", "remind_before_minutes": 15}')
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: local)
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: _FailingAdapter())
+    use_ai_chain(monkeypatch, local, _FailingAdapter())
 
     result = asyncio.run(extract_event("купить молока завтра утром", now=datetime(2026, 8, 5, 12, 0, 0)))
 
@@ -113,8 +113,7 @@ def test_extract_event_uses_local_adapter_first(monkeypatch: pytest.MonkeyPatch)
 
 def test_extract_event_falls_through_to_cloud(monkeypatch: pytest.MonkeyPatch) -> None:
     cloud = _FakeAdapter("ai_bridge", '{"title": "Позвонить маме", "event_time": "2026-08-07T18:00:00", "remind_before_minutes": 5}')
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: _FailingAdapter())
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: cloud)
+    use_ai_chain(monkeypatch, _FailingAdapter(), cloud)
 
     result = asyncio.run(extract_event("позвонить маме в пятницу вечером"))
 
@@ -123,16 +122,14 @@ def test_extract_event_falls_through_to_cloud(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_extract_event_returns_none_when_every_adapter_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: None)
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: _FailingAdapter())
+    use_ai_chain(monkeypatch, _FailingAdapter())
 
     assert asyncio.run(extract_event("что-нибудь")) is None
 
 
 def test_extract_event_returns_none_when_model_cannot_parse_request(monkeypatch: pytest.MonkeyPatch) -> None:
     unclear = _FakeAdapter("local", '{"title": null, "event_time": null, "remind_before_minutes": null}')
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: unclear)
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: _FailingAdapter())
+    use_ai_chain(monkeypatch, unclear, _FailingAdapter())
 
     assert asyncio.run(extract_event("бла бла бла")) is None
 

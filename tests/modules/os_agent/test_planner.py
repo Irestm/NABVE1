@@ -88,20 +88,17 @@ def test_parse_decision_extracts_json_from_surrounding_text() -> None:
 
 
 def test_has_configured_key_false_without_any_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(planner.api_providers, "get_gemini_adapter", lambda: None)
-    monkeypatch.setattr(planner.api_providers, "get_claude_adapter", lambda: None)
+    monkeypatch.setattr(planner, "has_cloud_api_key", lambda: False)
     assert planner.has_configured_key() is False
 
 
 def test_has_configured_key_true_with_gemini_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(planner.api_providers, "get_gemini_adapter", lambda: _FakeAdapter("gemini", "{}"))
-    monkeypatch.setattr(planner.api_providers, "get_claude_adapter", lambda: None)
+    monkeypatch.setattr(planner, "has_cloud_api_key", lambda: True)
     assert planner.has_configured_key() is True
 
 
 def test_decide_next_returns_none_without_any_configured_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(planner.api_providers, "get_gemini_adapter", lambda: None)
-    monkeypatch.setattr(planner.api_providers, "get_claude_adapter", lambda: None)
+    monkeypatch.setattr(planner, "cloud_api_chain", lambda: [])
 
     decision = asyncio.run(planner.decide_next("open settings", "Window", _elements(), []))
 
@@ -110,8 +107,7 @@ def test_decide_next_returns_none_without_any_configured_adapter(monkeypatch: py
 
 
 def test_decide_next_returns_none_when_throttled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(planner.api_providers, "get_gemini_adapter", lambda: _FakeAdapter("gemini", "{}"))
-    monkeypatch.setattr(planner.api_providers, "get_claude_adapter", lambda: None)
+    monkeypatch.setattr(planner, "cloud_api_chain", lambda: [_FakeAdapter("gemini", "{}")])
     monkeypatch.setattr(planner.quota_tracker, "is_near_limit", lambda *a, **k: True)
 
     decision = asyncio.run(planner.decide_next("open settings", "Window", _elements(), []))
@@ -122,8 +118,7 @@ def test_decide_next_returns_none_when_throttled(monkeypatch: pytest.MonkeyPatch
 
 def test_decide_next_uses_first_successful_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     gemini = _FakeAdapter("gemini", '{"kind": "done", "reason": "готово"}')
-    monkeypatch.setattr(planner.api_providers, "get_gemini_adapter", lambda: gemini)
-    monkeypatch.setattr(planner.api_providers, "get_claude_adapter", lambda: None)
+    monkeypatch.setattr(planner, "cloud_api_chain", lambda: [gemini])
     monkeypatch.setattr(planner.quota_tracker, "is_near_limit", lambda *a, **k: False)
 
     decision = asyncio.run(planner.decide_next("task", "Window", _elements(), []))
@@ -133,10 +128,8 @@ def test_decide_next_uses_first_successful_adapter(monkeypatch: pytest.MonkeyPat
 
 
 def test_decide_next_falls_through_a_failing_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(planner.api_providers, "get_gemini_adapter", lambda: _FailingAdapter())
-    monkeypatch.setattr(
-        planner.api_providers, "get_claude_adapter", lambda: _FakeAdapter("claude", '{"kind": "stuck", "reason": "x"}')
-    )
+    claude = _FakeAdapter("claude", '{"kind": "stuck", "reason": "x"}')
+    monkeypatch.setattr(planner, "cloud_api_chain", lambda: [_FailingAdapter(), claude])
     monkeypatch.setattr(planner.quota_tracker, "is_near_limit", lambda *a, **k: False)
 
     decision = asyncio.run(planner.decide_next("task", "Window", _elements(), []))
@@ -149,8 +142,7 @@ def test_decide_next_falls_through_a_failing_adapter(monkeypatch: pytest.MonkeyP
 
 
 def test_explain_returns_none_without_any_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(planner.api_providers, "get_gemini_adapter", lambda: None)
-    monkeypatch.setattr(planner.api_providers, "get_claude_adapter", lambda: None)
+    monkeypatch.setattr(planner, "cloud_api_chain", lambda: [])
 
     result = asyncio.run(planner.explain(AgentSession(task="open settings")))
 
@@ -158,8 +150,7 @@ def test_explain_returns_none_without_any_adapter(monkeypatch: pytest.MonkeyPatc
 
 
 def test_explain_returns_stripped_adapter_reply(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(planner.api_providers, "get_gemini_adapter", lambda: _FakeAdapter("gemini", "  потому что так проще  "))
-    monkeypatch.setattr(planner.api_providers, "get_claude_adapter", lambda: None)
+    monkeypatch.setattr(planner, "cloud_api_chain", lambda: [_FakeAdapter("gemini", "  потому что так проще  ")])
     monkeypatch.setattr(planner.quota_tracker, "is_near_limit", lambda *a, **k: False)
 
     result = asyncio.run(planner.explain(AgentSession(task="open settings", journal=["Выполнено: X"])))

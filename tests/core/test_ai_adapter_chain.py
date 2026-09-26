@@ -1,115 +1,66 @@
 from __future__ import annotations
 
+import pytest
+
 import core.ai_adapter_chain as ai_adapter_chain
+from modules.ai_bridge.providers.config import ProvidersConfig
 
 
-def test_returns_cloud_only_when_no_local_adapter(monkeypatch) -> None:
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: None)
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: "cloud")
-    assert ai_adapter_chain.local_first_chain() == ["cloud"]
+class _Provider:
+    def __init__(self, name: str, *, experimental: bool = False) -> None:
+        self.name = name
+        self.experimental = experimental
 
 
-def test_returns_local_then_cloud_when_local_available(monkeypatch) -> None:
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: "local")
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: "cloud")
-    assert ai_adapter_chain.local_first_chain() == ["local", "cloud"]
+class _Router:
+    def __init__(self, chains: dict[str, list[_Provider]], config: ProvidersConfig | None = None) -> None:
+        self._chains = chains
+        self._config = config or ProvidersConfig(chains={"default": [], "complex": []}, enabled={})
+
+    def chain(self, kind: str = "default") -> list[_Provider]:
+        return list(self._chains[kind])
+
+    def ports(self, kind: str = "default") -> list[_Provider]:
+        return self.chain(kind)
+
+    def ports_of(self, providers: list[_Provider]) -> list[_Provider]:
+        return list(providers)
+
+    def config(self) -> ProvidersConfig:
+        return self._config
 
 
-class _FakeGroqAdapter:
-    name = "groq_api"
+def _install(monkeypatch: pytest.MonkeyPatch, router: _Router) -> None:
+    monkeypatch.setattr(ai_adapter_chain, "_router", lambda: router)
 
 
-def test_free_api_first_chain_matches_local_first_chain_without_groq_key(monkeypatch) -> None:
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: "local")
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: "cloud")
-    monkeypatch.setattr(ai_adapter_chain.api_providers, "get_adapter", lambda: None)
-    assert ai_adapter_chain.free_api_first_chain() == ai_adapter_chain.local_first_chain()
+def test_candidate_chain_uses_default_chain_for_simple_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    simple = [_Provider("gemini_api"), _Provider("ollama")]
+    _install(monkeypatch, _Router({"default": simple, "complex": [_Provider("anthropic_api")]}))
+
+    assert [port.name for port in ai_adapter_chain.candidate_chain("привет")] == ["gemini_api", "ollama"]
 
 
-def test_free_api_first_chain_prepends_groq_when_available_and_under_quota(monkeypatch) -> None:
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: "local")
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: "cloud")
-    monkeypatch.setattr(ai_adapter_chain.api_providers, "get_adapter", lambda: _FakeGroqAdapter())
-    monkeypatch.setattr(ai_adapter_chain.quota_tracker, "is_near_limit", lambda name: False)
-    chain = ai_adapter_chain.free_api_first_chain()
-    assert [getattr(a, "name", a) for a in chain] == ["groq_api", "local", "cloud"]
+def test_candidate_chain_uses_complex_chain_for_live_data_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install(monkeypatch, _Router({"default": [_Provider("ollama")], "complex": [_Provider("anthropic_api")]}))
+
+    assert [port.name for port in ai_adapter_chain.candidate_chain("погугли курс доллара")] == ["anthropic_api"]
 
 
-def test_free_api_first_chain_skips_groq_when_near_quota_limit(monkeypatch) -> None:
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: "local")
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: "cloud")
-    monkeypatch.setattr(ai_adapter_chain.api_providers, "get_adapter", lambda: _FakeGroqAdapter())
-    monkeypatch.setattr(ai_adapter_chain.quota_tracker, "is_near_limit", lambda name: True)
-    assert ai_adapter_chain.free_api_first_chain() == ["local", "cloud"]
+def test_cloud_api_chain_drops_local_and_experimental_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    chain = [_Provider("ollama"), _Provider("gemini_api"), _Provider("browser_chain", experimental=True)]
+    _install(monkeypatch, _Router({"default": chain, "complex": []}))
+
+    assert [port.name for port in ai_adapter_chain.cloud_api_chain()] == ["gemini_api"]
 
 
-# --- candidate_chain: Gemini (simple) / Claude (complex) --------------------
+def test_has_cloud_api_key_requires_an_enabled_provider_with_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = ProvidersConfig(chains={"default": [], "complex": []}, enabled={"gemini_api": False, "openai_api": True})
+    _install(monkeypatch, _Router({"default": [], "complex": []}, config))
+    keys = {"gemini_api": "g-key"}
+    monkeypatch.setattr(ai_adapter_chain, "read_key", lambda name: keys.get(name))
 
+    assert ai_adapter_chain.has_cloud_api_key() is False
 
-class _FakeGeminiAdapter:
-    name = "gemini_api"
-
-
-class _FakeClaudeAdapter:
-    name = "claude_api"
-
-
-def _base_chain(monkeypatch) -> None:
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: "local")
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: "cloud")
-    monkeypatch.setattr(ai_adapter_chain.api_providers, "get_adapter", lambda: None)
-
-
-def test_candidate_chain_prepends_gemini_for_a_simple_query_when_configured(monkeypatch) -> None:
-    _base_chain(monkeypatch)
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "is_complex_query", lambda text: False)
-    gemini = _FakeGeminiAdapter()
-    monkeypatch.setattr(ai_adapter_chain.api_providers, "get_gemini_adapter", lambda: gemini)
-    monkeypatch.setattr(ai_adapter_chain.quota_tracker, "is_near_limit", lambda name, limit=None: False)
-    monkeypatch.setattr(ai_adapter_chain.quota_tracker, "is_near_daily_limit", lambda name, limit: False)
-
-    assert ai_adapter_chain.candidate_chain("простой вопрос") == [gemini, "local", "cloud"]
-
-
-def test_candidate_chain_skips_gemini_when_no_key_configured(monkeypatch) -> None:
-    _base_chain(monkeypatch)
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "is_complex_query", lambda text: False)
-    monkeypatch.setattr(ai_adapter_chain.api_providers, "get_gemini_adapter", lambda: None)
-
-    assert ai_adapter_chain.candidate_chain("простой вопрос") == ["local", "cloud"]
-
-
-def test_candidate_chain_skips_gemini_when_near_the_per_minute_limit(monkeypatch) -> None:
-    _base_chain(monkeypatch)
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "is_complex_query", lambda text: False)
-    monkeypatch.setattr(ai_adapter_chain.api_providers, "get_gemini_adapter", lambda: _FakeGeminiAdapter())
-    monkeypatch.setattr(ai_adapter_chain.quota_tracker, "is_near_limit", lambda name, limit=None: True)
-
-    assert ai_adapter_chain.candidate_chain("простой вопрос") == ["local", "cloud"]
-
-
-def test_candidate_chain_skips_gemini_when_near_the_daily_limit(monkeypatch) -> None:
-    _base_chain(monkeypatch)
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "is_complex_query", lambda text: False)
-    monkeypatch.setattr(ai_adapter_chain.api_providers, "get_gemini_adapter", lambda: _FakeGeminiAdapter())
-    monkeypatch.setattr(ai_adapter_chain.quota_tracker, "is_near_limit", lambda name, limit=None: False)
-    monkeypatch.setattr(ai_adapter_chain.quota_tracker, "is_near_daily_limit", lambda name, limit: True)
-
-    assert ai_adapter_chain.candidate_chain("простой вопрос") == ["local", "cloud"]
-
-
-def test_candidate_chain_prepends_claude_for_a_complex_query_when_configured(monkeypatch) -> None:
-    _base_chain(monkeypatch)
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "is_complex_query", lambda text: True)
-    claude = _FakeClaudeAdapter()
-    monkeypatch.setattr(ai_adapter_chain.api_providers, "get_claude_adapter", lambda: claude)
-
-    assert ai_adapter_chain.candidate_chain("сложный вопрос") == [claude, "cloud", "local"]
-
-
-def test_candidate_chain_skips_claude_when_no_key_configured(monkeypatch) -> None:
-    _base_chain(monkeypatch)
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "is_complex_query", lambda text: True)
-    monkeypatch.setattr(ai_adapter_chain.api_providers, "get_claude_adapter", lambda: None)
-
-    assert ai_adapter_chain.candidate_chain("сложный вопрос") == ["cloud", "local"]
+    keys["openai_api"] = "o-key"
+    assert ai_adapter_chain.has_cloud_api_key() is True

@@ -101,11 +101,14 @@ from core.secret_store import SecretStoreUnavailableError, delete_secret, get_se
 from core.state import state_manager
 from core.voice import module_context as voice_module_context
 from core.voice import web_pipeline
-from modules.ai_bridge import api_providers, provider_auth, virtual_display
+from modules.ai_bridge import provider_auth, virtual_display
+from modules.ai_bridge.providers import http_api as providers_http_api
+from modules.ai_bridge.providers import keys as provider_keys
+from modules.ai_bridge.providers.gemini_api import GEMINI_RPD_LIMIT, GeminiApiProvider
 from modules.spotify_control import oauth as spotify_oauth
 from modules.spotify_control import token_store as spotify_token_store
 from modules.youtube_control import service_layer as youtube_service_layer
-from modules.ai_bridge.provider_manager import get_provider_manager
+from modules.ai_bridge.providers.experimental.provider_manager import get_provider_manager
 from modules.ai_bridge.quota_tracker import quota_tracker
 from modules.board_games import announce as board_games_announce
 from modules.board_games import service_layer as board_games_service_layer
@@ -222,6 +225,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Assistant Core", lifespan=lifespan)
+app.include_router(providers_http_api.router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -954,9 +958,9 @@ async def delete_youtube_api_key() -> YouTubeStatusResponse:
 
 def _gemini_key_status_response() -> GeminiKeyStatusResponse:
     return GeminiKeyStatusResponse(
-        key_configured=get_secret(api_providers.GEMINI_API_KEY_SECRET_NAME) is not None,
-        requests_used_today=quota_tracker.daily_count(api_providers.GeminiApiAdapter.name),
-        daily_limit=api_providers.GEMINI_RPD_LIMIT,
+        key_configured=get_secret(provider_keys.GEMINI_API_KEY_SECRET_NAME) is not None,
+        requests_used_today=quota_tracker.daily_count(GeminiApiProvider.name),
+        daily_limit=GEMINI_RPD_LIMIT,
     )
 
 
@@ -968,7 +972,8 @@ async def get_gemini_key_status() -> GeminiKeyStatusResponse:
 @app.post("/api/ai_bridge/gemini_api_key", response_model=GeminiKeyStatusResponse)
 async def save_gemini_api_key(request: ApiKeyRequest) -> GeminiKeyStatusResponse:
     try:
-        store_secret(api_providers.GEMINI_API_KEY_SECRET_NAME, request.api_key)
+        store_secret(provider_keys.GEMINI_API_KEY_SECRET_NAME, request.api_key)
+        provider_keys.invalidate(GeminiApiProvider.name)
     except SecretStoreUnavailableError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return _gemini_key_status_response()
@@ -977,7 +982,8 @@ async def save_gemini_api_key(request: ApiKeyRequest) -> GeminiKeyStatusResponse
 @app.delete("/api/ai_bridge/gemini_api_key", response_model=GeminiKeyStatusResponse)
 async def delete_gemini_api_key() -> GeminiKeyStatusResponse:
     try:
-        delete_secret(api_providers.GEMINI_API_KEY_SECRET_NAME)
+        delete_secret(provider_keys.GEMINI_API_KEY_SECRET_NAME)
+        provider_keys.invalidate(GeminiApiProvider.name)
     except SecretStoreUnavailableError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return _gemini_key_status_response()
@@ -985,7 +991,7 @@ async def delete_gemini_api_key() -> GeminiKeyStatusResponse:
 
 def _claude_key_status_response() -> ClaudeKeyStatusResponse:
     return ClaudeKeyStatusResponse(
-        key_configured=get_secret(api_providers.CLAUDE_API_KEY_SECRET_NAME) is not None
+        key_configured=get_secret(provider_keys.CLAUDE_API_KEY_SECRET_NAME) is not None
     )
 
 
@@ -997,7 +1003,8 @@ async def get_claude_key_status() -> ClaudeKeyStatusResponse:
 @app.post("/api/ai_bridge/claude_api_key", response_model=ClaudeKeyStatusResponse)
 async def save_claude_api_key(request: ApiKeyRequest) -> ClaudeKeyStatusResponse:
     try:
-        store_secret(api_providers.CLAUDE_API_KEY_SECRET_NAME, request.api_key)
+        store_secret(provider_keys.CLAUDE_API_KEY_SECRET_NAME, request.api_key)
+        provider_keys.invalidate("anthropic_api")
     except SecretStoreUnavailableError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return _claude_key_status_response()
@@ -1006,7 +1013,8 @@ async def save_claude_api_key(request: ApiKeyRequest) -> ClaudeKeyStatusResponse
 @app.delete("/api/ai_bridge/claude_api_key", response_model=ClaudeKeyStatusResponse)
 async def delete_claude_api_key() -> ClaudeKeyStatusResponse:
     try:
-        delete_secret(api_providers.CLAUDE_API_KEY_SECRET_NAME)
+        delete_secret(provider_keys.CLAUDE_API_KEY_SECRET_NAME)
+        provider_keys.invalidate("anthropic_api")
     except SecretStoreUnavailableError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return _claude_key_status_response()

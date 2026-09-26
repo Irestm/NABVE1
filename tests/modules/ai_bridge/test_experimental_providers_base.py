@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import modules.ai_bridge.providers.base as base_module
-from modules.ai_bridge.providers.base import BrowserProviderAdapter
+import modules.ai_bridge.providers.experimental.base as base_module
+from modules.ai_bridge.providers.experimental.base import BrowserProviderAdapter
 
 
 class _FakeAdapter(BrowserProviderAdapter):

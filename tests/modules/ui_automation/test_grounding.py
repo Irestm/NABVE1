@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 import core.ai_adapter_chain as ai_adapter_chain
+from tests.ai_chain_fakes import use_ai_chain
 from modules.ui_automation.domain import UIElement, UIStep
 from modules.ui_automation.grounding import _parse_grounding, ground
 
@@ -120,8 +121,7 @@ def test_ground_uses_first_successful_adapter(monkeypatch: pytest.MonkeyPatch) -
     elements = _elements()
     local = _FakeAdapter("local", '{"steps": [{"action": "click", "target_index": 1}]}')
     cloud = _FakeAdapter("ai_bridge", '{"steps": [{"action": "click", "target_index": 0}]}')
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: local)
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: cloud)
+    use_ai_chain(monkeypatch, local, cloud)
 
     steps = asyncio.run(ground("Some Window", elements, "нажми на тренды"))
 
@@ -131,8 +131,7 @@ def test_ground_uses_first_successful_adapter(monkeypatch: pytest.MonkeyPatch) -
 def test_ground_falls_through_a_failing_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     elements = _elements()
     cloud = _FakeAdapter("ai_bridge", '{"steps": [{"action": "click", "target_index": 0}]}')
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: _FailingAdapter())
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: cloud)
+    use_ai_chain(monkeypatch, _FailingAdapter(), cloud)
 
     steps = asyncio.run(ground("Some Window", elements, "нажми сохранить"))
 
@@ -143,8 +142,7 @@ def test_ground_falls_through_an_unparseable_response(monkeypatch: pytest.Monkey
     elements = _elements()
     local = _FakeAdapter("local", "не могу понять")
     cloud = _FakeAdapter("ai_bridge", '{"steps": [{"action": "click", "target_index": 0}]}')
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: local)
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: cloud)
+    use_ai_chain(monkeypatch, local, cloud)
 
     steps = asyncio.run(ground("Some Window", elements, "нажми сохранить"))
 
@@ -153,7 +151,6 @@ def test_ground_falls_through_an_unparseable_response(monkeypatch: pytest.Monkey
 
 def test_ground_returns_none_when_every_adapter_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     elements = _elements()
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: None)
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: _FailingAdapter())
+    use_ai_chain(monkeypatch, _FailingAdapter())
 
     assert asyncio.run(ground("Some Window", elements, "нажми сохранить")) is None

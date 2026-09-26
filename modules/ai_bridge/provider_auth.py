@@ -5,8 +5,8 @@ import shutil
 
 from core.browser_cookie_import import ImportResult, import_session_cookies
 from core.logger import get_logger
-from modules.ai_bridge.provider_manager import get_provider_manager
-from modules.ai_bridge.providers import PROVIDER_ORDER
+from modules.ai_bridge.providers.experimental.provider_manager import get_provider_manager
+from modules.ai_bridge.providers.experimental import PROVIDER_ORDER
 
 logger = get_logger(__name__)
 
@@ -40,7 +40,7 @@ async def login(provider: str) -> None:
     real screen if it wasn't open yet) so the user can log in themselves,
     directly on the provider's own site — Jarvis never asks for or stores
     third-party AI provider passwords. Once logged in, the persistent
-    browser profile (modules.ai_bridge.providers.base's
+    browser profile (modules.ai_bridge.providers.experimental.base's
     launch_persistent_context) keeps the session for future runs."""
     manager = get_provider_manager()
     await manager.get_adapter(provider).reveal()

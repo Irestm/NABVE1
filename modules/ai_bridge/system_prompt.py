@@ -6,7 +6,7 @@ from modules.user_profile.communication_styles import get_current_style
 from modules.user_profile.domain import ASSISTANT_NAME_KEY
 from modules.user_profile.uow import ProfileUnitOfWork
 
-__all__ = ["SYSTEM_PROMPT_PREFIX", "apply_system_prompt"]
+__all__ = ["SYSTEM_PROMPT_PREFIX", "apply_system_prompt", "persona_instruction"]
 
 
 def apply_system_prompt(text: str) -> str:
@@ -23,6 +23,10 @@ def apply_system_prompt(text: str) -> str:
     any) is mentioned so the model answers consistently if asked for it.
     Before onboarding runs, both are simply absent — same behavior as
     before this feature existed."""
+    return f"{persona_instruction()}\n\n{text}"
+
+
+def persona_instruction() -> str:
     style = get_current_style()
     prefix = f"{SYSTEM_PROMPT_PREFIX} {style.prompt_fragment}"
 
@@ -30,4 +34,4 @@ def apply_system_prompt(text: str) -> str:
     if assistant_name:
         prefix = f"{prefix} Тебя зовут {assistant_name}."
 
-    return f"{prefix}\n\n{text}"
+    return prefix

@@ -3,7 +3,7 @@ from __future__ import annotations
 # Prepended to every AI prompt this module sends — on top of, not instead
 # of, core/config.py's SYSTEM_PROMPT_PREFIX (the general voice-assistant
 # tone), which is applied automatically inside every
-# modules.ai_bridge.api_providers adapter's send_prompt() via
+# modules.ai_bridge.providers.router PromptPort's send_prompt() via
 # modules.ai_bridge.system_prompt.apply_system_prompt. Since that happens
 # INSIDE send_prompt, this module can't call apply_system_prompt itself —
 # instead, compose_fitness_prompt() wraps the text handed to send_prompt, so

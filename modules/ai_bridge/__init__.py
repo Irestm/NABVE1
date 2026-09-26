@@ -6,7 +6,7 @@ from core.dispatcher import CommandDispatcher
 from core.logger import get_logger
 from modules.ai_bridge import provider_auth
 from modules.ai_bridge.presets import PRESET_PROMPTS
-from modules.ai_bridge.provider_manager import get_provider_manager
+from modules.ai_bridge.providers.experimental.provider_manager import get_provider_manager
 
 logger = get_logger(__name__)
 
@@ -28,10 +28,11 @@ def _build_prompt(params: dict[str, Any]) -> str:
 
 
 async def _handle_ai_bridge_ask(params: dict[str, Any]) -> dict[str, Any]:
+    from modules.ai_bridge.providers.router import get_router
+
     text = _build_prompt(params)
-    manager = get_provider_manager()
-    reply = await manager.send_prompt(text, fast_mode=bool(params.get("fast_mode", False)))
-    return {"response": reply, "provider": manager.active_name}
+    result = await get_router().ask(text)
+    return {"response": result.text, "provider": result.provider_name}
 
 
 async def _handle_ai_bridge_show_provider(_params: dict[str, Any]) -> dict[str, Any]:
@@ -80,9 +81,8 @@ def register_commands(dispatcher: CommandDispatcher) -> None:
         _handle_ai_bridge_ask,
         dangerous=False,
         description=(
-            "Ask the currently active AI provider (Gemini, falling back to ChatGPT, "
-            "DeepSeek, then Grok when a daily limit is hit) a fixed preset prompt or "
-            "free-text prompt (prompt, or preset_id), via browser automation."
+            "Ask the configured AI provider chain (see Providers settings) a fixed preset "
+            "prompt or free-text prompt (prompt, or preset_id)."
         ),
     )
     dispatcher.register(

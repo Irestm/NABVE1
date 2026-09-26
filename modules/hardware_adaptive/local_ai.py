@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from typing import Any
 
 from core.logger import get_logger
 from modules.hardware_adaptive.hardware_detector import detect_hardware
@@ -69,7 +70,7 @@ def is_complex_query(text: str) -> bool:
 class LocalEngineAdapter:
     """Exposes LocalInferenceEngine through the same
     `send_prompt(text, *, fast_mode=True) -> str` surface as
-    modules.ai_bridge.provider_manager.ProviderManager, so
+    modules.ai_bridge.providers.experimental.provider_manager.ProviderManager, so
     modules.ai_bridge.intent_classifier.classify() and core/voice/ai_router.py
     can use either one interchangeably. Also exposes `stream_prompt`, which
     ai_router uses (when the caller supports it) to speak the reply sentence
@@ -134,6 +135,61 @@ class LocalEngineAdapter:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         threading.Thread(target=_produce, daemon=True, name="local-model-stream").start()
+
+        while True:
+            item = await queue.get()
+            if item is None:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+
+
+    @property
+    def tier(self) -> str:
+        return self._tier
+
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        json_schema: dict[str, Any] | None = None,
+        max_tokens: int = 512,
+    ) -> str:
+        _touch()
+        return await asyncio.to_thread(self._chat, messages, json_schema, max_tokens)
+
+    def _chat(self, messages: list[dict[str, str]], json_schema: dict[str, Any] | None, max_tokens: int) -> str:
+        self._ensure_loaded()
+        try:
+            return self._engine.chat(messages, json_schema=json_schema, max_tokens=max_tokens)
+        except RuntimeError:
+            self._ensure_loaded()
+            return self._engine.chat(messages, json_schema=json_schema, max_tokens=max_tokens)
+
+    async def chat_stream(self, messages: list[dict[str, str]], *, max_tokens: int = 512) -> AsyncIterator[str]:
+        _touch()
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[str | BaseException | None] = asyncio.Queue()
+
+        def _deltas() -> Iterator[str]:
+            self._ensure_loaded()
+            try:
+                yield from self._engine.chat_stream(messages, max_tokens=max_tokens)
+            except RuntimeError:
+                self._ensure_loaded()
+                yield from self._engine.chat_stream(messages, max_tokens=max_tokens)
+
+        def _produce() -> None:
+            try:
+                for delta in _deltas():
+                    loop.call_soon_threadsafe(queue.put_nowait, delta)
+            except BaseException as exc:  # noqa: BLE001
+                loop.call_soon_threadsafe(queue.put_nowait, exc)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        threading.Thread(target=_produce, daemon=True, name="local-model-chat-stream").start()
 
         while True:
             item = await queue.get()

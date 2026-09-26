@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from collections.abc import Iterator
+from typing import Any
 
 import httpx
 
@@ -142,6 +143,55 @@ class LocalInferenceEngine:
                         yield delta
                     if payload.get("done"):
                         break
+
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        json_schema: dict[str, Any] | None = None,
+        max_tokens: int = _DEFAULT_MAX_TOKENS,
+    ) -> str:
+        model_name = self._require_model_name()
+        payload: dict[str, Any] = {
+            "model": model_name,
+            "messages": messages,
+            "stream": False,
+            "options": {"num_ctx": _DEFAULT_CONTEXT_SIZE, "num_predict": max_tokens},
+        }
+        if json_schema is not None:
+            payload["format"] = json_schema
+        response = httpx.post(f"{self._base_url}/api/chat", json=payload, timeout=_REQUEST_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        return response.json()["message"]["content"].strip()
+
+    def chat_stream(self, messages: list[dict[str, str]], *, max_tokens: int = _DEFAULT_MAX_TOKENS) -> Iterator[str]:
+        model_name = self._require_model_name()
+        with httpx.Client(timeout=_REQUEST_TIMEOUT_SECONDS) as client:
+            with client.stream(
+                "POST",
+                f"{self._base_url}/api/chat",
+                json={
+                    "model": model_name,
+                    "messages": messages,
+                    "stream": True,
+                    "options": {"num_ctx": _DEFAULT_CONTEXT_SIZE, "num_predict": max_tokens},
+                },
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    payload = json.loads(line)
+                    delta = payload.get("message", {}).get("content")
+                    if delta:
+                        yield delta
+                    if payload.get("done"):
+                        break
+
+    def installed_models(self) -> set[str]:
+        response = httpx.get(f"{self._base_url}/api/tags", timeout=_REQUEST_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        return {entry.get("name") for entry in response.json().get("models", [])}
 
     def unload(self) -> None:
         with self._lock:

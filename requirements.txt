@@ -139,9 +139,13 @@ google-auth-oauthlib>=1.4.0
 # detected/blocked by some providers, see providers/base.py); without Xvfb
 # on PATH it silently falls back to a real, visible browser window instead.
 playwright>=1.44
-# modules/ai_bridge/api_providers.py: async HTTP client for the optional
-# free-tier Groq API adapter (only used when GROQ_API_KEY is set)
 httpx>=0.27
+
+# --- modules/ai_bridge/providers (Provider Layer: official SDKs, user's own keys) ---
+anthropic>=1.8
+openai>=3.19
+google-genai>=2.25
+pyyaml>=6.0
 
 # --- modules/calendar, modules/cmd_executor (implemented, stdlib + OS-native calls only) ---
 # Linux desktop notifications additionally require: sudo apt-get install libnotify-bin

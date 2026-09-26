@@ -28,8 +28,7 @@ def _reset_hint_state():
 
 @pytest.fixture(autouse=True)
 def _no_ai_keys_by_default(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(fitness_chat, "get_gemini_adapter", lambda: None)
-    monkeypatch.setattr(fitness_chat, "get_claude_adapter", lambda: None)
+    monkeypatch.setattr(fitness_chat, "has_cloud_api_key", lambda: False)
 
 
 # --- build_context_summary ---------------------------------------------------
@@ -159,7 +158,7 @@ async def test_answer_question_appends_the_api_key_hint_once(monkeypatch: pytest
 
 
 async def test_answer_question_omits_hint_when_a_key_is_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(fitness_chat, "get_gemini_adapter", lambda: object())
+    monkeypatch.setattr(fitness_chat, "has_cloud_api_key", lambda: True)
     monkeypatch.setattr(fitness_chat, "candidate_chain", lambda text: [_FakeAdapter("a", reply="Ответ.")])
     monkeypatch.setattr(fitness_chat, "build_context_summary", lambda: None)
 

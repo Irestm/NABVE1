@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from core.ai_adapter_chain import candidate_chain
+from core.ai_adapter_chain import candidate_chain, has_cloud_api_key
 from core.logger import get_logger
 from core.voice.fact_extraction import extract_facts
-from modules.ai_bridge.api_providers import get_claude_adapter, get_gemini_adapter
 from modules.fitness_tracker import announce, service_layer
 from modules.fitness_tracker.ethics_prompt import compose_fitness_prompt
 from modules.user_profile import service_layer as profile_service_layer
@@ -37,7 +36,7 @@ def _maybe_api_key_hint(language: str) -> str | None:
     global _hint_shown
     if _hint_shown:
         return None
-    if get_gemini_adapter() is not None or get_claude_adapter() is not None:
+    if has_cloud_api_key():
         return None
     _hint_shown = True
     return announce.api_key_hint_text(language)

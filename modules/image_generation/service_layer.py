@@ -6,7 +6,7 @@ from pathlib import Path
 from core.config import GENERATED_IMAGES_DIR
 from core.logger import get_logger
 from core.secret_store import get_secret
-from modules.ai_bridge.api_providers import GEMINI_API_KEY_SECRET_NAME
+from modules.ai_bridge.providers.keys import GEMINI_API_KEY_SECRET_NAME
 from modules.image_generation import api_client, browser_fallback
 from modules.image_generation.domain import GeneratedImage
 from modules.image_generation.uow import ImageGenerationUnitOfWork

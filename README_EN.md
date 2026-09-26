@@ -21,7 +21,9 @@ A local, single-user voice assistant ("Jarvis"): a FastAPI backend + an Electron
 ### Local model + cloud
 If the machine has an NVIDIA GPU (4GB+ VRAM), a **local model** (Qwen2.5, via a local [Ollama](https://ollama.com) server) is loaded and used for simple requests — fast, private, no internet required. It's unloaded from VRAM after 5 minutes of idling and reloaded on demand.
 
-For complex requests (needing fresh/live information) or when the local model is unavailable or unsure, a chain of cloud providers is used instead, driven through a real, automated browser: **Gemini → ChatGPT → DeepSeek → Grok**, switching automatically when one hits its daily limit.
+All AI requests go through a single provider router (`modules/ai_bridge/providers`): a local Ollama model plus official APIs with your own keys (Claude, OpenAI, Gemini, DeepSeek, Groq). The fallback order and which providers are enabled are configured on the "AI providers" page (or in `data/providers.yaml`); when a provider is unavailable, rate-limited or rejects its key, the assistant moves on to the next one.
+
+> ⚠️ **Experimental, use at your own risk:** the browser chain (driving the Gemini/ChatGPT/DeepSeek/Grok web apps through Playwright) is disabled by default and may violate those services' terms of use. Enable it manually on the "AI providers" page.
 
 ### "Open X" — resolving games and apps
 Speech recognition often garbles names ("dead sells" instead of Dead Cells). The assistant scans what's actually installed (shortcuts/`.desktop` entries, Steam libraries), builds a short list of plausible matches, and hands it to the AI to pick from along with a confidence score. Confident — opens it right away; unsure — asks "Did you mean …?" first.

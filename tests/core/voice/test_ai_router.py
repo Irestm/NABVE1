@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-import core.ai_adapter_chain as ai_adapter_chain
 import core.voice.ai_router as ai_router
 from core.voice.ai_router import is_degenerate_answer
 from modules.ai_bridge.intent_classifier import ClassificationResult
+from tests.ai_chain_fakes import use_ai_chain
 
 
 def test_empty_answer_is_degenerate() -> None:
@@ -25,28 +25,13 @@ def test_short_repetition_is_not_degenerate() -> None:
     assert not is_degenerate_answer("очень очень интересный вопрос")
 
 
-def test_candidate_adapters_uses_cloud_only_when_local_unavailable(monkeypatch) -> None:
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: None)
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: "cloud")
-    # Simple-query candidate_chain() prepends the user's own Gemini API key
-    # adapter when one happens to be configured (see _gemini_candidate in
-    # core/ai_adapter_chain.py) - this test is about the local/cloud
-    # fallback shape, not that, so it must not depend on whatever's
-    # actually sitting in this machine's keyring right now.
-    monkeypatch.setattr(ai_adapter_chain.api_providers, "get_gemini_adapter", lambda: None)
-    assert ai_router._candidate_adapters("hello") == ["cloud"]
-
-
-def test_candidate_adapters_tries_local_first_for_simple_query(monkeypatch) -> None:
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: "local")
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: "cloud")
-    monkeypatch.setattr(ai_adapter_chain.api_providers, "get_gemini_adapter", lambda: None)
+def test_candidate_adapters_uses_default_chain_for_simple_query(monkeypatch) -> None:
+    use_ai_chain(monkeypatch, "local", "cloud")
     assert ai_router._candidate_adapters("простой вопрос") == ["local", "cloud"]
 
 
-def test_candidate_adapters_tries_cloud_first_for_complex_query_but_keeps_local(monkeypatch) -> None:
-    monkeypatch.setattr(ai_adapter_chain.local_ai, "get_adapter", lambda: "local")
-    monkeypatch.setattr(ai_adapter_chain, "get_provider_manager", lambda: "cloud")
+def test_candidate_adapters_uses_complex_chain_for_live_data_query(monkeypatch) -> None:
+    use_ai_chain(monkeypatch, "local", "cloud", complex_chain=["cloud", "local"])
     assert ai_router._candidate_adapters("погугли последние новости про AI") == ["cloud", "local"]
 
 

@@ -7,7 +7,8 @@ import core.main as main_module
 from core.config import settings
 from core.main import app
 from core.secret_store import SecretStoreUnavailableError
-from modules.ai_bridge import api_providers
+from modules.ai_bridge.providers import keys as provider_keys
+from modules.ai_bridge.providers.gemini_api import GEMINI_RPD_LIMIT, GeminiApiProvider
 from modules.ai_bridge.quota_tracker import QuotaTracker
 from modules.ai_bridge.state_store import StateStore
 
@@ -37,7 +38,7 @@ def test_get_gemini_status_reports_no_key_by_default() -> None:
     body = response.json()
     assert body["key_configured"] is False
     assert body["requests_used_today"] == 0
-    assert body["daily_limit"] == api_providers.GEMINI_RPD_LIMIT
+    assert body["daily_limit"] == GEMINI_RPD_LIMIT
 
 
 def test_save_gemini_key_reports_key_configured(monkeypatch) -> None:
@@ -49,7 +50,7 @@ def test_save_gemini_key_reports_key_configured(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["key_configured"] is True
-    assert saved[api_providers.GEMINI_API_KEY_SECRET_NAME] == "my-key"
+    assert saved[provider_keys.GEMINI_API_KEY_SECRET_NAME] == "my-key"
 
 
 def test_save_gemini_key_rejects_an_empty_key() -> None:
@@ -79,7 +80,7 @@ def test_delete_gemini_key_reports_key_not_configured(monkeypatch) -> None:
 
 
 def test_gemini_status_reflects_daily_usage(_isolated_quota_tracker: QuotaTracker) -> None:
-    _isolated_quota_tracker.record_daily_request(api_providers.GeminiApiAdapter.name)
+    _isolated_quota_tracker.record_daily_request(GeminiApiProvider.name)
 
     response = client.get("/api/ai_bridge/gemini_api_key", headers=AUTH)
 
@@ -111,7 +112,7 @@ def test_save_claude_key_reports_key_configured(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["key_configured"] is True
-    assert saved[api_providers.CLAUDE_API_KEY_SECRET_NAME] == "my-key"
+    assert saved[provider_keys.CLAUDE_API_KEY_SECRET_NAME] == "my-key"
 
 
 def test_save_claude_key_returns_500_when_secret_store_unavailable(monkeypatch) -> None:

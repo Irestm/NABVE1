@@ -109,7 +109,7 @@ function withTokenParam(url: string): string {
   return `${url}${separator}token=${encodeURIComponent(API_TOKEN)}`;
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+export async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...authHeaders(init?.headers) },
