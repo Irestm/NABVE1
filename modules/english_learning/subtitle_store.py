@@ -16,8 +16,8 @@ def _folder_name(imdb_id: str | None, series_title: str) -> str:
     return f"local_{slug or 'series'}"
 
 
-def subtitle_path(imdb_id: str | None, series_title: str, season: int, episode: int) -> Path:
-    return SUBTITLES_DIR / _folder_name(imdb_id, series_title) / f"S{season:02d}E{episode:02d}.en.srt"
+def subtitle_path(imdb_id: str | None, series_title: str, season: int, episode: int, variant: str = "en") -> Path:
+    return SUBTITLES_DIR / _folder_name(imdb_id, series_title) / f"S{season:02d}E{episode:02d}.{variant}.srt"
 
 
 def cached(imdb_id: str | None, series_title: str, season: int, episode: int) -> Path | None:
@@ -25,8 +25,8 @@ def cached(imdb_id: str | None, series_title: str, season: int, episode: int) ->
     return path if path.exists() and path.stat().st_size > 0 else None
 
 
-def save(imdb_id: str | None, series_title: str, season: int, episode: int, text: str) -> Path:
-    path = subtitle_path(imdb_id, series_title, season, episode)
+def save(imdb_id: str | None, series_title: str, season: int, episode: int, text: str, variant: str = "en") -> Path:
+    path = subtitle_path(imdb_id, series_title, season, episode, variant)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path

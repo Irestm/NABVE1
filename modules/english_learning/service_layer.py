@@ -91,7 +91,8 @@ def import_subtitles(
         ensure_cefr()
     lookup = cefr.load_lookup(uow_factory)
     candidates = select_words(cues, lemmatizer or get_lemmatizer(), lookup)
-    srt_path = subtitle_store.save(imdb_id, series_title, season, episode, srt_text)
+    variant = "ai_guess" if source == "ai_guess" else "en"
+    srt_path = subtitle_store.save(imdb_id, series_title, season, episode, srt_text, variant)
 
     with uow_factory() as uow:
         series = _upsert_series(uow, series_title, imdb_id, tmdb_id)
@@ -144,6 +145,21 @@ def import_srt_file(
         uow_factory=uow_factory,
         ensure_cefr=ensure_cefr,
     )
+
+
+def stored_source(
+    series_title: str,
+    imdb_id: str | None,
+    season: int,
+    episode: int,
+    uow_factory: Callable[[], EnglishUnitOfWork] = EnglishUnitOfWork,
+) -> EpisodeSource | None:
+    with uow_factory() as uow:
+        series = uow.series.find(imdb_id=imdb_id, title=series_title)
+        if series is None or series.id is None:
+            return None
+        stored = uow.episodes.find(series.id, season, episode)
+        return stored.source if stored is not None else None
 
 
 def library(uow_factory: Callable[[], EnglishUnitOfWork] = EnglishUnitOfWork) -> list[SeriesSummary]:

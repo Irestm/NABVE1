@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from typing import Literal
 
-from modules.english_learning import service_layer
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, Field
+
+from core.secret_store import SecretStoreUnavailableError
+from modules.english_learning import credentials, link_import, service_layer
 from modules.english_learning.cefr import CEFRJ_ATTRIBUTION, CefrUnavailableError
 from modules.english_learning.domain import Episode, EpisodeWord
 from modules.english_learning.lemmatizer import LemmatizerUnavailableError
+from modules.english_learning.service_layer import ImportResult
 from modules.english_learning.srt_parser import SrtParseError
 
 router = APIRouter(prefix="/api/english", tags=["english"])
@@ -88,6 +92,16 @@ def _word_model(word: EpisodeWord) -> WordModel:
     )
 
 
+def _import_response(result: ImportResult) -> ImportResponse:
+    return ImportResponse(
+        series=SeriesModel(
+            id=result.series.id or 0, title=result.series.title, imdb_id=result.series.imdb_id, episodes=[]
+        ),
+        episode=_episode_model(result.episode, word_count=len(result.words)),
+        words=[_word_model(word) for word in result.words],
+    )
+
+
 @router.get("/library", response_model=LibraryResponse)
 async def get_library() -> LibraryResponse:
     summaries = await asyncio.to_thread(service_layer.library)
@@ -138,10 +152,116 @@ async def import_srt(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (CefrUnavailableError, LemmatizerUnavailableError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return ImportResponse(
-        series=SeriesModel(
-            id=result.series.id or 0, title=result.series.title, imdb_id=result.series.imdb_id, episodes=[]
+    return _import_response(result)
+
+
+class LinkImportBody(BaseModel):
+    url: str = Field(..., min_length=4, max_length=2048)
+    series_title: str | None = None
+    season: int | None = Field(None, ge=0)
+    episode: int | None = Field(None, ge=0)
+    tmdb_id: int | None = None
+    allow_ai_guess: bool = False
+
+
+class GuessModel(BaseModel):
+    series_title: str | None
+    season: int | None
+    episode: int | None
+    is_youtube: bool
+    page_title: str | None
+
+
+class ShowOptionModel(BaseModel):
+    tmdb_id: int
+    name: str
+    year: int | None
+
+
+class NeedsInputModel(BaseModel):
+    kind: str
+    message: str
+    guess: GuessModel
+    missing: list[str]
+    options: list[ShowOptionModel]
+    alternatives: list[str]
+    problems: list[str]
+
+
+class LinkImportResponse(BaseModel):
+    status: Literal["imported", "needs_input"]
+    imported: ImportResponse | None = None
+    needs_input: NeedsInputModel | None = None
+
+
+class CredentialsStatusModel(BaseModel):
+    tmdb: bool
+    opensubtitles_api_key: bool
+    opensubtitles_account: bool
+
+
+class CredentialsUpdate(BaseModel):
+    tmdb_api_key: str | None = None
+    opensubtitles_api_key: str | None = None
+    opensubtitles_username: str | None = None
+    opensubtitles_password: str | None = None
+
+
+def _needs_input_model(needs: link_import.NeedsInput) -> NeedsInputModel:
+    return NeedsInputModel(
+        kind=needs.kind,
+        message=needs.message,
+        guess=GuessModel(
+            series_title=needs.guess.series_title,
+            season=needs.guess.season,
+            episode=needs.guess.episode,
+            is_youtube=needs.guess.is_youtube,
+            page_title=needs.guess.page_title,
         ),
-        episode=_episode_model(result.episode, word_count=len(result.words)),
-        words=[_word_model(word) for word in result.words],
+        missing=needs.missing,
+        options=[ShowOptionModel(tmdb_id=item.tmdb_id, name=item.name, year=item.year) for item in needs.options],
+        alternatives=needs.alternatives,
+        problems=needs.problems,
     )
+
+
+@router.post("/import", response_model=LinkImportResponse)
+async def import_from_link(body: LinkImportBody) -> LinkImportResponse:
+    request = link_import.LinkImportRequest(**body.model_dump())
+    try:
+        outcome = await link_import.import_from_link(request)
+    except (SrtParseError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (CefrUnavailableError, LemmatizerUnavailableError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if isinstance(outcome, link_import.NeedsInput):
+        return LinkImportResponse(status="needs_input", needs_input=_needs_input_model(outcome))
+    return LinkImportResponse(status="imported", imported=_import_response(outcome))
+
+
+def _credentials_model(status: credentials.CredentialsStatus) -> CredentialsStatusModel:
+    return CredentialsStatusModel(
+        tmdb=status.tmdb,
+        opensubtitles_api_key=status.opensubtitles_api_key,
+        opensubtitles_account=status.opensubtitles_account,
+    )
+
+
+@router.get("/credentials", response_model=CredentialsStatusModel)
+async def get_credentials_status() -> CredentialsStatusModel:
+    return _credentials_model(await asyncio.to_thread(credentials.status))
+
+
+@router.put("/credentials", response_model=CredentialsStatusModel)
+async def put_credentials(update: CredentialsUpdate) -> CredentialsStatusModel:
+    values = {
+        credentials.TMDB_API_KEY: update.tmdb_api_key,
+        credentials.OPENSUBTITLES_API_KEY: update.opensubtitles_api_key,
+        credentials.OPENSUBTITLES_USERNAME: update.opensubtitles_username,
+        credentials.OPENSUBTITLES_PASSWORD: update.opensubtitles_password,
+    }
+    try:
+        status = await asyncio.to_thread(credentials.update, values)
+    except SecretStoreUnavailableError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return _credentials_model(status)
