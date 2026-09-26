@@ -160,7 +160,9 @@ async def import_from_link(request: LinkImportRequest, deps: LinkImportDeps | No
             if isinstance(resolved, list):
                 return NeedsInput(
                     kind="series",
-                    message="Найдено несколько сериалов — выберите нужный." if resolved else "TMDB не нашёл такой сериал.",
+                    message=(
+                        "Найдено несколько сериалов — выберите нужный." if resolved else "TMDB не нашёл такой сериал."
+                    ),
                     guess=guess,
                     options=resolved,
                     alternatives=alternatives,
@@ -202,7 +204,10 @@ async def import_from_link(request: LinkImportRequest, deps: LinkImportDeps | No
         if not request.allow_ai_guess:
             return NeedsInput(
                 kind="subtitles",
-                message="Субтитры не найдены автоматически — загрузите .srt вручную или разрешите примерный вариант от ИИ.",
+                message=(
+                    "Субтитры не найдены автоматически — загрузите .srt вручную "
+                    "или разрешите примерный вариант от ИИ."
+                ),
                 guess=link_parser.merge(guess, series_title=show.title, season=None, episode=None),
                 problems=problems,
             )

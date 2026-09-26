@@ -86,6 +86,20 @@ if (!app.requestSingleInstanceLock()) {
     return result.filePaths[0];
   });
 
+  ipcMain.handle("pick-video", async () => {
+    const options: Electron.OpenDialogOptions = {
+      properties: ["openFile"],
+      filters: [{ name: "Видео", extensions: ["mkv", "mp4", "avi", "mov", "webm", "m4v", "ts", "wmv", "flv"] }],
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+    return result.filePaths[0];
+  });
+
   function confirmQuitDuringActiveRecording(): boolean {
     const options: Electron.MessageBoxSyncOptions = {
       type: "warning",

@@ -13,7 +13,9 @@ _EPISODE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"season[ _/-]?(?P<season>\d{1,2})[ _/,-]*(?:episode|ep)[ _/-]?(?P<episode>\d{1,3})", re.IGNORECASE
     ),
-    re.compile(r"(?P<season>\d{1,2})[ -]?(?:сезон|season)[ ,-]*(?P<episode>\d{1,3})[ -]?(?:серия|episode)", re.IGNORECASE),
+    re.compile(
+        r"(?P<season>\d{1,2})[ -]?(?:сезон|season)[ ,-]*(?P<episode>\d{1,3})[ -]?(?:серия|episode)", re.IGNORECASE
+    ),
     re.compile(r"сезон[ _-]?(?P<season>\d{1,2})[ ,_-]*сери[яи][ _-]?(?P<episode>\d{1,3})", re.IGNORECASE),
 )
 _SEASON_ONLY = re.compile(r"(?:season|сезон)[ _/-]?(?P<season>\d{1,2})", re.IGNORECASE)

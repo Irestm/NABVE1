@@ -273,6 +273,7 @@ export interface AssistantWindowAPI {
   // when this is absent. Used only for the launch_app custom-command
   // form's "Обзор…" button.
   pickExecutablePath?: () => Promise<string | null>;
+  pickVideoPath?: () => Promise<string | null>;
 }
 
 export type MeetingRecordingStatus = "uploading" | "processing" | "ready" | "error";

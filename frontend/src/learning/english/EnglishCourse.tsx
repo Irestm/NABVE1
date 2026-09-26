@@ -11,6 +11,7 @@ import type {
 } from "../../api/english";
 import { EpisodeView } from "./EpisodeView";
 import { LearnView } from "./LearnView";
+import { ListeningView } from "./ListeningView";
 import { LibraryView } from "./LibraryView";
 
 const SETTINGS_STORAGE_KEY = "nabve.english.learnSettings";
@@ -19,7 +20,8 @@ const DEFAULT_SETTINGS: LearnSettings = { shuffle: true, direction: "en_ru", mod
 type View =
   | { kind: "library" }
   | { kind: "episode"; series: EnglishSeries; episode: EnglishEpisode; job: CardJob | null }
-  | { kind: "learn"; series: EnglishSeries; episode: EnglishEpisode; cards: EnglishCard[] };
+  | { kind: "learn"; series: EnglishSeries; episode: EnglishEpisode; cards: EnglishCard[] }
+  | { kind: "listening"; series: EnglishSeries; episode: EnglishEpisode };
 
 function loadSettings(): LearnSettings {
   try {
@@ -74,6 +76,16 @@ export function EnglishCourse(): JSX.Element {
     );
   }
 
+  if (view.kind === "listening") {
+    return (
+      <ListeningView
+        episodeId={view.episode.id}
+        title={`${view.series.title} — ${view.episode.code}`}
+        onExit={() => setView({ kind: "episode", series: view.series, episode: view.episode, job: null })}
+      />
+    );
+  }
+
   if (view.kind === "episode") {
     return (
       <EpisodeView
@@ -91,6 +103,7 @@ export function EnglishCourse(): JSX.Element {
           void refresh();
         }}
         onLearn={(cards) => setView({ kind: "learn", series: view.series, episode: view.episode, cards })}
+        onListening={() => setView({ kind: "listening", series: view.series, episode: view.episode })}
         onChanged={() => void refresh()}
       />
     );

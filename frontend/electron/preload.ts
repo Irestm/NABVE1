@@ -41,4 +41,5 @@ contextBridge.exposeInMainWorld("assistantAPI", {
   // returning (invoke, not send) since the renderer needs the chosen path
   // back, unlike setRecordingActive above.
   pickExecutablePath: () => ipcRenderer.invoke("pick-executable") as Promise<string | null>,
+  pickVideoPath: () => ipcRenderer.invoke("pick-video") as Promise<string | null>,
 });

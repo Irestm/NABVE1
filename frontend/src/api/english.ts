@@ -199,3 +199,40 @@ export function sendAnswer(
 export function finishSession(sessionId: number): Promise<SessionSummary> {
   return requestJson<SessionSummary>(`/api/english/sessions/${sessionId}/finish`, { method: "POST" });
 }
+
+export interface ListeningQuestion {
+  cue_index: number;
+  kind: "who" | "meaning" | "next" | string;
+  question: string;
+  options: string[];
+  correct_index: number;
+  start_ms: number;
+  end_ms: number;
+  line: string;
+}
+
+export interface ListeningQuiz {
+  episode_id: number;
+  video_name: string;
+  questions: ListeningQuestion[];
+}
+
+export interface ListeningClip {
+  audio_base64: string;
+  mime: string;
+}
+
+export function getListeningQuiz(episodeId: number): Promise<ListeningQuiz> {
+  return requestJson<ListeningQuiz>(`/api/english/episodes/${episodeId}/listening`);
+}
+
+export function createListeningQuiz(episodeId: number, videoPath: string): Promise<ListeningQuiz> {
+  return requestJson<ListeningQuiz>(`/api/english/episodes/${episodeId}/listening`, {
+    method: "POST",
+    body: JSON.stringify({ video_path: videoPath }),
+  });
+}
+
+export function getListeningClip(episodeId: number, cueIndex: number): Promise<ListeningClip> {
+  return requestJson<ListeningClip>(`/api/english/episodes/${episodeId}/listening/clips/${cueIndex}`);
+}

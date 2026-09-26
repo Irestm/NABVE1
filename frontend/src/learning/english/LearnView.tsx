@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, RotateCcw, X } from "lucide-react";
+import { ArrowLeft, Check, Mic, RotateCcw, Volume2, X } from "lucide-react";
 import { finishSession, sendAnswer, startSession } from "../../api/english";
 import type { AnswerResult, EnglishCard, LearnSettings, SessionSummary } from "../../api/english";
 import { answerText, applyAnswer, buildOptions, initialState, promptText } from "./learnQueue";
 import type { LearnState } from "./learnQueue";
+import { useOneShotVoiceInput } from "../../hooks/useOneShotVoiceInput";
+import { speakEnglish } from "./audio";
 
 interface LearnViewProps {
   episodeId: number;
@@ -114,6 +116,20 @@ export function LearnView({ episodeId, title, cards, settings, onExit }: LearnVi
     return () => window.removeEventListener("keydown", onKey);
   }, [current?.stage, feedback, options, proceed, submit]);
 
+  const voice = useOneShotVoiceInput(
+    (text) => {
+      setTyped(text);
+      void submit(text);
+    },
+    settings.direction === "en_ru" ? "ru" : "en",
+  );
+
+  function sayWord(target: EnglishCard): void {
+    speakEnglish(target.word).catch((err: unknown) =>
+      setError(err instanceof Error ? err.message : "Не удалось озвучить слово."),
+    );
+  }
+
   const progress = state.totalPoints === 0 ? 0 : Math.round((state.points / state.totalPoints) * 100);
 
   if (summary) {
@@ -171,7 +187,7 @@ export function LearnView({ episodeId, title, cards, settings, onExit }: LearnVi
         <div className="ql-progress__fill" style={{ width: `${progress}%` }} />
       </div>
 
-      {error && <p className="ql-error">{error}</p>}
+      {(error || voice.error) && <p className="ql-error">{error || voice.error}</p>}
 
       {card && current && (
         <section
@@ -181,9 +197,22 @@ export function LearnView({ episodeId, title, cards, settings, onExit }: LearnVi
             <span className="ql-muted">{settings.direction === "en_ru" ? "Термин" : "Определение"}</span>
             {current.stage === "input" && <span className="ql-chip">Напишите ответ</span>}
           </div>
-          <p className="ql-question__prompt" lang={settings.direction === "en_ru" ? "en" : "ru"}>
-            {promptText(card, settings.direction)}
-          </p>
+          <div className="ql-prompt-row">
+            <p className="ql-question__prompt" lang={settings.direction === "en_ru" ? "en" : "ru"}>
+              {promptText(card, settings.direction)}
+            </p>
+            {(settings.direction === "en_ru" || feedback) && (
+              <button
+                type="button"
+                className="ql-icon-button ql-voice-button"
+                onClick={() => sayWord(card)}
+                aria-label={`Произнести «${card.word}»`}
+                title="Произнести по-английски"
+              >
+                <Volume2 size={20} />
+              </button>
+            )}
+          </div>
           {settings.direction === "en_ru" && <p className="ql-question__example">«{card.example}»</p>}
 
           {feedback ? (
@@ -244,6 +273,16 @@ export function LearnView({ episodeId, title, cards, settings, onExit }: LearnVi
                 spellCheck={false}
                 disabled={busy || sessionId === null}
               />
+              <button
+                type="button"
+                className={`ql-icon-button ql-voice-button${voice.recording ? " ql-voice-button--recording" : ""}`}
+                onClick={voice.start}
+                disabled={busy || voice.recording || sessionId === null}
+                aria-label="Ответить голосом"
+                title="Ответить голосом"
+              >
+                <Mic size={20} />
+              </button>
               <button type="button" className="ql-button ql-button--ghost" onClick={() => void submit("")} disabled={busy}>
                 Не знаю
               </button>

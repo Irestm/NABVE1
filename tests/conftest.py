@@ -42,8 +42,9 @@ def _isolate_providers_config(
 def _isolate_english_learning_storage(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from modules.english_learning import subtitle_store, uow
+    from modules.english_learning import listening, subtitle_store, uow
 
     root = tmp_path_factory.mktemp("english_learning")
     monkeypatch.setattr(uow, "ENGLISH_DB_PATH", root / "english_learning.db")
     monkeypatch.setattr(subtitle_store, "SUBTITLES_DIR", root / "subtitles")
+    monkeypatch.setattr(listening, "CLIPS_DIR", root / "listening")

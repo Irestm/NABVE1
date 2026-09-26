@@ -76,6 +76,14 @@ MIGRATIONS: tuple[str, ...] = (
     CREATE INDEX english_cards_episode ON english_cards(episode_id);
     CREATE INDEX english_review_card ON english_review_log(card_id);
     """,
+    """
+    CREATE TABLE english_listening_quizzes (
+        episode_id INTEGER PRIMARY KEY REFERENCES english_episodes(id) ON DELETE CASCADE,
+        video_path TEXT NOT NULL,
+        questions TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    """,
 )
 
 

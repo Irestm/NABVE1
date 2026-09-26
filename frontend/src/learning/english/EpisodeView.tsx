@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, GraduationCap, Settings2, Sparkles, Trash2, TriangleAlert } from "lucide-react";
+import { ArrowLeft, GraduationCap, Headphones, Settings2, Sparkles, Trash2, TriangleAlert } from "lucide-react";
 import { deleteCard, getEpisodeCards, getJob, startCardGeneration } from "../../api/english";
 import type { CardJob, EnglishCard, EnglishEpisode, LearnSettings } from "../../api/english";
 import { LearnSettingsDialog } from "./LearnSettingsDialog";
@@ -14,6 +14,7 @@ interface EpisodeViewProps {
   onSettingsChange: (settings: LearnSettings) => void;
   onBack: () => void;
   onLearn: (cards: EnglishCard[]) => void;
+  onListening: () => void;
   onChanged: () => void;
 }
 
@@ -34,6 +35,7 @@ export function EpisodeView({
   onSettingsChange,
   onBack,
   onLearn,
+  onListening,
   onChanged,
 }: EpisodeViewProps): JSX.Element {
   const [cards, setCards] = useState<EnglishCard[] | null>(null);
@@ -125,9 +127,16 @@ export function EpisodeView({
         >
           <GraduationCap size={20} /> Заучивание
         </button>
-        <button type="button" className="ql-button ql-button--ghost" onClick={() => setSettingsOpen(true)}>
-          <Settings2 size={18} /> Настройки
-        </button>
+        <div className="ql-row">
+          {episode.source !== "ai_guess" && (
+            <button type="button" className="ql-button ql-button--ghost" onClick={onListening}>
+              <Headphones size={18} /> Аудирование
+            </button>
+          )}
+          <button type="button" className="ql-button ql-button--ghost" onClick={() => setSettingsOpen(true)}>
+            <Settings2 size={18} /> Настройки
+          </button>
+        </div>
       </div>
 
       {running && job && (

@@ -112,7 +112,9 @@ class OpenSubtitlesClient:
                         release=str(attributes.get("release") or ""),
                         download_count=int(attributes.get("download_count") or 0),
                         hearing_impaired=bool(attributes.get("hearing_impaired")),
-                        machine_translated=bool(attributes.get("machine_translated") or attributes.get("ai_translated")),
+                        machine_translated=bool(
+                            attributes.get("machine_translated") or attributes.get("ai_translated")
+                        ),
                     )
                 )
         return files

@@ -40,7 +40,9 @@ _GUESS_MAX_TOKENS = 4000
 _LINK_MAX_TOKENS = 300
 
 
-async def _complete(router: ProviderRouter | None, messages: list[ChatMessage], schema: dict[str, Any], max_tokens: int) -> AIResult:
+async def _complete(
+    router: ProviderRouter | None, messages: list[ChatMessage], schema: dict[str, Any], max_tokens: int
+) -> AIResult:
     return await (router or get_router()).complete(messages, json_schema=schema, max_tokens=max_tokens)
 
 

@@ -68,3 +68,5 @@ CLAUDE.md
 data/providers.yaml
 # English Learning subtitle cache (modules/english_learning/subtitle_store.py)
 data/subtitles/
+# English Learning listening clips (modules/english_learning/listening.py)
+data/listening/

@@ -163,7 +163,9 @@ class ProviderRouter:
             failures.append((provider.name, reason))
             next_name = providers[index + 1].name if index + 1 < len(providers) else None
             if next_name is None:
-                logger.warning("Provider '%s' failed (%s); no providers left in '%s' chain", provider.name, reason, kind)
+                logger.warning(
+                    "Provider '%s' failed (%s); no providers left in '%s' chain", provider.name, reason, kind
+                )
             else:
                 logger.warning("Provider '%s' failed (%s); switching to '%s'", provider.name, reason, next_name)
         raise AllProvidersFailed(failures)
@@ -182,7 +184,9 @@ class ProviderRouter:
         try:
             health = await asyncio.wait_for(provider.health(), timeout=_HEALTH_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
-            return ProviderHealth(name, "unavailable", "проверка не уложилась в таймаут", experimental=provider.experimental)
+            return ProviderHealth(
+                name, "unavailable", "проверка не уложилась в таймаут", experimental=provider.experimental
+            )
         except Exception as exc:
             logger.exception("Health check for provider '%s' failed", name)
             return ProviderHealth(name, "unavailable", str(exc), experimental=provider.experimental)

@@ -208,7 +208,9 @@ def library(uow_factory: Callable[[], EnglishUnitOfWork] = EnglishUnitOfWork) ->
         return result
 
 
-def episode_words(episode_id: int, uow_factory: Callable[[], EnglishUnitOfWork] = EnglishUnitOfWork) -> list[EpisodeWord]:
+def episode_words(
+    episode_id: int, uow_factory: Callable[[], EnglishUnitOfWork] = EnglishUnitOfWork
+) -> list[EpisodeWord]:
     with uow_factory() as uow:
         if uow.episodes.get(episode_id) is None:
             raise LookupError(f"Эпизод {episode_id} не найден")

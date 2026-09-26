@@ -8,7 +8,8 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from core.secret_store import SecretStoreUnavailableError
-from modules.english_learning import credentials, learn, link_import, service_layer
+from modules.english_learning import credentials, learn, link_import, listening, service_layer
+from modules.ai_bridge.providers.base import AllProvidersFailed
 from modules.english_learning.cefr import CEFRJ_ATTRIBUTION, CefrUnavailableError
 from modules.english_learning.domain import Card, Episode, EpisodeWord
 from modules.english_learning.jobs import CardJob, card_jobs
@@ -444,3 +445,81 @@ async def finish_session(session_id: int) -> SummaryModel:
         mistakes=summary.mistakes,
         hard_words=[HardWordModel(card=_card_model(item.card), mistakes=item.mistakes) for item in summary.hard_words],
     )
+
+
+class ListeningStartBody(BaseModel):
+    video_path: str = Field(..., min_length=1, max_length=4096)
+
+
+class ListeningQuestionModel(BaseModel):
+    cue_index: int
+    kind: str
+    question: str
+    options: list[str]
+    correct_index: int
+    start_ms: int
+    end_ms: int
+    line: str
+
+
+class ListeningQuizModel(BaseModel):
+    episode_id: int
+    video_name: str
+    questions: list[ListeningQuestionModel]
+
+
+class ClipModel(BaseModel):
+    audio_base64: str
+    mime: str
+
+
+def _quiz_model(quiz: listening.ListeningQuiz) -> ListeningQuizModel:
+    return ListeningQuizModel(
+        episode_id=quiz.episode_id,
+        video_name=quiz.video_path.rsplit("/", 1)[-1],
+        questions=[
+            ListeningQuestionModel(
+                cue_index=question.cue_index,
+                kind=question.kind,
+                question=question.question,
+                options=question.options,
+                correct_index=question.correct_index,
+                start_ms=question.start_ms,
+                end_ms=question.end_ms,
+                line=question.line,
+            )
+            for question in quiz.questions
+        ],
+    )
+
+
+@router.post("/episodes/{episode_id}/listening", response_model=ListeningQuizModel)
+async def create_listening_quiz(episode_id: int, body: ListeningStartBody) -> ListeningQuizModel:
+    try:
+        quiz = await listening.build_quiz(episode_id, body.video_path)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except listening.ListeningError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except AllProvidersFailed as exc:
+        raise HTTPException(status_code=503, detail=f"Ни один ИИ-провайдер не ответил: {exc}") from exc
+    return _quiz_model(quiz)
+
+
+@router.get("/episodes/{episode_id}/listening", response_model=ListeningQuizModel)
+async def get_listening_quiz(episode_id: int) -> ListeningQuizModel:
+    quiz = await asyncio.to_thread(listening.load_quiz, episode_id)
+    if quiz is None:
+        raise HTTPException(status_code=404, detail="Квиз ещё не создан")
+    return _quiz_model(quiz)
+
+
+@router.get("/episodes/{episode_id}/listening/clips/{cue_index}", response_model=ClipModel)
+async def get_listening_clip(episode_id: int, cue_index: int) -> ClipModel:
+    try:
+        audio = await asyncio.to_thread(listening.extract_clip, episode_id, cue_index)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except listening.ListeningError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ClipModel(audio_base64=audio, mime="audio/mp4")

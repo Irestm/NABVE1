@@ -223,7 +223,9 @@ class CardRepository(AbstractRepository[Card, int]):
         return _row_to_card(row) if row is not None else None
 
     def list_for_episode(self, episode_id: int) -> list[Card]:
-        rows = self._conn.execute("SELECT * FROM english_cards WHERE episode_id = ? ORDER BY id", (episode_id,)).fetchall()
+        rows = self._conn.execute(
+            "SELECT * FROM english_cards WHERE episode_id = ? ORDER BY id", (episode_id,)
+        ).fetchall()
         return [_row_to_card(row) for row in rows]
 
     def count_for_episode(self, episode_id: int) -> int:
@@ -310,3 +312,23 @@ class ReviewRepository:
             (session_id,),
         ).fetchall()
         return {row["card_id"]: row["wrong"] for row in rows}
+
+
+class ListeningRepository:
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._conn = connection
+
+    def save(self, episode_id: int, video_path: str, questions: list[dict[str, object]]) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO english_listening_quizzes (episode_id, video_path, questions, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (episode_id, video_path, json.dumps(questions, ensure_ascii=False), datetime.now().isoformat()),
+        )
+
+    def get(self, episode_id: int) -> tuple[str, list[dict[str, object]]] | None:
+        row = self._conn.execute(
+            "SELECT video_path, questions FROM english_listening_quizzes WHERE episode_id = ?", (episode_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return row["video_path"], list(json.loads(row["questions"]))

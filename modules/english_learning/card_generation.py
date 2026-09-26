@@ -65,7 +65,9 @@ def _default_complete(messages: list[ChatMessage], schema: dict[str, Any], max_t
 
 
 def _batch_prompt(words: list[EpisodeWord]) -> str:
-    lines = [f"- lemma: {word.lemma} | pos: {word.pos} | seen as: {word.surface} | line: {word.example}" for word in words]
+    lines = [
+        f"- lemma: {word.lemma} | pos: {word.pos} | seen as: {word.surface} | line: {word.example}" for word in words
+    ]
     return "Words:\n" + "\n".join(lines)
 
 

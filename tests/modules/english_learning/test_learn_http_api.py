@@ -50,3 +50,14 @@ def test_learn_session_errors() -> None:
     assert client.post("/api/english/episodes/999/sessions", json={}, headers=AUTH).status_code == 404
     assert client.post("/api/english/episodes/1/sessions", json={"mode": "speed"}, headers=AUTH).status_code == 422
     assert client.post("/api/english/sessions/999/finish", headers=AUTH).status_code == 404
+
+
+def test_listening_endpoints_errors(tmp_path: object) -> None:
+    episode_id, _ = _seed()
+
+    assert client.get(f"/api/english/episodes/{episode_id}/listening", headers=AUTH).status_code == 404
+    created = client.post(
+        f"/api/english/episodes/{episode_id}/listening", json={"video_path": "/nope/video.mp4"}, headers=AUTH
+    )
+    assert created.status_code == 422
+    assert client.get(f"/api/english/episodes/{episode_id}/listening/clips/1", headers=AUTH).status_code == 404

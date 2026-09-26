@@ -74,7 +74,9 @@ def _merge(base: ProvidersConfig, override: dict[str, Any]) -> ProvidersConfig:
     if isinstance(raw_models, dict):
         models.update({str(name): str(model) for name, model in raw_models.items() if model})
     connection = override.get("claude_connection", base.claude_connection)
-    claude_connection = cast(ClaudeConnection, connection) if connection in CLAUDE_CONNECTIONS else base.claude_connection
+    claude_connection = (
+        cast(ClaudeConnection, connection) if connection in CLAUDE_CONNECTIONS else base.claude_connection
+    )
     return ProvidersConfig(chains=chains, enabled=enabled, models=models, claude_connection=claude_connection)
 
 
