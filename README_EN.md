@@ -42,6 +42,54 @@ What to call you, what to call itself, communication style (polite / down-to-ear
 
 ---
 
+## Connecting AI
+
+NABVE works with a local model (Ollama) and with cloud providers using your own
+keys. Order and enabled providers are configured on the **"AI providers"**
+page. The Claude integration — **NABVE — Powered by Claude** — is used with
+Anthropic's permission under the conditions in
+[docs/ANTHROPIC_APPROVAL.md](docs/ANTHROPIC_APPROVAL.md).
+
+### Claude: two ways to connect
+
+**1. Claude subscription (through your own Claude CLI)**
+
+1. Install the Claude CLI following the official guide: <https://code.claude.com/docs/en/setup>
+   (Linux/macOS: `curl -fsSL https://claude.ai/install.sh | bash`).
+2. Run `claude` in a terminal and sign in with your Claude account.
+3. In NABVE: "AI providers" → Claude → **"Subscription"** → "Check".
+
+NABVE only launches your CLI (`claude -p … --output-format json`) and never
+reads, stores or transmits your tokens or login credentials.
+
+**2. Anthropic API key**
+
+1. Sign up at <https://console.anthropic.com> and add credits (pay as you go).
+2. Under **API Keys** click **Create Key** and copy the key.
+3. In NABVE: "AI providers" → Claude → **"API key"** → paste → "Save". The key
+   is stored only in your computer's system secret store (or set the
+   `ANTHROPIC_API_KEY` environment variable).
+
+### Other providers (your own key)
+
+| Provider | Where to get a key |
+|---|---|
+| Gemini (free tier available) | <https://aistudio.google.com> → Get API key |
+| OpenAI | <https://platform.openai.com/api-keys> |
+| DeepSeek | <https://platform.deepseek.com> → API keys |
+| Groq (fast free tier) | <https://console.groq.com> → API Keys |
+| Ollama (local, no key) | <https://ollama.com/download> — installed by the auto-installer |
+
+### Terms of use
+
+- The project is licensed **for non-commercial use only** and must remain free
+  — see [LICENSE](LICENSE).
+- Claude must not be used for anything that breaks the law of your country or
+  violates Anthropic's [Usage Policy](https://www.anthropic.com/legal/aup) and
+  [Consumer Terms](https://www.anthropic.com/legal/consumer-terms).
+- Separate microservices unrelated to Anthropic's products (e.g. a VPN) may be
+  distributed under other terms.
+
 ## Voice commands
 
 | Say this | What happens |

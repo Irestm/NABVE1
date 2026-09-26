@@ -1,11 +1,34 @@
-All Rights Reserved
+NABVE Non-Commercial License
 
 Copyright (c) 2026 Daniil
 
-This source code is made publicly available for viewing purposes only.
+1. Permission. Any person obtaining a copy of this software and associated
+   documentation files (the "Software") is granted, free of charge, the right
+   to use, copy, modify, merge and distribute the Software, in whole or in
+   part, for non-commercial purposes only, subject to the conditions below.
 
-No permission is granted to any person to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of this software,
-or to permit persons to whom the software is furnished to do so, in
-whole or in part, without prior written consent from the copyright
-holder.
+2. Non-commercial. The Software, and any work derived from it, may not be
+   sold, licensed for a fee, offered as a paid service, or otherwise used
+   for commercial advantage or monetary compensation. The Software must
+   remain freely available.
+
+3. Separate services. Stand-alone add-on services distributed separately
+   from the Software (for example a VPN microservice) that do not relate to
+   Anthropic's commercial products are not covered by section 2 and may be
+   licensed by the copyright holder on other terms, including commercially.
+
+4. Third-party AI services. Use of Claude or any other third-party AI
+   service through the Software is subject to that provider's own terms.
+   Claude must not be used through the Software for any activity that
+   violates the law of the user's jurisdiction or Anthropic's Usage Policy
+   (https://www.anthropic.com/legal/aup). See docs/ANTHROPIC_APPROVAL.md.
+
+5. Notice. The above copyright notice and this license shall be included in
+   all copies or substantial portions of the Software.
+
+6. No warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+   KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+   NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS
+   USE.

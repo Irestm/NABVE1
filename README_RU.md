@@ -42,6 +42,55 @@ GitHub: https://github.com/Irestm/NABVE1
 
 ---
 
+## Подключение ИИ
+
+NABVE работает с локальной моделью (Ollama) и с облачными провайдерами по вашим
+собственным ключам. Порядок и включённые провайдеры настраиваются на странице
+**«Провайдеры ИИ»**. Интеграция с Claude — **NABVE — Powered by Claude** —
+используется с разрешения Anthropic на условиях из
+[docs/ANTHROPIC_APPROVAL.md](docs/ANTHROPIC_APPROVAL.md).
+
+### Claude: два способа подключения
+
+**1. Подписка Claude (через свой Claude CLI)**
+
+1. Установите Claude CLI по официальной инструкции: <https://code.claude.com/docs/en/setup>
+   (Linux/macOS: `curl -fsSL https://claude.ai/install.sh | bash`).
+2. Выполните в терминале `claude` и войдите своим аккаунтом Claude.
+3. В NABVE: «Провайдеры ИИ» → Claude → **«Подписка»** → «Проверить».
+
+NABVE просто запускает ваш CLI (`claude -p … --output-format json`) и никогда
+не читает, не хранит и не передаёт ваши токены или данные входа.
+
+**2. API-ключ Anthropic**
+
+1. Зарегистрируйтесь на <https://console.anthropic.com> и пополните баланс
+   (оплата по использованию).
+2. В разделе **API Keys** нажмите **Create Key** и скопируйте ключ.
+3. В NABVE: «Провайдеры ИИ» → Claude → **«API-ключ»** → вставьте ключ →
+   «Сохранить». Ключ хранится только в системном хранилище секретов вашего
+   компьютера (либо задайте переменную окружения `ANTHROPIC_API_KEY`).
+
+### Другие провайдеры (свой ключ)
+
+| Провайдер | Где взять ключ |
+|---|---|
+| Gemini (есть бесплатный тариф) | <https://aistudio.google.com> → Get API key |
+| OpenAI | <https://platform.openai.com/api-keys> |
+| DeepSeek | <https://platform.deepseek.com> → API keys |
+| Groq (быстрый бесплатный тариф) | <https://console.groq.com> → API Keys |
+| Ollama (локально, без ключа) | <https://ollama.com/download> — ставится автоустановщиком |
+
+### Условия использования
+
+- Проект распространяется **только для некоммерческого использования** и должен
+  оставаться бесплатным — см. [LICENSE](LICENSE).
+- Claude нельзя использовать для действий, нарушающих закон вашей страны, и в
+  нарушение [Usage Policy Anthropic](https://www.anthropic.com/legal/aup) и
+  [Consumer Terms](https://www.anthropic.com/legal/consumer-terms).
+- Отдельные микросервисы, не относящиеся к продуктам Anthropic (например,
+  VPN), могут распространяться на других условиях.
+
 ## Голосовые команды
 
 | Что сказать | Что произойдёт |

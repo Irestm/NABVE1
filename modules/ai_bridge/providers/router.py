@@ -6,6 +6,7 @@ from typing import Any, cast
 
 from core.logger import get_logger
 from modules.ai_bridge.providers.anthropic_api import AnthropicApiProvider
+from modules.ai_bridge.providers.anthropic_subscription import AnthropicSubscriptionProvider
 from modules.ai_bridge.providers.base import (
     AIProvider,
     AIResult,
@@ -42,6 +43,7 @@ def _with_model(provider_class: Callable[..., AIProvider]) -> ProviderFactory:
 
 PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "ollama": lambda model: OllamaProvider(),
+    "anthropic_subscription": lambda model: AnthropicSubscriptionProvider(model),
     "anthropic_api": _with_model(AnthropicApiProvider),
     "openai_api": _with_model(OpenAIApiProvider),
     "gemini_api": _with_model(GeminiApiProvider),

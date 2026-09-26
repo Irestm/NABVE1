@@ -100,6 +100,8 @@ const CHAIN_LABELS: Record<ChainKind, string> = {
 };
 
 const CLAUDE_PROVIDERS = new Set(["anthropic_api", "anthropic_subscription"]);
+const CLAUDE_CLI_SETUP_URL = "https://code.claude.com/docs/en/setup";
+const ANTHROPIC_USAGE_POLICY_URL = "https://www.anthropic.com/legal/aup";
 
 function titleOf(name: string): string {
   return PROVIDER_META[name]?.title ?? name;
@@ -368,11 +370,34 @@ export function ProvidersPanel(): JSX.Element {
           </button>
         </div>
         {!overview.subscription_available && (
-          <p className="status-detail">Подключение через подписку появится в следующем обновлении.</p>
+          <p className="status-detail">Подключение через подписку недоступно в этой сборке.</p>
         )}
         {overview.claude_connection === "subscription" && overview.subscription_available && (
-          <p className="status-detail">{PROVIDER_META.anthropic_subscription.description}</p>
+          <div className="providers__subscription">
+            <p className="status-detail">{PROVIDER_META.anthropic_subscription?.description}</p>
+            <ol className="providers__steps">
+              <li>
+                Установите Claude CLI по официальной инструкции:{" "}
+                <a href={CLAUDE_CLI_SETUP_URL} target="_blank" rel="noreferrer">
+                  {CLAUDE_CLI_SETUP_URL}
+                </a>{" "}
+                (Linux/macOS: <code>curl -fsSL https://claude.ai/install.sh | bash</code>).
+              </li>
+              <li>
+                В терминале выполните <code>claude</code> и войдите своим аккаунтом Claude — вход происходит только в
+                CLI, NABVE не видит и не хранит ваши данные входа.
+              </li>
+              <li>Нажмите «Проверить» — статус должен стать «работает».</li>
+            </ol>
+          </div>
         )}
+        <p className="status-detail providers__terms">
+          Только некоммерческое использование. Нельзя применять Claude для действий, нарушающих закон, — см.{" "}
+          <a href={ANTHROPIC_USAGE_POLICY_URL} target="_blank" rel="noreferrer">
+            Usage Policy Anthropic
+          </a>
+          .
+        </p>
         {overview.claude_connection === "api_key" && claudeApi && (
           <ProviderRow
             provider={claudeApi}
