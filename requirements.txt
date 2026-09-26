@@ -147,6 +147,10 @@ openai>=3.19
 google-genai>=2.25
 pyyaml>=6.0
 
+# --- modules/english_learning (lemmatization for subtitle word selection) ---
+# one-time model download: python -m spacy download en_core_web_sm
+spacy>=3.7
+
 # --- modules/calendar, modules/cmd_executor (implemented, stdlib + OS-native calls only) ---
 # Linux desktop notifications additionally require: sudo apt-get install libnotify-bin
 

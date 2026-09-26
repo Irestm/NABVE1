@@ -66,3 +66,5 @@ CLAUDE.md
 
 # Per-user AI provider chain/config (modules/ai_bridge/providers/config.py)
 data/providers.yaml
+# English Learning subtitle cache (modules/english_learning/subtitle_store.py)
+data/subtitles/

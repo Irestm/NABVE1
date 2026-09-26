@@ -103,6 +103,7 @@ from core.voice import module_context as voice_module_context
 from core.voice import web_pipeline
 from modules.ai_bridge import provider_auth, virtual_display
 from modules.ai_bridge.providers import http_api as providers_http_api
+from modules.english_learning import http_api as english_http_api
 from modules.ai_bridge.providers import keys as provider_keys
 from modules.ai_bridge.providers.gemini_api import GEMINI_RPD_LIMIT, GeminiApiProvider
 from modules.spotify_control import oauth as spotify_oauth
@@ -226,6 +227,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Assistant Core", lifespan=lifespan)
 app.include_router(providers_http_api.router)
+app.include_router(english_http_api.router)
 
 app.add_middleware(
     CORSMiddleware,
