@@ -161,7 +161,7 @@ def test_words_label(count: int, label: str) -> None:
 def test_folder_name() -> None:
     episode = Episode(title_id=1, season=1, episode=1, source="manual")
 
-    assert folder_name("Breaking Bad", episode, 42) == "Breaking Bad — S01E01 — 42 слова"
+    assert folder_name("Breaking Bad", episode, 42, 5) == "Breaking Bad — S01E01 — 42 слова, 5 фраз"
 
 
 def test_job_registry_tracks_progress_and_dedupes() -> None:

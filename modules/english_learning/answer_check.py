@@ -13,6 +13,7 @@ _NON_WORD = re.compile(r"[^\w\s'-]+")
 _SPACES = re.compile(r"\s+")
 _EN_PREFIXES: tuple[str, ...] = ("to ", "a ", "an ", "the ")
 SHORT_WORD_MAX_LETTERS = 6
+TOKEN_RATIO_THRESHOLD = 0.8
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,23 @@ def _variants(values: Iterable[str], direction: Direction) -> list[str]:
     return variants
 
 
+def token_ratio(given: str, expected: str) -> float:
+    given_tokens = given.split()
+    expected_tokens = expected.split()
+    if not given_tokens or not expected_tokens:
+        return 0.0
+    used: set[int] = set()
+    matched = 0
+    for token in expected_tokens:
+        limit = allowed_typos(token) if len(token) > 3 else 0
+        for index, candidate in enumerate(given_tokens):
+            if index not in used and levenshtein(token, candidate, limit) <= limit:
+                used.add(index)
+                matched += 1
+                break
+    return matched / max(len(given_tokens), len(expected_tokens))
+
+
 def check_answer(
     answer: str,
     accepted: Iterable[str],
@@ -78,6 +96,7 @@ def check_answer(
     *,
     lemma: str | None = None,
     lemmatize: Callable[[str], str] | None = None,
+    expression: bool = False,
 ) -> CheckResult:
     given = normalize(answer)
     if direction == "ru_en":
@@ -89,8 +108,18 @@ def check_answer(
         return CheckResult(correct=True, exact=True, matched=given)
     if direction == "ru_en" and lemma and lemmatize is not None:
         target = normalize(lemma)
-        if lemmatize(given) == target:
+        lemmatized = lemmatize(given)
+        if lemmatized == target:
             return CheckResult(correct=True, exact=True, matched=target)
+        if expression:
+            for variant in variants:
+                if " " in variant and lemmatize(variant) == lemmatized:
+                    return CheckResult(correct=True, exact=True, matched=variant)
+    if expression or any(" " in variant for variant in variants):
+        scored = [(token_ratio(given, variant), variant) for variant in variants if " " in variant or " " in given]
+        best_ratio = max(scored, default=(0.0, ""))
+        if best_ratio[0] >= TOKEN_RATIO_THRESHOLD:
+            return CheckResult(correct=True, exact=False, matched=best_ratio[1])
     best: tuple[int, str] | None = None
     for variant in variants:
         limit = allowed_typos(variant)

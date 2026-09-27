@@ -30,3 +30,19 @@ def save(imdb_id: str | None, series_title: str, season: int, episode: int, text
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def movie_path(imdb_id: str | None, title: str, variant: str = "en") -> Path:
+    return SUBTITLES_DIR / _folder_name(imdb_id, title) / f"movie.{variant}.srt"
+
+
+def cached_movie(imdb_id: str | None, title: str) -> Path | None:
+    path = movie_path(imdb_id, title)
+    return path if path.exists() and path.stat().st_size > 0 else None
+
+
+def save_movie(imdb_id: str | None, title: str, text: str, variant: str = "en") -> Path:
+    path = movie_path(imdb_id, title, variant)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path

@@ -10,12 +10,14 @@ from modules.english_learning.link_parser import LinkGuess
 LINK_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
+        "kind": {"type": "string", "enum": ["series", "movie", "unknown"]},
         "series_title": {"type": ["string", "null"]},
+        "year": {"type": ["integer", "null"]},
         "season": {"type": ["integer", "null"]},
         "episode": {"type": ["integer", "null"]},
         "alternatives": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["series_title", "season", "episode", "alternatives"],
+    "required": ["kind", "series_title", "year", "season", "episode", "alternatives"],
     "additionalProperties": False,
 }
 
@@ -51,9 +53,10 @@ async def resolve_link(guess: LinkGuess, router: ProviderRouter | None = None) -
         {
             "role": "system",
             "content": (
-                "You identify TV series episodes from web links. Return the official English series title "
-                "(as on TMDB/IMDb), season and episode numbers. Use null for anything you cannot determine. "
-                "List other plausible series titles in alternatives."
+                "You identify TV series episodes and movies from web links. Decide kind: 'series' for a TV "
+                "episode, 'movie' for a feature film, 'unknown' if unsure. Return the official English title "
+                "(as on TMDB/IMDb) in series_title, the release year for movies, season and episode numbers for "
+                "series. Use null for anything you cannot determine. List other plausible titles in alternatives."
             ),
         },
         {"role": "user", "content": f"URL: {guess.url}\nPage title: {guess.page_title or '-'}"},
@@ -63,6 +66,8 @@ async def resolve_link(guess: LinkGuess, router: ProviderRouter | None = None) -
     title = data.get("series_title")
     season = data.get("season")
     episode = data.get("episode")
+    kind = data.get("kind")
+    year = data.get("year")
     alternatives = [str(item) for item in data.get("alternatives", []) if isinstance(item, str) and item.strip()]
     return (
         LinkGuess(
@@ -72,21 +77,30 @@ async def resolve_link(guess: LinkGuess, router: ProviderRouter | None = None) -
             episode=guess.episode if guess.episode is not None else (episode if isinstance(episode, int) else None),
             youtube_id=guess.youtube_id,
             page_title=guess.page_title,
+            kind=guess.kind or (kind if kind in ("series", "movie") else None),
+            year=guess.year if guess.year is not None else (year if isinstance(year, int) else None),
         ),
         alternatives,
     )
 
 
 async def guess_dialogue(
-    series_title: str, season: int, episode: int, episode_title: str | None, router: ProviderRouter | None = None
+    series_title: str,
+    season: int | None,
+    episode: int | None,
+    episode_title: str | None,
+    router: ProviderRouter | None = None,
 ) -> list[SubtitleCue]:
-    label = f"{series_title} S{season:02d}E{episode:02d}" + (f" “{episode_title}”" if episode_title else "")
+    if season is None or episode is None:
+        label = f"Movie: {series_title}" + (f" ({episode_title})" if episode_title else "")
+    else:
+        label = f"{series_title} S{season:02d}E{episode:02d}" + (f" “{episode_title}”" if episode_title else "")
     messages: list[ChatMessage] = [
         {
             "role": "system",
             "content": (
-                "You help an English learner. Subtitles for this episode are unavailable. From your knowledge of "
-                "the episode, write 40-80 short English dialogue lines (max 15 words each) that plausibly occur in "
+                "You help an English learner. Subtitles are unavailable. From your knowledge of "
+                "the episode or movie, write 40-80 short English dialogue lines (max 15 words each) that plausibly occur in "
                 "it, in story order, with the approximate minute. Prefer everyday vocabulary the characters "
                 "really use. Do not invent plot facts you are unsure about; keep lines generic if needed."
             ),

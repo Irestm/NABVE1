@@ -55,7 +55,7 @@ def test_import_then_library_and_words() -> None:
     assert {word["lemma"] for word in body["words"]} == {"figure", "decide", "honest"}
 
     library = client.get("/api/english/library", headers=AUTH).json()
-    assert library["series"][0]["episodes"][0]["word_count"] == 3
+    assert library["titles"][0]["episodes"][0]["word_count"] == 3
     assert "CEFR-J" in library["cefr_attribution"]
 
     episode_id = body["episode"]["id"]
@@ -110,9 +110,11 @@ def test_job_endpoints() -> None:
 def test_library_has_folder_names() -> None:
     _upload()
 
-    episode = client.get("/api/english/library", headers=AUTH).json()["series"][0]["episodes"][0]
+    title = client.get("/api/english/library", headers=AUTH).json()["titles"][0]
+    episode = title["episodes"][0]
 
-    assert episode["display_name"] == "Breaking Bad — S01E03 — 3 слова"
+    assert episode["display_name"] == "Breaking Bad — S01E03 — 3 слова, 0 фраз"
+    assert (title["kind"], title["words"], title["phrases"]) == ("series", 3, 0)
 
 
 def test_reanalyze_and_stats_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:

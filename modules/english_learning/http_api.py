@@ -11,9 +11,11 @@ from core.secret_store import SecretStoreUnavailableError
 from modules.english_learning import credentials, learn, link_import, listening, pipeline, service_layer
 from modules.ai_bridge.providers.base import AllProvidersFailed
 from modules.english_learning.cefr import CEFRJ_ATTRIBUTION, CefrUnavailableError
-from modules.english_learning.domain import Card, Episode, EpisodeWord
+from modules.english_learning.domain import Card, Episode, EpisodeWord, FilterSettings, Title
 from modules.english_learning.jobs import CardJob, card_jobs
 from modules.english_learning.lemmatizer import LemmatizerUnavailableError
+from modules.english_learning.lexicon import KAIKKI_ATTRIBUTION
+from modules.english_learning.movie_parts import DEFAULT_PART_MINUTES, MAX_PART_MINUTES, MIN_PART_MINUTES
 from modules.english_learning.service_layer import ImportResult
 from modules.english_learning.srt_parser import SrtParseError
 
@@ -24,21 +26,33 @@ MAX_SRT_BYTES = 5 * 1024 * 1024
 
 class EpisodeModel(BaseModel):
     id: int
-    series_id: int
-    season: int
-    episode: int
+    title_id: int
+    season: int | None
+    episode: int | None
+    part: int | None = None
+    start_ms: int | None = None
+    end_ms: int | None = None
     code: str
     title: str | None
     source: str
     word_count: int = 0
     card_count: int = 0
+    words: int = 0
+    phrases: int = 0
     display_name: str = ""
+    has_override: bool = False
 
 
-class SeriesModel(BaseModel):
+class TitleModel(BaseModel):
     id: int
-    title: str
+    kind: str
+    name: str
+    year: int | None
     imdb_id: str | None
+    display_name: str
+    words: int = 0
+    phrases: int = 0
+    has_override: bool = False
     episodes: list[EpisodeModel]
 
 
@@ -95,33 +109,54 @@ class JobModel(BaseModel):
 
 
 class ImportResponse(BaseModel):
-    series: SeriesModel
+    title: TitleModel
     episode: EpisodeModel
+    episodes: list[EpisodeModel]
     words: list[WordModel]
     job: JobModel | None = None
 
 
 class LibraryResponse(BaseModel):
-    series: list[SeriesModel]
+    titles: list[TitleModel]
     cefr_attribution: str
+    lexicon_attribution: str
 
 
-def _episode_model(
-    episode: Episode, word_count: int = 0, card_count: int = 0, display_name: str = ""
-) -> EpisodeModel:
+def _episode_model(episode: Episode, summary: service_layer.EpisodeSummary | None = None) -> EpisodeModel:
     if episode.id is None:
         raise ValueError("Episode has no id")
     return EpisodeModel(
         id=episode.id,
-        series_id=episode.title_id,
-        season=episode.season or 0,
-        episode=episode.episode or 0,
+        title_id=episode.title_id,
+        season=episode.season,
+        episode=episode.episode,
+        part=episode.part,
+        start_ms=episode.start_ms,
+        end_ms=episode.end_ms,
         code=episode.code,
         title=episode.title,
         source=episode.source,
-        word_count=word_count,
-        card_count=card_count,
-        display_name=display_name,
+        word_count=summary.word_count if summary else 0,
+        card_count=summary.card_count if summary else 0,
+        words=summary.words if summary else 0,
+        phrases=summary.phrases if summary else 0,
+        display_name=summary.display_name if summary else "",
+        has_override=summary.has_override if summary else False,
+    )
+
+
+def _title_model(title: Title, summary: service_layer.TitleSummary | None = None) -> TitleModel:
+    return TitleModel(
+        id=title.id or 0,
+        kind=title.kind,
+        name=title.name,
+        year=title.year,
+        imdb_id=title.imdb_id,
+        display_name=summary.display_name if summary else title.display_name,
+        words=summary.words if summary else 0,
+        phrases=summary.phrases if summary else 0,
+        has_override=summary.has_override if summary else False,
+        episodes=[_episode_model(item.episode, item) for item in summary.episodes] if summary else [],
     )
 
 
@@ -180,15 +215,26 @@ def _word_model(word: EpisodeWord) -> WordModel:
     )
 
 
-def _import_response(result: ImportResult) -> ImportResponse:
-    job = card_jobs.start(result.episode.id) if result.episode.id is not None and result.words else None
+def _import_response(result: ImportResult, *, generate: bool = True) -> ImportResponse:
+    episodes = result.episodes or [result.episode]
+    jobs = [card_jobs.start(item.id) for item in episodes if item.id is not None and generate and result.words]
+    first_job = next((job for job in jobs if job.episode_id == result.episode.id), jobs[0] if jobs else None)
+    counts: dict[int, int] = {}
+    for word in result.words:
+        counts[word.episode_id] = counts.get(word.episode_id, 0) + 1
+    models = [
+        _episode_model(
+            item,
+            service_layer.EpisodeSummary(item, counts.get(item.id or 0, 0), 0, item.code),
+        )
+        for item in episodes
+    ]
     return ImportResponse(
-        series=SeriesModel(
-            id=result.title.id or 0, title=result.title.name, imdb_id=result.title.imdb_id, episodes=[]
-        ),
-        episode=_episode_model(result.episode, word_count=len(result.words)),
+        title=_title_model(result.title),
+        episode=models[0] if result.episode.id == episodes[0].id else _episode_model(result.episode),
+        episodes=models,
         words=[_word_model(word) for word in result.words],
-        job=_job_model(job) if job is not None else None,
+        job=_job_model(first_job) if first_job is not None else None,
     )
 
 
@@ -196,19 +242,9 @@ def _import_response(result: ImportResult) -> ImportResponse:
 async def get_library() -> LibraryResponse:
     summaries = await asyncio.to_thread(service_layer.library)
     return LibraryResponse(
-        series=[
-            SeriesModel(
-                id=summary.title.id or 0,
-                title=summary.title.name,
-                imdb_id=summary.title.imdb_id,
-                episodes=[
-                    _episode_model(item.episode, item.word_count, item.card_count, item.display_name)
-                    for item in summary.episodes
-                ],
-            )
-            for summary in summaries
-        ],
+        titles=[_title_model(summary.title, summary) for summary in summaries],
         cefr_attribution=CEFRJ_ATTRIBUTION,
+        lexicon_attribution=KAIKKI_ATTRIBUTION,
     )
 
 
@@ -224,9 +260,13 @@ async def get_episode_words(episode_id: int) -> list[WordModel]:
 @router.post("/import/srt", response_model=ImportResponse)
 async def import_srt(
     series_title: str = Form(..., min_length=1),
-    season: int = Form(..., ge=0),
-    episode: int = Form(..., ge=0),
+    season: int | None = Form(None, ge=0),
+    episode: int | None = Form(None, ge=0),
     episode_title: str | None = Form(None),
+    kind: Literal["series", "movie"] = Form("series"),
+    year: int | None = Form(None, ge=1870, le=2100),
+    split_movie: bool = Form(True),
+    part_minutes: int = Form(DEFAULT_PART_MINUTES, ge=MIN_PART_MINUTES, le=MAX_PART_MINUTES),
     file: UploadFile = File(...),
 ) -> ImportResponse:
     raw = await file.read(MAX_SRT_BYTES + 1)
@@ -240,6 +280,10 @@ async def import_srt(
             episode=episode,
             raw=raw,
             episode_title=episode_title,
+            kind=kind,
+            year=year,
+            split=split_movie,
+            part_minutes=part_minutes,
         )
     except (SrtParseError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -255,6 +299,10 @@ class LinkImportBody(BaseModel):
     episode: int | None = Field(None, ge=0)
     tmdb_id: int | None = None
     allow_ai_guess: bool = False
+    kind: Literal["series", "movie"] | None = None
+    year: int | None = Field(None, ge=1870, le=2100)
+    split_movie: bool = True
+    part_minutes: int = Field(DEFAULT_PART_MINUTES, ge=MIN_PART_MINUTES, le=MAX_PART_MINUTES)
 
 
 class GuessModel(BaseModel):
@@ -263,12 +311,16 @@ class GuessModel(BaseModel):
     episode: int | None
     is_youtube: bool
     page_title: str | None
+    kind: str | None = None
+    year: int | None = None
 
 
 class ShowOptionModel(BaseModel):
     tmdb_id: int
     name: str
     year: int | None
+    kind: str = "series"
+    poster_url: str | None = None
 
 
 class NeedsInputModel(BaseModel):
@@ -310,9 +362,16 @@ def _needs_input_model(needs: link_import.NeedsInput) -> NeedsInputModel:
             episode=needs.guess.episode,
             is_youtube=needs.guess.is_youtube,
             page_title=needs.guess.page_title,
+            kind=needs.guess.kind,
+            year=needs.guess.year,
         ),
         missing=needs.missing,
-        options=[ShowOptionModel(tmdb_id=item.tmdb_id, name=item.name, year=item.year) for item in needs.options],
+        options=[
+            ShowOptionModel(
+                tmdb_id=item.tmdb_id, name=item.name, year=item.year, kind=item.kind, poster_url=item.poster_url
+            )
+            for item in needs.options
+        ],
         alternatives=needs.alternatives,
         problems=needs.problems,
     )
@@ -361,9 +420,13 @@ async def put_credentials(update: CredentialsUpdate) -> CredentialsStatusModel:
 
 
 @router.get("/episodes/{episode_id}/cards", response_model=list[CardModel])
-async def get_episode_cards(episode_id: int) -> list[CardModel]:
+async def get_episode_cards(episode_id: int, include_archived: bool = False) -> list[CardModel]:
     try:
-        cards = await asyncio.to_thread(service_layer.episode_cards, episode_id)
+        cards = await asyncio.to_thread(
+            lambda: service_layer.episode_cards(episode_id, include_archived=include_archived)
+            if include_archived
+            else service_layer.episode_cards(episode_id)
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return [_card_model(card) for card in cards]
@@ -622,3 +685,76 @@ async def get_episode_stats(episode_id: int) -> StatsModel:
         off_list_share=stats.off_list_share,
         top_above_b2=stats.top_above_b2,
     )
+
+
+class FilterModel(BaseModel):
+    levels: list[Literal["A1", "A2", "B1", "B2"]]
+    include_unleveled: bool
+    mwe_mode: Literal["follow_levels", "always"]
+
+
+class FilterViewModel(FilterModel):
+    source: str
+
+
+class ModuleSettingsModel(BaseModel):
+    user_level: Literal["A1", "A2", "B1", "B2", "C1", "C2"]
+    allow_answer_hints: bool
+
+
+class ModuleSettingsUpdate(BaseModel):
+    user_level: Literal["A1", "A2", "B1", "B2", "C1", "C2"] | None = None
+    allow_answer_hints: bool | None = None
+
+
+FilterScopeParam = Literal["global", "title", "episode"]
+
+
+def _filter_view(view: service_layer.FilterView) -> FilterViewModel:
+    return FilterViewModel(
+        levels=list(view.settings.levels),  # type: ignore[arg-type]
+        include_unleveled=view.settings.include_unleveled,
+        mwe_mode=view.settings.mwe_mode,
+        source=view.source,
+    )
+
+
+@router.get("/filters/{scope}", response_model=FilterViewModel)
+async def get_filter(scope: FilterScopeParam, scope_id: int | None = None) -> FilterViewModel:
+    try:
+        return _filter_view(await asyncio.to_thread(service_layer.get_filter, scope, scope_id))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.put("/filters/{scope}", response_model=FilterViewModel)
+async def put_filter(scope: FilterScopeParam, body: FilterModel, scope_id: int | None = None) -> FilterViewModel:
+    settings = FilterSettings(levels=tuple(body.levels), include_unleveled=body.include_unleveled, mwe_mode=body.mwe_mode)
+    try:
+        return _filter_view(await asyncio.to_thread(service_layer.save_filter, scope, scope_id, settings))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.delete("/filters/{scope}", response_model=FilterViewModel)
+async def delete_filter(scope: FilterScopeParam, scope_id: int | None = None) -> FilterViewModel:
+    try:
+        return _filter_view(await asyncio.to_thread(service_layer.reset_filter, scope, scope_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/settings", response_model=ModuleSettingsModel)
+async def get_module_settings() -> ModuleSettingsModel:
+    settings = await asyncio.to_thread(service_layer.get_module_settings)
+    return ModuleSettingsModel(user_level=settings.user_level, allow_answer_hints=settings.allow_answer_hints)  # type: ignore[arg-type]
+
+
+@router.put("/settings", response_model=ModuleSettingsModel)
+async def put_module_settings(body: ModuleSettingsUpdate) -> ModuleSettingsModel:
+    settings = await asyncio.to_thread(
+        lambda: service_layer.save_module_settings(user_level=body.user_level, allow_answer_hints=body.allow_answer_hints)
+    )
+    return ModuleSettingsModel(user_level=settings.user_level, allow_answer_hints=settings.allow_answer_hints)  # type: ignore[arg-type]

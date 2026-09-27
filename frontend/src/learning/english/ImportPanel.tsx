@@ -1,24 +1,53 @@
 import { useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { FileUp, Link2, Sparkles } from "lucide-react";
+import { Clapperboard, FileUp, Link2, Sparkles, Tv } from "lucide-react";
 import { importFromLink, importSrt } from "../../api/english";
-import type { ImportedEpisode, LinkImportRequest, NeedsInput } from "../../api/english";
+import type { ImportedEpisode, LinkImportRequest, NeedsInput, ShowOption, TitleKind } from "../../api/english";
 
 interface ImportPanelProps {
   onImported: (imported: ImportedEpisode) => void;
 }
 
 interface Details {
-  seriesTitle: string;
+  title: string;
+  kind: TitleKind;
   season: string;
   episode: string;
+  year: string;
+  split: boolean;
+  partMinutes: number;
 }
 
 type Tab = "link" | "file";
 
+const EMPTY_DETAILS: Details = { title: "", kind: "series", season: "", episode: "", year: "", split: true, partMinutes: 20 };
+const MIN_PART = 10;
+const MAX_PART = 40;
+
 function toNumber(value: string): number | null {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function OptionCard({ option, onPick, disabled }: { option: ShowOption; onPick: () => void; disabled: boolean }): JSX.Element {
+  return (
+    <button type="button" className="ql-option ql-title-option" onClick={onPick} disabled={disabled}>
+      {option.poster_url ? (
+        <img className="ql-title-option__poster" src={option.poster_url} alt="" loading="lazy" />
+      ) : (
+        <span className="ql-title-option__poster ql-title-option__poster--empty" aria-hidden="true">
+          {option.kind === "movie" ? <Clapperboard size={22} /> : <Tv size={22} />}
+        </span>
+      )}
+      <span className="ql-title-option__text">
+        <span>{option.name}</span>
+        <span className="ql-muted">
+          {option.kind === "movie" ? "фильм" : "сериал"}
+          {option.year ? ` · ${option.year}` : ""}
+        </span>
+      </span>
+    </button>
+  );
 }
 
 export function ImportPanel({ onImported }: ImportPanelProps): JSX.Element {
@@ -26,7 +55,7 @@ export function ImportPanel({ onImported }: ImportPanelProps): JSX.Element {
   const [url, setUrl] = useState("");
   const [request, setRequest] = useState<LinkImportRequest | null>(null);
   const [needs, setNeeds] = useState<NeedsInput | null>(null);
-  const [details, setDetails] = useState<Details>({ seriesTitle: "", season: "", episode: "" });
+  const [details, setDetails] = useState<Details>(EMPTY_DETAILS);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -37,12 +66,16 @@ export function ImportPanel({ onImported }: ImportPanelProps): JSX.Element {
     setError("");
   }
 
+  function movieOptions(base: LinkImportRequest): LinkImportRequest {
+    return { ...base, split_movie: details.split, part_minutes: details.partMinutes };
+  }
+
   async function run(next: LinkImportRequest): Promise<void> {
     setBusy(true);
     setError("");
     setRequest(next);
     try {
-      const result = await importFromLink(next);
+      const result = await importFromLink(movieOptions(next));
       if (result.status === "imported" && result.imported) {
         reset();
         setUrl("");
@@ -50,11 +83,14 @@ export function ImportPanel({ onImported }: ImportPanelProps): JSX.Element {
       } else if (result.needs_input) {
         const guess = result.needs_input.guess;
         setNeeds(result.needs_input);
-        setDetails({
-          seriesTitle: guess.series_title ?? "",
+        setDetails((current) => ({
+          ...current,
+          title: guess.series_title ?? "",
+          kind: guess.kind ?? current.kind,
           season: guess.season !== null ? String(guess.season) : "",
           episode: guess.episode !== null ? String(guess.episode) : "",
-        });
+          year: guess.year !== null ? String(guess.year) : "",
+        }));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось импортировать.");
@@ -74,25 +110,43 @@ export function ImportPanel({ onImported }: ImportPanelProps): JSX.Element {
   function withDetails(base: LinkImportRequest): LinkImportRequest {
     const season = toNumber(details.season);
     const episode = toNumber(details.episode);
+    const year = toNumber(details.year);
     return {
       ...base,
-      ...(details.seriesTitle.trim() ? { series_title: details.seriesTitle.trim() } : {}),
-      ...(season !== null ? { season } : {}),
-      ...(episode !== null ? { episode } : {}),
+      kind: details.kind,
+      ...(details.title.trim() ? { series_title: details.title.trim() } : {}),
+      ...(details.kind === "series" && season !== null ? { season } : {}),
+      ...(details.kind === "series" && episode !== null ? { episode } : {}),
+      ...(details.kind === "movie" && year !== null ? { year } : {}),
     };
   }
 
   async function uploadFile(file: File): Promise<void> {
     const season = toNumber(details.season);
     const episode = toNumber(details.episode);
-    if (!details.seriesTitle.trim() || season === null || episode === null) {
-      setError("Укажите сериал, сезон и серию.");
+    const year = toNumber(details.year);
+    if (!details.title.trim()) {
+      setError(details.kind === "movie" ? "Укажите название фильма." : "Укажите сериал.");
+      return;
+    }
+    if (details.kind === "series" && (season === null || episode === null)) {
+      setError("Укажите сезон и серию.");
       return;
     }
     setBusy(true);
     setError("");
     try {
-      const imported = await importSrt(details.seriesTitle.trim(), season, episode, file);
+      const imported = await importSrt(
+        {
+          title: details.title.trim(),
+          kind: details.kind,
+          ...(details.kind === "series" && season !== null && episode !== null ? { season, episode } : {}),
+          ...(details.kind === "movie"
+            ? { splitMovie: details.split, partMinutes: details.partMinutes, ...(year !== null ? { year } : {}) }
+            : {}),
+        },
+        file,
+      );
       reset();
       onImported(imported);
     } catch (err) {
@@ -105,37 +159,104 @@ export function ImportPanel({ onImported }: ImportPanelProps): JSX.Element {
     }
   }
 
+  const kindSwitch = (
+    <div className="ql-segmented" role="group" aria-label="Что импортируем">
+      {(["series", "movie"] as TitleKind[]).map((kind) => (
+        <button
+          key={kind}
+          type="button"
+          className={details.kind === kind ? "ql-segmented__item ql-segmented__item--active" : "ql-segmented__item"}
+          aria-pressed={details.kind === kind}
+          onClick={() => setDetails({ ...details, kind })}
+        >
+          {kind === "series" ? <Tv size={16} /> : <Clapperboard size={16} />} {kind === "series" ? "Сериал" : "Фильм"}
+        </button>
+      ))}
+    </div>
+  );
+
   const detailsFields = (
-    <div className="ql-details">
-      <label className="ql-field ql-details__title">
-        <span className="ql-field__label">Сериал</span>
+    <>
+      {kindSwitch}
+      <div className="ql-details">
+        <label className="ql-field ql-details__title">
+          <span className="ql-field__label">{details.kind === "movie" ? "Фильм" : "Сериал"}</span>
+          <input
+            className="ql-input"
+            value={details.title}
+            onChange={(event) => setDetails({ ...details, title: event.target.value })}
+            placeholder={details.kind === "movie" ? "Sherlock Holmes" : "Breaking Bad"}
+          />
+        </label>
+        {details.kind === "series" ? (
+          <>
+            <label className="ql-field">
+              <span className="ql-field__label">Сезон</span>
+              <input
+                className="ql-input"
+                inputMode="numeric"
+                value={details.season}
+                onChange={(event) => setDetails({ ...details, season: event.target.value })}
+                placeholder="1"
+              />
+            </label>
+            <label className="ql-field">
+              <span className="ql-field__label">Серия</span>
+              <input
+                className="ql-input"
+                inputMode="numeric"
+                value={details.episode}
+                onChange={(event) => setDetails({ ...details, episode: event.target.value })}
+                placeholder="1"
+              />
+            </label>
+          </>
+        ) : (
+          <label className="ql-field">
+            <span className="ql-field__label">Год</span>
+            <input
+              className="ql-input"
+              inputMode="numeric"
+              value={details.year}
+              onChange={(event) => setDetails({ ...details, year: event.target.value })}
+              placeholder="2009"
+            />
+          </label>
+        )}
+      </div>
+    </>
+  );
+
+  const movieSplit = (
+    <div className="ql-split-row">
+      <label className="ql-check">
         <input
-          className="ql-input"
-          value={details.seriesTitle}
-          onChange={(event) => setDetails({ ...details, seriesTitle: event.target.value })}
-          placeholder="Breaking Bad"
+          type="checkbox"
+          checked={details.split}
+          onChange={(event) => setDetails({ ...details, split: event.target.checked })}
         />
+        <span>Разбить фильм на части</span>
       </label>
-      <label className="ql-field">
-        <span className="ql-field__label">Сезон</span>
-        <input
-          className="ql-input"
-          inputMode="numeric"
-          value={details.season}
-          onChange={(event) => setDetails({ ...details, season: event.target.value })}
-          placeholder="1"
-        />
-      </label>
-      <label className="ql-field">
-        <span className="ql-field__label">Серия</span>
-        <input
-          className="ql-input"
-          inputMode="numeric"
-          value={details.episode}
-          onChange={(event) => setDetails({ ...details, episode: event.target.value })}
-          placeholder="1"
-        />
-      </label>
+      {details.split && (
+        <label className="ql-check">
+          <span>по</span>
+          <input
+            className="ql-input ql-input--narrow"
+            type="number"
+            min={MIN_PART}
+            max={MAX_PART}
+            value={details.partMinutes}
+            onChange={(event) =>
+              setDetails({
+                ...details,
+                partMinutes: Math.min(MAX_PART, Math.max(MIN_PART, Number(event.target.value) || MIN_PART)),
+              })
+            }
+            aria-label="Длительность части в минутах"
+          />
+          <span>мин</span>
+        </label>
+      )}
     </div>
   );
 
@@ -155,7 +276,7 @@ export function ImportPanel({ onImported }: ImportPanelProps): JSX.Element {
   );
 
   return (
-    <section className="ql-card ql-import" aria-label="Добавить эпизод">
+    <section className="ql-card ql-import" aria-label="Добавить серию или фильм">
       <div className="ql-tabs" role="tablist">
         <button
           type="button"
@@ -188,13 +309,14 @@ export function ImportPanel({ onImported }: ImportPanelProps): JSX.Element {
               type="url"
               value={url}
               onChange={(event) => setUrl(event.target.value)}
-              placeholder="Ссылка на серию: YouTube, стриминг, сайт с сериалом…"
+              placeholder="Ссылка на серию или фильм: YouTube, стриминг, IMDb…"
               disabled={busy}
             />
             <button type="submit" className="ql-button ql-button--primary" disabled={busy || !url.trim()}>
               {busy ? "Ищу…" : "Создать квиз"}
             </button>
           </form>
+          {movieSplit}
 
           {needs && request && (
             <div className="ql-needs">
@@ -217,19 +339,23 @@ export function ImportPanel({ onImported }: ImportPanelProps): JSX.Element {
                 </>
               )}
 
-              {needs.kind === "series" && (
+              {(needs.kind === "series" || needs.kind === "title") && (
                 <div className="ql-options__grid">
                   {needs.options.map((option) => (
-                    <button
-                      key={option.tmdb_id}
-                      type="button"
-                      className="ql-option"
-                      onClick={() => void run({ ...request, tmdb_id: option.tmdb_id })}
+                    <OptionCard
+                      key={`${option.kind}-${option.tmdb_id}`}
+                      option={option}
                       disabled={busy}
-                    >
-                      <span>{option.name}</span>
-                      {option.year && <span className="ql-muted">{option.year}</span>}
-                    </button>
+                      onPick={() =>
+                        void run({
+                          ...request,
+                          tmdb_id: option.tmdb_id,
+                          kind: option.kind,
+                          series_title: option.name,
+                          ...(option.year ? { year: option.year } : {}),
+                        })
+                      }
+                    />
                   ))}
                 </div>
               )}
@@ -270,6 +396,7 @@ export function ImportPanel({ onImported }: ImportPanelProps): JSX.Element {
       ) : (
         <>
           {detailsFields}
+          {details.kind === "movie" && movieSplit}
           <button
             type="button"
             className="ql-button ql-button--primary"

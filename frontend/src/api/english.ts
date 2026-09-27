@@ -4,29 +4,48 @@ export type Direction = "en_ru" | "ru_en";
 export type LearnMode = "choice" | "input" | "mixed";
 export type EpisodeSource = "youtube" | "opensubtitles" | "manual" | "ai_guess";
 
+export type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
+export type StoredLevel = "A1" | "A2" | "B1" | "B2";
+export type ItemKind = "word" | "phrasal_verb" | "idiom" | "collocation" | "slang";
+export type TitleKind = "series" | "movie";
+export type MweMode = "follow_levels" | "always";
+
 export interface EnglishEpisode {
   id: number;
-  series_id: number;
-  season: number;
-  episode: number;
+  title_id: number;
+  season: number | null;
+  episode: number | null;
+  part: number | null;
+  start_ms: number | null;
+  end_ms: number | null;
   code: string;
   title: string | null;
   source: EpisodeSource;
   word_count: number;
   card_count: number;
+  words: number;
+  phrases: number;
   display_name: string;
+  has_override: boolean;
 }
 
-export interface EnglishSeries {
+export interface EnglishTitle {
   id: number;
-  title: string;
+  kind: TitleKind;
+  name: string;
+  year: number | null;
   imdb_id: string | null;
+  display_name: string;
+  words: number;
+  phrases: number;
+  has_override: boolean;
   episodes: EnglishEpisode[];
 }
 
 export interface EnglishLibrary {
-  series: EnglishSeries[];
+  titles: EnglishTitle[];
   cefr_attribution: string;
+  lexicon_attribution: string;
 }
 
 export interface EnglishCard {
@@ -41,6 +60,13 @@ export interface EnglishCard {
   example: string;
   timestamp_ms: number;
   category: "core" | "extra";
+  kind: ItemKind;
+  surface_form: string | null;
+  sense_label: string | null;
+  literal_translation: string | null;
+  cefr_source: string | null;
+  confidence: number | null;
+  archived: boolean;
 }
 
 export interface CardJob {
@@ -52,11 +78,13 @@ export interface CardJob {
   created: number;
   skipped: number;
   error: string | null;
+  phase: "expressions" | "cards" | string;
 }
 
 export interface ImportedEpisode {
-  series: EnglishSeries;
+  title: EnglishTitle;
   episode: EnglishEpisode;
+  episodes: EnglishEpisode[];
   words: unknown[];
   job: CardJob | null;
 }
@@ -65,10 +93,12 @@ export interface ShowOption {
   tmdb_id: number;
   name: string;
   year: number | null;
+  kind: TitleKind;
+  poster_url: string | null;
 }
 
 export interface NeedsInput {
-  kind: "details" | "series" | "subtitles";
+  kind: "details" | "series" | "title" | "subtitles";
   message: string;
   guess: {
     series_title: string | null;
@@ -76,6 +106,8 @@ export interface NeedsInput {
     episode: number | null;
     is_youtube: boolean;
     page_title: string | null;
+    kind: TitleKind | null;
+    year: number | null;
   };
   missing: string[];
   options: ShowOption[];
@@ -96,6 +128,45 @@ export interface LinkImportRequest {
   episode?: number;
   tmdb_id?: number;
   allow_ai_guess?: boolean;
+  kind?: TitleKind;
+  year?: number;
+  split_movie?: boolean;
+  part_minutes?: number;
+}
+
+export interface SrtUpload {
+  title: string;
+  kind: TitleKind;
+  season?: number;
+  episode?: number;
+  year?: number;
+  splitMovie?: boolean;
+  partMinutes?: number;
+}
+
+export interface LevelFilter {
+  levels: StoredLevel[];
+  include_unleveled: boolean;
+  mwe_mode: MweMode;
+}
+
+export type FilterScope = "global" | "title" | "episode";
+
+export interface LevelFilterView extends LevelFilter {
+  source: FilterScope;
+}
+
+export interface ModuleSettings {
+  user_level: CefrLevel;
+  allow_answer_hints: boolean;
+}
+
+export interface ReanalyzeResult {
+  candidates: number;
+  archived: number;
+  restored: number;
+  job?: CardJob | null;
+  failed?: string[];
 }
 
 export interface CredentialsStatus {
@@ -115,6 +186,8 @@ export interface LearnSettings {
   shuffle: boolean;
   direction: Direction;
   mode: LearnMode;
+  contextForWords: boolean;
+  contextForExpressions: boolean;
 }
 
 export interface LearnSession {
@@ -144,17 +217,32 @@ export function importFromLink(request: LinkImportRequest): Promise<LinkImportRe
   return requestJson<LinkImportResult>("/api/english/import", { method: "POST", body: JSON.stringify(request) });
 }
 
-export function importSrt(seriesTitle: string, season: number, episode: number, file: File): Promise<ImportedEpisode> {
+export function importSrt(upload: SrtUpload, file: File): Promise<ImportedEpisode> {
   const form = new FormData();
-  form.append("series_title", seriesTitle);
-  form.append("season", String(season));
-  form.append("episode", String(episode));
+  form.append("series_title", upload.title);
+  form.append("kind", upload.kind);
+  if (upload.season !== undefined) {
+    form.append("season", String(upload.season));
+  }
+  if (upload.episode !== undefined) {
+    form.append("episode", String(upload.episode));
+  }
+  if (upload.year !== undefined) {
+    form.append("year", String(upload.year));
+  }
+  if (upload.splitMovie !== undefined) {
+    form.append("split_movie", String(upload.splitMovie));
+  }
+  if (upload.partMinutes !== undefined) {
+    form.append("part_minutes", String(upload.partMinutes));
+  }
   form.append("file", file, file.name);
   return requestForm<ImportedEpisode>("/api/english/import/srt", form);
 }
 
-export function getEpisodeCards(episodeId: number): Promise<EnglishCard[]> {
-  return requestJson<EnglishCard[]>(`/api/english/episodes/${episodeId}/cards`);
+export function getEpisodeCards(episodeId: number, includeArchived = false): Promise<EnglishCard[]> {
+  const query = includeArchived ? "?include_archived=true" : "";
+  return requestJson<EnglishCard[]>(`/api/english/episodes/${episodeId}/cards${query}`);
 }
 
 export function startCardGeneration(episodeId: number): Promise<CardJob> {
@@ -235,4 +323,36 @@ export function createListeningQuiz(episodeId: number, videoPath: string): Promi
 
 export function getListeningClip(episodeId: number, cueIndex: number): Promise<ListeningClip> {
   return requestJson<ListeningClip>(`/api/english/episodes/${episodeId}/listening/clips/${cueIndex}`);
+}
+
+function scopeQuery(scope: FilterScope, scopeId?: number): string {
+  return scope === "global" || scopeId === undefined ? `/api/english/filters/${scope}` : `/api/english/filters/${scope}?scope_id=${scopeId}`;
+}
+
+export function getLevelFilter(scope: FilterScope, scopeId?: number): Promise<LevelFilterView> {
+  return requestJson<LevelFilterView>(scopeQuery(scope, scopeId));
+}
+
+export function saveLevelFilter(scope: FilterScope, filter: LevelFilter, scopeId?: number): Promise<LevelFilterView> {
+  return requestJson<LevelFilterView>(scopeQuery(scope, scopeId), { method: "PUT", body: JSON.stringify(filter) });
+}
+
+export function resetLevelFilter(scope: FilterScope, scopeId?: number): Promise<LevelFilterView> {
+  return requestJson<LevelFilterView>(scopeQuery(scope, scopeId), { method: "DELETE" });
+}
+
+export function getModuleSettings(): Promise<ModuleSettings> {
+  return requestJson<ModuleSettings>("/api/english/settings");
+}
+
+export function saveModuleSettings(update: Partial<ModuleSettings>): Promise<ModuleSettings> {
+  return requestJson<ModuleSettings>("/api/english/settings", { method: "PUT", body: JSON.stringify(update) });
+}
+
+export function reanalyzeEpisode(episodeId: number): Promise<ReanalyzeResult> {
+  return requestJson<ReanalyzeResult>(`/api/english/episodes/${episodeId}/reanalyze`, { method: "POST" });
+}
+
+export function reanalyzeLibrary(): Promise<ReanalyzeResult> {
+  return requestJson<ReanalyzeResult>("/api/english/reanalyze", { method: "POST" });
 }

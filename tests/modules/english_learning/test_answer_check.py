@@ -58,3 +58,47 @@ def test_ru_en_accepts_lemma_forms_and_to_prefix() -> None:
     assert check_answer("Decided", ["decide"], "ru_en", lemma="decide", lemmatize=lemmatize).exact
     assert check_answer("figured out", ["figure out"], "ru_en", lemma="figure out", lemmatize=lemmatize).correct
     assert not check_answer("choose", ["decide"], "ru_en", lemma="decide", lemmatize=lemmatize).correct
+
+
+def _lemmas(text: str) -> str:
+    table = {"gave": "give", "giving": "give", "figured": "figure", "broke": "break"}
+    return " ".join(table.get(word, word) for word in text.split())
+
+
+@pytest.mark.parametrize(
+    ("given", "correct"),
+    [
+        ("Сдаваться!", True),
+        ("сдаваться", True),
+        ("не сдаваться никогда", False),
+        ("опускать руки", True),
+        ("Опускать руку", True),
+        ("бежать", False),
+    ],
+)
+def test_expression_translations_use_normalization_and_token_ratio(given: str, correct: bool) -> None:
+    result = check_answer(given, ["сдаваться", "опускать руки"], "en_ru", expression=True)
+
+    assert result.correct is correct
+
+
+@pytest.mark.parametrize(
+    ("given", "correct"),
+    [("give up", True), ("gave up", True), ("Giving up", True), ("figured it out", False), ("give in", False)],
+)
+def test_ru_en_accepts_inflected_expression_forms(given: str, correct: bool) -> None:
+    result = check_answer(given, ["give up"], "ru_en", lemma="give up", lemmatize=_lemmas, expression=True)
+
+    assert result.correct is correct
+
+
+def test_ru_en_matches_split_phrasal_verb_surface() -> None:
+    result = check_answer(
+        "figured it out", ["figure out", "figure it out"], "ru_en", lemma="figure out", lemmatize=_lemmas, expression=True
+    )
+
+    assert result.correct and result.exact
+
+
+def test_yo_equals_ye() -> None:
+    assert check_answer("всё равно", ["все равно"], "en_ru", expression=True).exact

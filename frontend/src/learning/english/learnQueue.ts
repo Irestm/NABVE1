@@ -1,5 +1,7 @@
 import type { Direction, EnglishCard, LearnMode, LearnSettings } from "../../api/english";
 
+const MASK = "_____";
+
 export type Stage = "choice" | "input";
 
 export interface QueueItem {
@@ -104,4 +106,24 @@ export function buildOptions(
     }
   }
   return shuffled(options, random);
+}
+
+export function showsContext(card: EnglishCard, settings: LearnSettings): boolean {
+  return card.kind === "word" ? settings.contextForWords : settings.contextForExpressions;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function contextLine(card: EnglishCard, direction: Direction): string {
+  if (direction === "en_ru") {
+    return card.example;
+  }
+  const targets = [card.surface_form, card.word].filter((item): item is string => Boolean(item && item.trim()));
+  let masked = card.example;
+  for (const target of targets) {
+    masked = masked.replace(new RegExp(escapeRegExp(target), "gi"), MASK);
+  }
+  return masked;
 }

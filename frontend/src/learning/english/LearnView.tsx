@@ -1,18 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { ArrowLeft, Check, Mic, RotateCcw, Volume2, X } from "lucide-react";
 import { finishSession, sendAnswer, startSession } from "../../api/english";
-import type { AnswerResult, EnglishCard, LearnSettings, SessionSummary } from "../../api/english";
-import { answerText, applyAnswer, buildOptions, initialState, promptText } from "./learnQueue";
+import type { AnswerResult, EnglishCard, LearnSettings, LevelFilter, SessionSummary } from "../../api/english";
+import { answerText, applyAnswer, buildOptions, contextLine, initialState, promptText, showsContext } from "./learnQueue";
+import { KIND_LABELS, filterSummary, sensesByLemma } from "./levelFilter";
 import type { LearnState } from "./learnQueue";
 import { useOneShotVoiceInput } from "../../hooks/useOneShotVoiceInput";
 import { speakEnglish } from "./audio";
+
+export interface LearnProgress {
+  card: EnglishCard | null;
+  answered: boolean;
+  mistakes: { card: EnglishCard; given: string }[];
+}
 
 interface LearnViewProps {
   episodeId: number;
   title: string;
   cards: EnglishCard[];
   settings: LearnSettings;
+  filter: LevelFilter;
+  headerActions?: ReactNode;
   onExit: () => void;
+  onProgress?: (progress: LearnProgress) => void;
 }
 
 interface Feedback {
@@ -20,7 +31,16 @@ interface Feedback {
   result: AnswerResult;
 }
 
-export function LearnView({ episodeId, title, cards, settings, onExit }: LearnViewProps): JSX.Element {
+export function LearnView({
+  episodeId,
+  title,
+  cards,
+  settings,
+  filter,
+  headerActions,
+  onExit,
+  onProgress,
+}: LearnViewProps): JSX.Element {
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [state, setState] = useState<LearnState>(() => initialState(cards, settings));
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -28,10 +48,12 @@ export function LearnView({ episodeId, title, cards, settings, onExit }: LearnVi
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [summary, setSummary] = useState<SessionSummary | null>(null);
+  const [mistakes, setMistakes] = useState<{ card: EnglishCard; given: string }[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const continueRef = useRef<HTMLButtonElement>(null);
 
   const cardsById = useMemo(() => new Map(cards.map((card) => [card.id, card])), [cards]);
+  const senses = useMemo(() => sensesByLemma(cards), [cards]);
   const current = state.queue[0];
   const card = current ? cardsById.get(current.cardId) : undefined;
   const options = useMemo(
@@ -80,6 +102,9 @@ export function LearnView({ episodeId, title, cards, settings, onExit }: LearnVi
       try {
         const result = await sendAnswer(sessionId, card.id, current.stage, given);
         setFeedback({ given, result });
+        if (!result.correct) {
+          setMistakes((previous) => [...previous, { card, given }]);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Не удалось проверить ответ.");
       } finally {
@@ -130,6 +155,10 @@ export function LearnView({ episodeId, title, cards, settings, onExit }: LearnVi
     );
   }
 
+  useEffect(() => {
+    onProgress?.({ card: card ?? null, answered: feedback !== null, mistakes });
+  }, [card, feedback, mistakes, onProgress]);
+
   const progress = state.totalPoints === 0 ? 0 : Math.round((state.points / state.totalPoints) * 100);
 
   if (summary) {
@@ -140,6 +169,7 @@ export function LearnView({ episodeId, title, cards, settings, onExit }: LearnVi
             <ArrowLeft size={20} />
           </button>
           <span className="ql-learn__title">{title}</span>
+          {headerActions}
         </div>
         <section className="ql-card ql-summary">
           <h2 className="ql-summary__title">Готово! Выучено карточек: {cards.length}</h2>
@@ -182,7 +212,9 @@ export function LearnView({ episodeId, title, cards, settings, onExit }: LearnVi
         <span className="ql-muted">
           {state.learned.length} / {cards.length}
         </span>
+        {headerActions}
       </div>
+      <p className="ql-active-levels">Уровни: {filterSummary(filter)}</p>
       <div className="ql-progress" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
         <div className="ql-progress__fill" style={{ width: `${progress}%` }} />
       </div>
@@ -195,6 +227,7 @@ export function LearnView({ episodeId, title, cards, settings, onExit }: LearnVi
         >
           <div className="ql-question__meta">
             <span className="ql-muted">{settings.direction === "en_ru" ? "Термин" : "Определение"}</span>
+            {card.kind !== "word" && <span className={`ql-badge ql-badge--kind ql-badge--${card.kind}`}>{KIND_LABELS[card.kind]}</span>}
             {current.stage === "input" && <span className="ql-chip">Напишите ответ</span>}
           </div>
           <div className="ql-prompt-row">
@@ -213,7 +246,11 @@ export function LearnView({ episodeId, title, cards, settings, onExit }: LearnVi
               </button>
             )}
           </div>
-          {settings.direction === "en_ru" && <p className="ql-question__example">«{card.example}»</p>}
+          {(showsContext(card, settings) || (senses.get(card.lemma) ?? 0) > 1 || feedback !== null) && (
+            <p className="ql-question__example" lang="en">
+              «{feedback ? card.example : contextLine(card, settings.direction)}»
+            </p>
+          )}
 
           {feedback ? (
             <div className="ql-feedback">
@@ -232,6 +269,9 @@ export function LearnView({ episodeId, title, cards, settings, onExit }: LearnVi
               <p className="ql-answer ql-answer--good">
                 Правильный ответ: {feedback.result.expected.join(" / ") || answerText(card, settings.direction)}
               </p>
+              {card.kind === "idiom" && card.literal_translation && (
+                <p className="ql-muted">дословно: {card.literal_translation}</p>
+              )}
               <button ref={continueRef} type="button" className="ql-button ql-button--primary" onClick={proceed}>
                 Продолжить
               </button>

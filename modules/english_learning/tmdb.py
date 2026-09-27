@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
+TMDB_POSTER_URL = "https://image.tmdb.org/t/p/w185"
 _TIMEOUT_SECONDS = 15.0
 
 
@@ -24,6 +25,35 @@ class TmdbShow:
     original_name: str
     year: int | None
     popularity: float
+    poster_path: str | None = None
+
+
+@dataclass(frozen=True)
+class TmdbMovie:
+    tmdb_id: int
+    title: str
+    original_title: str
+    year: int | None
+    popularity: float
+    poster_path: str | None = None
+
+
+@dataclass(frozen=True)
+class TmdbMovieDetails:
+    tmdb_id: int
+    title: str
+    year: int | None
+    imdb_id: str | None
+    runtime_minutes: int | None
+
+
+def poster_url(path: str | None) -> str | None:
+    return f"{TMDB_POSTER_URL}{path}" if path else None
+
+
+def _year(value: object) -> int | None:
+    text = str(value or "")
+    return int(text[:4]) if text[:4].isdigit() else None
 
 
 class TmdbClient:
@@ -62,6 +92,7 @@ class TmdbClient:
                     original_name=str(item.get("original_name") or ""),
                     year=int(first_air[:4]) if first_air[:4].isdigit() else None,
                     popularity=float(item.get("popularity") or 0.0),
+                    poster_path=item.get("poster_path") or None,
                 )
             )
         return shows
@@ -82,3 +113,32 @@ class TmdbClient:
     def english_name(self, tmdb_id: int) -> str | None:
         value = self._get(f"/tv/{tmdb_id}", {"language": "en-US"}).get("name")
         return str(value) if value else None
+
+    def search_movie(self, query: str, year: int | None = None) -> list[TmdbMovie]:
+        params: dict[str, Any] = {"query": query, "include_adult": "false"}
+        if year is not None:
+            params["year"] = year
+        payload = self._get("/search/movie", params)
+        return [
+            TmdbMovie(
+                tmdb_id=int(item["id"]),
+                title=str(item.get("title") or item.get("original_title") or ""),
+                original_title=str(item.get("original_title") or ""),
+                year=_year(item.get("release_date")),
+                popularity=float(item.get("popularity") or 0.0),
+                poster_path=item.get("poster_path") or None,
+            )
+            for item in payload.get("results", [])
+        ]
+
+    def movie_details(self, tmdb_id: int) -> TmdbMovieDetails:
+        payload = self._get(f"/movie/{tmdb_id}", {"language": "en-US"})
+        runtime = payload.get("runtime")
+        imdb = payload.get("imdb_id")
+        return TmdbMovieDetails(
+            tmdb_id=tmdb_id,
+            title=str(payload.get("title") or payload.get("original_title") or ""),
+            year=_year(payload.get("release_date")),
+            imdb_id=str(imdb) if imdb else None,
+            runtime_minutes=int(runtime) if isinstance(runtime, int) and runtime > 0 else None,
+        )

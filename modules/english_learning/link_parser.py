@@ -18,6 +18,7 @@ _EPISODE_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
     re.compile(r"сезон[ _-]?(?P<season>\d{1,2})[ ,_-]*сери[яи][ _-]?(?P<episode>\d{1,3})", re.IGNORECASE),
 )
+_YEAR = re.compile(r"\((?P<paren>(?:19|20)\d{2})\)|(?<![\d])(?P<bare>19[3-9]\d|20[0-4]\d)(?![\dp])")
 _SEASON_ONLY = re.compile(r"(?:season|сезон)[ _/-]?(?P<season>\d{1,2})", re.IGNORECASE)
 _TITLE_NOISE = re.compile(
     r"\b(watch|online|free|full|hd|1080p|720p|4k|смотреть|онлайн|бесплатно|в хорошем качестве|netflix|hbo|"
@@ -40,6 +41,8 @@ class LinkGuess:
     episode: int | None
     youtube_id: str | None = None
     page_title: str | None = None
+    kind: str | None = None
+    year: int | None = None
 
     @property
     def is_youtube(self) -> bool:
@@ -47,7 +50,21 @@ class LinkGuess:
 
     @property
     def complete(self) -> bool:
+        if self.kind == "movie":
+            return bool(self.series_title)
         return bool(self.series_title) and self.season is not None and self.episode is not None
+
+    @property
+    def looks_like_episode(self) -> bool:
+        return self.season is not None and self.episode is not None
+
+
+def find_year(*texts: str) -> int | None:
+    for text in texts:
+        match = _YEAR.search(text or "")
+        if match:
+            return int(match["paren"] or match["bare"])
+    return None
 
 
 def youtube_id(url: str) -> str | None:
@@ -136,6 +153,8 @@ def parse_link(url: str, page_title: str | None = None) -> LinkGuess:
         episode=episode,
         youtube_id=video_id,
         page_title=title_text or None,
+        kind="series" if season is not None and episode is not None else None,
+        year=find_year(title_text, slug),
     )
 
 
@@ -155,10 +174,25 @@ def fetch_page_title(url: str) -> str | None:
     return html.unescape(match.group(1)).strip() if match else None
 
 
-def merge(guess: LinkGuess, *, series_title: str | None, season: int | None, episode: int | None) -> LinkGuess:
+def merge(
+    guess: LinkGuess,
+    *,
+    series_title: str | None,
+    season: int | None,
+    episode: int | None,
+    kind: str | None = None,
+    year: int | None = None,
+) -> LinkGuess:
+    merged_season = season if season is not None else guess.season
+    merged_episode = episode if episode is not None else guess.episode
+    merged_kind = kind or guess.kind
+    if merged_kind is None and merged_season is not None and merged_episode is not None:
+        merged_kind = "series"
     return replace(
         guess,
         series_title=series_title or guess.series_title,
-        season=season if season is not None else guess.season,
-        episode=episode if episode is not None else guess.episode,
+        season=merged_season,
+        episode=merged_episode,
+        kind=merged_kind,
+        year=year if year is not None else guess.year,
     )

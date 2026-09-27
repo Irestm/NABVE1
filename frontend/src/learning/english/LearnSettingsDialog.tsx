@@ -37,6 +37,28 @@ export function LearnSettingsDialog({ settings, onSave, onClose }: LearnSettings
       </label>
 
       <fieldset className="ql-fieldset">
+        <legend className="ql-toggle-row__title">Показывать реплику из серии</legend>
+        <label className="ql-toggle-row">
+          <span className="ql-toggle-row__title">Для выражений</span>
+          <input
+            type="checkbox"
+            className="ql-switch"
+            checked={draft.contextForExpressions}
+            onChange={(event) => setDraft({ ...draft, contextForExpressions: event.target.checked })}
+          />
+        </label>
+        <label className="ql-toggle-row">
+          <span className="ql-toggle-row__title">Для слов</span>
+          <input
+            type="checkbox"
+            className="ql-switch"
+            checked={draft.contextForWords}
+            onChange={(event) => setDraft({ ...draft, contextForWords: event.target.checked })}
+          />
+        </label>
+      </fieldset>
+
+      <fieldset className="ql-fieldset">
         <legend className="ql-toggle-row__title">Направление</legend>
         <div className="ql-segmented">
           {DIRECTIONS.map((item) => (

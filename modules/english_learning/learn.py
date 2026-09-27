@@ -46,7 +46,10 @@ class SessionSummary:
 def expected_answers(card: Card, direction: Direction) -> list[str]:
     if direction == "en_ru":
         return list(card.translations_ru)
-    return list(dict.fromkeys([card.word, card.lemma]))
+    forms = [card.word, card.lemma]
+    if card.is_expression and card.surface_form:
+        forms.append(card.surface_form)
+    return list(dict.fromkeys(forms))
 
 
 def english_lemma_function(lemmatizer: Lemmatizer | None = None) -> Callable[[str], str]:
@@ -104,6 +107,7 @@ def answer(
                 direction,
                 lemma=card.lemma,
                 lemmatize=lemmatize or english_lemma_function(),
+                expression=card.is_expression,
             )
         uow.reviews.add(
             ReviewEntry(card_id=card_id, session_id=session_id, mode=mode, correct=result.correct, answer=given)

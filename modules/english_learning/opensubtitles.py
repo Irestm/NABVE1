@@ -6,10 +6,14 @@ from typing import Any
 import httpx
 
 from modules.english_learning.credentials import OpenSubtitlesCredentials
+from modules.english_learning.srt_parser import SrtParseError, parse_srt
 
 OPENSUBTITLES_BASE_URL = "https://api.opensubtitles.com/api/v1"
 USER_AGENT = "NABVE v0.3"
 _TIMEOUT_SECONDS = 20.0
+MOVIE_DOWNLOAD_ATTEMPTS = 2
+MIN_RUNTIME_RATIO = 0.75
+MAX_RUNTIME_RATIO = 1.1
 
 
 class OpenSubtitlesError(RuntimeError):
@@ -89,18 +93,21 @@ class OpenSubtitlesClient:
             self._base_url = f"https://{str(base_url).removeprefix('https://').rstrip('/')}/api/v1"
 
     def search(self, imdb_id: str, season: int, episode: int) -> list[SubtitleFile]:
+        return self._search(
+            {
+                "episode_number": episode,
+                "languages": "en",
+                "parent_imdb_id": _imdb_number(imdb_id),
+                "season_number": season,
+            }
+        )
+
+    def search_movie(self, imdb_id: str) -> list[SubtitleFile]:
+        return self._search({"imdb_id": _imdb_number(imdb_id), "languages": "en", "type": "movie"})
+
+    def _search(self, params: dict[str, Any]) -> list[SubtitleFile]:
         payload = self._check(
-            self._request(
-                "GET",
-                f"{OPENSUBTITLES_BASE_URL}/subtitles",
-                headers=self._headers(),
-                params={
-                    "episode_number": episode,
-                    "languages": "en",
-                    "parent_imdb_id": _imdb_number(imdb_id),
-                    "season_number": season,
-                },
-            )
+            self._request("GET", f"{OPENSUBTITLES_BASE_URL}/subtitles", headers=self._headers(), params=params)
         )
         files: list[SubtitleFile] = []
         for item in payload.get("data", []):
@@ -147,3 +154,26 @@ class OpenSubtitlesClient:
     def fetch_episode(self, imdb_id: str, season: int, episode: int) -> str | None:
         best = self.best_file(self.search(imdb_id, season, episode))
         return self.download(best.file_id) if best is not None else None
+
+    def movie_candidates(self, files: list[SubtitleFile]) -> list[SubtitleFile]:
+        usable = [file for file in files if not file.machine_translated] or files
+        return sorted(usable, key=lambda file: (file.download_count, not file.hearing_impaired), reverse=True)
+
+    def fetch_movie(self, imdb_id: str, runtime_minutes: int | None) -> str | None:
+        candidates = self.movie_candidates(self.search_movie(imdb_id))
+        fallback: str | None = None
+        for file in candidates[:MOVIE_DOWNLOAD_ATTEMPTS]:
+            text = self.download(file.file_id)
+            fallback = fallback or text
+            if runtime_minutes is None or matches_runtime(text, runtime_minutes):
+                return text
+        return fallback
+
+
+def matches_runtime(srt_text: str, runtime_minutes: int) -> bool:
+    try:
+        cues = parse_srt(srt_text)
+    except SrtParseError:
+        return False
+    ratio = cues[-1].end_ms / (runtime_minutes * 60_000)
+    return MIN_RUNTIME_RATIO <= ratio <= MAX_RUNTIME_RATIO
