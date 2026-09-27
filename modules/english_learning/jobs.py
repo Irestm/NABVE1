@@ -7,7 +7,8 @@ from dataclasses import dataclass, replace
 from typing import Literal
 
 from core.logger import get_logger
-from modules.english_learning.card_generation import GenerationProgress, generate_cards
+from modules.english_learning.card_generation import GenerationProgress
+from modules.english_learning.pipeline import process_episode
 
 logger = get_logger(__name__)
 
@@ -24,14 +25,16 @@ class CardJob:
     created: int = 0
     skipped: int = 0
     error: str | None = None
+    phase: str = "cards"
 
 
 Generator = Callable[..., Awaitable[GenerationProgress]]
 
 
 class CardJobRegistry:
-    def __init__(self, generator: Generator = generate_cards) -> None:
+    def __init__(self, generator: Generator = process_episode) -> None:
         self._generator = generator
+        self._gate: asyncio.Semaphore | None = None
         self._jobs: dict[int, CardJob] = {}
         self._tasks: dict[int, asyncio.Task[None]] = {}
         self._ids = itertools.count(1)
@@ -60,12 +63,16 @@ class CardJobRegistry:
             total=progress.total,
             created=progress.created,
             skipped=progress.skipped,
+            phase=progress.phase,
         )
 
     async def _run(self, job_id: int) -> None:
         job = self._jobs[job_id]
+        if self._gate is None:
+            self._gate = asyncio.Semaphore(1)
         try:
-            await self._generator(job.episode_id, on_progress=lambda progress: self._update(job_id, progress))
+            async with self._gate:
+                await self._generator(job.episode_id, on_progress=lambda progress: self._update(job_id, progress))
         except Exception as exc:
             logger.exception("Card generation job %d for episode %d failed", job_id, job.episode_id)
             self._jobs[job_id] = replace(self._jobs[job_id], state="failed", error=str(exc))

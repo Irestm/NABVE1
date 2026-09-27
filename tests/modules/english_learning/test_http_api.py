@@ -113,3 +113,28 @@ def test_library_has_folder_names() -> None:
     episode = client.get("/api/english/library", headers=AUTH).json()["series"][0]["episodes"][0]
 
     assert episode["display_name"] == "Breaking Bad — S01E03 — 3 слова"
+
+
+def test_reanalyze_and_stats_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from modules.english_learning import http_api, pipeline
+    from modules.english_learning.domain import EpisodeStats
+
+    stats = EpisodeStats(10, 5, {"A1": 10}, {"A1": 5}, 1.5, 150.0, 0.0, 0.1, [("ubiquitous", 2)], {}, {}, 3, 0, 1.0)
+    monkeypatch.setattr(
+        pipeline, "rebuild", lambda episode_id: pipeline.RebuildResult(words={episode_id: []}, archived=2, restored=0)
+    )
+    monkeypatch.setattr(pipeline, "rebuild_all", lambda: pipeline.ReanalyzeSummary(4, 1, 0, ["x"]))
+    monkeypatch.setattr(http_api.service_layer, "episode_stats", lambda episode_id: stats if episode_id == 1 else None)
+    app = FastAPI()
+    app.include_router(http_api.router)
+    client = TestClient(app)
+
+    reanalyzed = client.post("/api/english/episodes/1/reanalyze").json()
+    assert reanalyzed["archived"] == 2 and reanalyzed["job"]["episode_id"] == 1
+    assert client.post("/api/english/reanalyze").json() == {"candidates": 4, "archived": 1, "restored": 0, "failed": ["x"]}
+    body = client.get("/api/english/episodes/1/stats").json()
+    assert body["words_per_minute"] == 150.0 and body["top_above_b2"] == [["ubiquitous", 2]]
+    assert client.get("/api/english/episodes/2/stats").status_code == 404

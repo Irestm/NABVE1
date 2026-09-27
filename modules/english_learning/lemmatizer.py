@@ -22,6 +22,8 @@ class AnalyzedToken:
     is_alpha: bool
     like_num: bool
     is_named_entity: bool
+    dep: str = ""
+    head: int = -1
 
 
 class Lemmatizer(Protocol):
@@ -42,7 +44,7 @@ class SpacyLemmatizer:
                 except ImportError as exc:
                     raise LemmatizerUnavailableError("Не установлен spaCy: pip install spacy") from exc
                 try:
-                    self._nlp = spacy.load(self._model_name, disable=["parser"])
+                    self._nlp = spacy.load(self._model_name)
                 except OSError as exc:
                     raise LemmatizerUnavailableError(
                         f"Не установлена модель spaCy: python -m spacy download {self._model_name}"
@@ -61,6 +63,8 @@ class SpacyLemmatizer:
                     is_alpha=token.is_alpha,
                     like_num=token.like_num,
                     is_named_entity=token.ent_type_ in _PERSON_LIKE_ENTITIES,
+                    dep=token.dep_,
+                    head=token.head.i,
                 )
                 for token in doc
             ]

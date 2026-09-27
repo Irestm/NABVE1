@@ -6,7 +6,7 @@ from tests.modules.english_learning.conftest import FakeLemmatizer
 
 
 class _Cefr:
-    levels = {("figure", "VERB"): "B1", ("decide", "VERB"): "A2", ("honest", "ADJ"): "B1", ("house", "NOUN"): "A1"}
+    levels = {("figure", "VERB"): "B1", ("decide", "VERB"): "A2", ("honest", "ADJ"): "B1", ("house", "NOUN"): "A1", ("consequence", "NOUN"): "C1"}
 
     def level(self, lemma: str, pos: str) -> str | None:
         return self.levels.get((lemma, pos))
@@ -16,8 +16,8 @@ def _cues(*texts: str) -> list[SubtitleCue]:
     return [SubtitleCue(index=i + 1, start_ms=i * 1000, end_ms=i * 1000 + 900, text=text) for i, text in enumerate(texts)]
 
 
-def test_keeps_a2_b1_words_and_drops_other_levels_names_stops_numbers() -> None:
-    cues = _cues("I figured it out John.", "We decided 42 house.", "Walter is honest.")
+def test_keeps_a1_to_b2_words_and_drops_c_levels_names_stops_numbers() -> None:
+    cues = _cues("I figured it out John.", "We decided 42 house.", "Walter is honest.", "Consequence!")
 
     words = select_words(cues, FakeLemmatizer(), _Cefr())
 
@@ -25,6 +25,7 @@ def test_keeps_a2_b1_words_and_drops_other_levels_names_stops_numbers() -> None:
         ("figure", "B1", "core"),
         ("decide", "A2", "core"),
         ("honest", "B1", "core"),
+        ("house", "A1", "core"),
     }
 
 

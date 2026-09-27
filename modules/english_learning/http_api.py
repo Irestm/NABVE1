@@ -8,7 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from core.secret_store import SecretStoreUnavailableError
-from modules.english_learning import credentials, learn, link_import, listening, service_layer
+from modules.english_learning import credentials, learn, link_import, listening, pipeline, service_layer
 from modules.ai_bridge.providers.base import AllProvidersFailed
 from modules.english_learning.cefr import CEFRJ_ATTRIBUTION, CefrUnavailableError
 from modules.english_learning.domain import Card, Episode, EpisodeWord
@@ -42,6 +42,11 @@ class SeriesModel(BaseModel):
     episodes: list[EpisodeModel]
 
 
+class ExampleModel(BaseModel):
+    text: str
+    timestamp_ms: int
+
+
 class WordModel(BaseModel):
     id: int | None
     lemma: str
@@ -52,6 +57,8 @@ class WordModel(BaseModel):
     example: str
     timestamp_ms: int
     surface: str
+    kind: str = "word"
+    examples: list[ExampleModel] = []
 
 
 class CardModel(BaseModel):
@@ -66,6 +73,13 @@ class CardModel(BaseModel):
     example: str
     timestamp_ms: int
     category: str
+    kind: str = "word"
+    surface_form: str | None = None
+    sense_label: str | None = None
+    literal_translation: str | None = None
+    cefr_source: str | None = None
+    confidence: float | None = None
+    archived: bool = False
 
 
 class JobModel(BaseModel):
@@ -77,6 +91,7 @@ class JobModel(BaseModel):
     created: int
     skipped: int
     error: str | None
+    phase: str = "cards"
 
 
 class ImportResponse(BaseModel):
@@ -125,6 +140,13 @@ def _card_model(card: Card) -> CardModel:
         example=card.example,
         timestamp_ms=card.timestamp_ms,
         category=card.category,
+        kind=card.kind,
+        surface_form=card.surface_form,
+        sense_label=card.sense_label,
+        literal_translation=card.literal_translation,
+        cefr_source=card.cefr_source,
+        confidence=card.confidence,
+        archived=card.archived,
     )
 
 
@@ -138,6 +160,7 @@ def _job_model(job: CardJob) -> JobModel:
         created=job.created,
         skipped=job.skipped,
         error=job.error,
+        phase=job.phase,
     )
 
 
@@ -152,6 +175,8 @@ def _word_model(word: EpisodeWord) -> WordModel:
         example=word.example,
         timestamp_ms=word.timestamp_ms,
         surface=word.surface,
+        kind=word.kind,
+        examples=[ExampleModel(text=item.text, timestamp_ms=item.timestamp_ms) for item in word.examples],
     )
 
 
@@ -523,3 +548,77 @@ async def get_listening_clip(episode_id: int, cue_index: int) -> ClipModel:
     except listening.ListeningError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return ClipModel(audio_base64=audio, mime="audio/mp4")
+
+
+class ReanalyzeModel(BaseModel):
+    candidates: int
+    archived: int
+    restored: int
+    job: JobModel | None = None
+
+
+class ReanalyzeAllModel(BaseModel):
+    candidates: int
+    archived: int
+    restored: int
+    failed: list[str]
+
+
+class StatsModel(BaseModel):
+    episode_id: int
+    token_count: int
+    lemma_count: int
+    tokens_by_level: dict[str, int]
+    lemmas_by_level: dict[str, int]
+    expressions_per_1000: float
+    words_per_minute: float
+    non_english_share: float
+    off_list_share: float
+    top_above_b2: list[tuple[str, int]]
+
+
+@router.post("/episodes/{episode_id}/reanalyze", response_model=ReanalyzeModel)
+async def reanalyze_episode(episode_id: int) -> ReanalyzeModel:
+    try:
+        result = await asyncio.to_thread(pipeline.rebuild, episode_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (CefrUnavailableError, LemmatizerUnavailableError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    job = card_jobs.start(episode_id)
+    return ReanalyzeModel(
+        candidates=sum(len(words) for words in result.words.values()),
+        archived=result.archived,
+        restored=result.restored,
+        job=_job_model(job),
+    )
+
+
+@router.post("/reanalyze", response_model=ReanalyzeAllModel)
+async def reanalyze_library() -> ReanalyzeAllModel:
+    try:
+        summary = await asyncio.to_thread(pipeline.rebuild_all)
+    except (CefrUnavailableError, LemmatizerUnavailableError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ReanalyzeAllModel(
+        candidates=summary.episodes, archived=summary.archived, restored=summary.restored, failed=summary.failed
+    )
+
+
+@router.get("/episodes/{episode_id}/stats", response_model=StatsModel)
+async def get_episode_stats(episode_id: int) -> StatsModel:
+    stats = await asyncio.to_thread(service_layer.episode_stats, episode_id)
+    if stats is None:
+        raise HTTPException(status_code=404, detail="Статистика эпизода ещё не посчитана")
+    return StatsModel(
+        episode_id=episode_id,
+        token_count=stats.token_count,
+        lemma_count=stats.lemma_count,
+        tokens_by_level=stats.tokens_by_level,
+        lemmas_by_level=stats.lemmas_by_level,
+        expressions_per_1000=stats.expressions_per_1000,
+        words_per_minute=stats.words_per_minute,
+        non_english_share=stats.non_english_share,
+        off_list_share=stats.off_list_share,
+        top_above_b2=stats.top_above_b2,
+    )

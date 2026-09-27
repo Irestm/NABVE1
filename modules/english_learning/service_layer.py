@@ -4,11 +4,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from core.logger import get_logger
-from modules.english_learning import cefr, subtitle_store
-from modules.english_learning.analysis import analyze_cues
-from modules.english_learning.domain import Card, Episode, EpisodeSource, EpisodeWord, Title
+from modules.english_learning import pipeline, subtitle_store
+from modules.english_learning.domain import Card, Episode, EpisodeSource, EpisodeStats, EpisodeWord, Title
 from modules.english_learning.language_filter import LanguageDetector
-from modules.english_learning.lemmatizer import Lemmatizer, get_lemmatizer
+from modules.english_learning.lemmatizer import Lemmatizer
 from modules.english_learning.srt_parser import cues_to_srt, decode_srt, parse_srt, parse_vtt
 from modules.english_learning.uow import EnglishUnitOfWork
 
@@ -105,13 +104,6 @@ def import_subtitles(
     if season < 0 or episode < 0:
         raise ValueError("Сезон и серия не могут быть отрицательными")
     cues = parse_srt(srt_text)
-    if ensure_cefr is None:
-        cefr.ensure_loaded(uow_factory)
-    else:
-        ensure_cefr()
-    lookup = cefr.load_lookup(uow_factory)
-    analysis = analyze_cues(cues, lemmatizer or get_lemmatizer(), lookup, detector=detector)
-    candidates = analysis.candidates
     variant = "ai_guess" if source == "ai_guess" else "en"
     srt_path = subtitle_store.save(imdb_id, series_title, season, episode, srt_text, variant)
 
@@ -120,30 +112,15 @@ def import_subtitles(
         assert title.id is not None
         stored_episode = _upsert_episode(uow, title.id, season, episode, episode_title, source, str(srt_path))
         assert stored_episode.id is not None
-        words = [
-            EpisodeWord(
-                episode_id=stored_episode.id,
-                lemma=candidate.lemma,
-                pos=candidate.pos,
-                cefr=candidate.cefr,
-                category=candidate.category,
-                count=candidate.count,
-                example=candidate.example,
-                timestamp_ms=candidate.timestamp_ms,
-                surface=candidate.surface,
-                kind=candidate.kind,
-                examples=list(candidate.examples),
-                cefr_source=candidate.cefr_source,
-                confidence=candidate.confidence,
-                details=candidate.details,
-            )
-            for candidate in candidates
-        ]
-        uow.words.replace_for_episode(stored_episode.id, words)
         uow.commit()
-    logger.info(
-        "Imported %s %s: %d cues, %d candidate words", title.name, stored_episode.code, len(cues), len(words)
+    rebuilt = pipeline.rebuild(
+        stored_episode.id,
+        uow_factory=uow_factory,
+        deps=pipeline.PipelineDeps(lemmatizer=lemmatizer, detector=detector, ensure_cefr=ensure_cefr),
+        cues=cues,
     )
+    words = rebuilt.words.get(stored_episode.id, [])
+    logger.info("Imported %s %s: %d cues, %d candidates", title.name, stored_episode.code, len(cues), len(words))
     return ImportResult(title=title, episode=stored_episode, words=words)
 
 
@@ -237,3 +214,10 @@ def delete_card(card_id: int, uow_factory: Callable[[], EnglishUnitOfWork] = Eng
         deleted = uow.cards.delete(card_id)
         uow.commit()
         return deleted
+
+
+def episode_stats(
+    episode_id: int, uow_factory: Callable[[], EnglishUnitOfWork] = EnglishUnitOfWork
+) -> EpisodeStats | None:
+    with uow_factory() as uow:
+        return uow.stats.get(episode_id)
