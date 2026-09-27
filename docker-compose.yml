@@ -1,59 +1,70 @@
+name: nabve
+
+x-host-integration: &host-integration
+  # Host networking keeps the backend at 127.0.0.1:8756 exactly like a native
+  # run, lets it reach a host Ollama on 127.0.0.1:11434, and lets the LAN-IP
+  # detection for the phone QR code (core/config.py) see the real interface.
+  network_mode: host
+  # Deliberate trust trade-off for a single-user local assistant: D-Bus,
+  # X11 and audio devices must reach the host (shutdown/reboot, keyring,
+  # notify-send, microphone, pyautogui). Never expose this beyond localhost.
+  privileged: true
+
 services:
-  backend:
+  nabve:
+    <<: *host-integration
     build:
       context: .
-      # Baked into the image as the "appuser" account (see Dockerfile) rather
-      # than applied via a runtime `user:` override, so $HOME actually exists
-      # in /etc/passwd instead of being an unresolvable numeric UID — that
-      # gap is what broke huggingface_hub's cache path (used by faster-whisper
-      # to download the Whisper model) and Playwright's browser lookup under
-      # the previous setup. If `id -u`/`id -g` on your machine isn't 1000,
-      # run: export UID=$(id -u) GID=$(id -g)  before `docker compose up --build`.
+      target: runtime
       args:
         UID: "${UID:-1000}"
         GID: "${GID:-1000}"
-    image: nabve-backend
-    container_name: nabve-backend
-    # Host networking so the backend is reachable at 127.0.0.1:8756 exactly
-    # like the native (non-docker) run, and so the LAN-IP detection used for
-    # the phone QR code (core/config.py:detect_lan_ip) sees the real interface.
-    network_mode: host
-    # Privileged so the container's D-Bus/X11/audio access isn't blocked by
-    # normal device permission checks (CAP_DAC_OVERRIDE) — needed for
-    # systemctl shutdown/reboot, keyring, notify-send and mic capture to
-    # actually reach the host. This is a deliberate trust trade-off for a
-    # single-user local assistant, not something to expose beyond localhost.
-    privileged: true
+        TORCH_INDEX_URL: "${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}"
+    image: nabve:local
+    # Rebuild on every `docker compose up` — BuildKit caches every layer, so an
+    # unchanged tree rebuilds in seconds and a changed one is never stale.
+    pull_policy: build
+    container_name: nabve
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 20s
+    env_file:
+      - path: .env
+        required: false
     environment:
-      - DISPLAY=${DISPLAY}
-      - XAUTHORITY=/tmp/.Xauthority
-      - DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${UID:-1000}/bus
+      ASSISTANT_PORT: "${ASSISTANT_PORT:-8756}"
+      DISPLAY: "${DISPLAY:-:0}"
+      XAUTHORITY: /tmp/.Xauthority
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/${UID:-1000}/bus"
+      PULSE_SERVER: "unix:/run/user/${UID:-1000}/pulse/native"
     volumes:
-      # Live code mount: edit Python source on the host, the container picks
-      # it up on next restart (uvicorn/watchdog isn't hot-reload by default).
-      - .:/app
-      # X11 socket + auth cookie, so Playwright's visible browser windows
-      # (AI provider login) and pyautogui mouse/keyboard control render on
-      # your real desktop instead of failing with "cannot connect to display".
+      - ./data:/app/data
+      - ./logs:/app/logs
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - ${HOME}/.Xauthority:/tmp/.Xauthority:ro
-      # Session D-Bus (notify-send, keyring/Secret Service) and system D-Bus
-      # (systemctl poweroff/reboot).
+      - ${XAUTHORITY_HOST:-${HOME}/.Xauthority}:/tmp/.Xauthority:ro
       - /run/user/${UID:-1000}/bus:/run/user/${UID:-1000}/bus
+      - /run/user/${UID:-1000}/pulse:/run/user/${UID:-1000}/pulse
       - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    container_name: nabve-ollama
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8756/api/status"]
-      interval: 10s
-      timeout: 3s
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 5s
       retries: 5
-    # Uncomment if you've set up modules/hardware_adaptive (NVIDIA GPU,
-    # llama-cpp-python, a downloaded GGUF model) and want the container to
-    # use it instead of always falling back to modules/ai_bridge. Requires
-    # the nvidia-container-toolkit installed on the host.
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+
+volumes:
+  ollama-models:

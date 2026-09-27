@@ -1,0 +1,9 @@
+# Разработка: код Python монтируется с хоста, пересборка не нужна —
+# достаточно `docker compose -f docker-compose.yml -f docker-compose.dev.yml restart nabve`.
+services:
+  nabve:
+    pull_policy: missing
+    volumes:
+      - ./core:/app/core
+      - ./modules:/app/modules
+      - ./scripts:/app/scripts

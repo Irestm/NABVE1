@@ -118,6 +118,24 @@ launch installs everything it needs silently in the background, no
 terminal involved. The rest of this section is the from-source setup, for
 developers/contributors.
 
+### Docker — one command
+```bash
+cp .env.example .env   # once; adjust UID/GID if `id -u` isn't 1000
+docker compose up
+```
+The first build is slow (LibreOffice, Chromium for Playwright, Python deps); after that every layer is cached and
+`docker compose up` rebuilds in seconds. The container log prints a `http://127.0.0.1:8756/?token=…` link — open it in
+a browser once (the token is remembered). Data lives in `./data` and `./logs` on the host.
+
+- Local model in a container: `docker compose --profile ollama up` (skip the profile if Ollama already runs on the
+  host — the backend reaches it at `127.0.0.1:11434`). GPU: add `-f docker-compose.gpu.yml` (needs
+  nvidia-container-toolkit).
+- Development without rebuilds: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` mounts `core/`,
+  `modules/`, `scripts/` from the host.
+- The container uses host networking and reaches the host's X11/D-Bus (OS control, notifications, microphone) — a
+  deliberate trade-off for a local single-user assistant; don't expose it publicly.
+- Don't run it alongside the native setup (`npm run dev`): both bind port 8756.
+
 ### Requirements
 - Python 3.12, Node.js 18+
 - A microphone and speakers/headphones for speech I/O

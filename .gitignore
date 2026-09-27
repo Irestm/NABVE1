@@ -70,3 +70,6 @@ data/providers.yaml
 data/subtitles/
 # English Learning listening clips (modules/english_learning/listening.py)
 data/listening/
+
+# Docker: локальные переменные окружения (шаблон — .env.example)
+.env
