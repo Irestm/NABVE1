@@ -35,7 +35,7 @@ _FUNCTION_WORDS: frozenset[str] = frozenset(
         "this", "that", "these", "those", "as", "so", "if", "not", "no", "do", "does", "did", "'s", "all", "one",
     }
 )
-_BORROWING_TEMPLATES: frozenset[str] = frozenset({"bor", "bor+", "lbor", "der", "der+", "uder"})
+_BORROWING_TEMPLATES: frozenset[str] = frozenset({"bor", "bor+", "lbor", "slbor", "obor"})
 
 
 def kaikki_url(pos: str) -> str:
