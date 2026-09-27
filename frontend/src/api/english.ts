@@ -356,3 +356,52 @@ export function reanalyzeEpisode(episodeId: number): Promise<ReanalyzeResult> {
 export function reanalyzeLibrary(): Promise<ReanalyzeResult> {
   return requestJson<ReanalyzeResult>("/api/english/reanalyze", { method: "POST" });
 }
+
+export interface DifficultyResult {
+  title: string;
+  kind: string;
+  year: number | null;
+  title_id: number | null;
+  episodes_analyzed: number;
+  coverage: number;
+  verdict: "Подходит" | "Подходит с усилием" | "Пока рано";
+  user_level: string;
+  words_per_minute: number;
+  above_level_count: number;
+  examples: string[];
+  distribution: Record<string, number>;
+  factors: string[];
+  small_sample: boolean;
+  has_cards: boolean;
+}
+
+export interface AnalysisOffer {
+  title: string;
+  year: number | null;
+  kind: string;
+}
+
+export interface AnalyzeResult {
+  status: "analyzed" | "needs_input";
+  title_id: number | null;
+  message: string;
+  options: string[];
+}
+
+export interface AboveLevelWord {
+  lemma: string;
+  level: string;
+  count: number;
+}
+
+export function analyzeTitle(offer: AnalysisOffer): Promise<AnalyzeResult> {
+  return requestJson<AnalyzeResult>("/api/english/assistant/analyze", { method: "POST", body: JSON.stringify(offer) });
+}
+
+export function generateTitleCards(titleId: number): Promise<{ jobs: number }> {
+  return requestJson<{ jobs: number }>(`/api/english/assistant/titles/${titleId}/generate`, { method: "POST" });
+}
+
+export function wordsAboveLevel(titleId: number): Promise<AboveLevelWord[]> {
+  return requestJson<AboveLevelWord[]>(`/api/english/assistant/titles/${titleId}/above-level`);
+}

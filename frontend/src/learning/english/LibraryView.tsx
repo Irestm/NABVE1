@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { ChevronDown, ChevronRight, Clapperboard, Folder, KeyRound, Settings2, SlidersHorizontal, TriangleAlert } from "lucide-react";
+import { ChevronDown, ChevronRight, Clapperboard, Folder, KeyRound, Settings, SlidersHorizontal, TriangleAlert } from "lucide-react";
 import type { EnglishEpisode, EnglishLibrary, EnglishTitle, ImportedEpisode } from "../../api/english";
 import { CredentialsDialog } from "./CredentialsDialog";
 import { FilterOverrideDialog } from "./FilterOverrideDialog";
@@ -33,8 +33,6 @@ function EpisodeTile({
         <span className="ql-set__title">{episode.display_name}</span>
         {episode.title && <span className="ql-muted">{episode.title}</span>}
         <span className="ql-set__footer">
-          <span className="ql-chip">{wordsLabel(episode.words)}</span>
-          <span className="ql-chip">{phrasesLabel(episode.phrases)}</span>
           {episode.source === "ai_guess" && (
             <span className="ql-badge ql-badge--warn">
               <TriangleAlert size={12} /> неточно
@@ -123,7 +121,7 @@ export function LibraryView({
             aria-label="Настройки английского"
             title="Настройки английского"
           >
-            <Settings2 size={20} />
+            <Settings size={20} />
           </button>
           {headerActions}
         </div>

@@ -485,3 +485,37 @@ async def _import_movie(
         split=request.split_movie,
         part_minutes=request.part_minutes,
     )
+
+
+async def import_by_title(
+    title: str, kind: str | None, year: int | None, deps: LinkImportDeps | None = None
+) -> ImportResult | NeedsInput:
+    deps = deps or LinkImportDeps()
+    known_kind = kind if kind in ("series", "movie") else None
+    request = LinkImportRequest(
+        url="",
+        series_title=title,
+        kind=known_kind,
+        year=year,
+        season=1 if known_kind == "series" else None,
+        episode=1 if known_kind == "series" else None,
+    )
+    guess = LinkGuess(
+        url="",
+        series_title=title,
+        season=request.season,
+        episode=request.episode,
+        kind=known_kind,
+        year=year,
+    )
+    guess, alternatives, choice = await _determine_kind(request, guess, deps)
+    if choice is not None:
+        return choice
+    if guess.kind == "series" and (guess.season is None or guess.episode is None):
+        guess = replace(guess, season=guess.season or 1, episode=guess.episode or 1)
+    needed = _details_needed(guess, alternatives)
+    if needed is not None:
+        return needed
+    if guess.kind == "movie":
+        return await _import_movie(request, guess, alternatives, deps)
+    return await _import_series(request, guess, alternatives, deps)

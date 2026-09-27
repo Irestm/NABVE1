@@ -238,7 +238,7 @@ export function ImportPanel({ onImported }: ImportPanelProps): JSX.Element {
         <span>Разбить фильм на части</span>
       </label>
       {details.split && (
-        <label className="ql-check">
+        <label className="ql-split-row__minutes">
           <span>по</span>
           <input
             className="ql-input ql-input--narrow"

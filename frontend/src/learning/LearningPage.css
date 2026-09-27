@@ -1203,3 +1203,193 @@
     grid-row: 2;
   }
 }
+
+.ql-split-row__minutes {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ql-text-dim);
+  font-weight: 600;
+}
+
+.ql-button--small {
+  min-height: 34px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.ql-difficulty,
+.ql-offer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--ql-radius-sm);
+  background: var(--ql-surface);
+}
+
+.ql-difficulty__head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ql-verdict {
+  align-self: flex-start;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.ql-verdict--good {
+  background: var(--ql-good-soft);
+  color: var(--ql-good);
+}
+
+.ql-verdict--warn {
+  background: var(--ql-warn-soft);
+  color: var(--ql-warn);
+}
+
+.ql-verdict--bad {
+  background: var(--ql-bad-soft);
+  color: var(--ql-bad);
+}
+
+.ql-coverage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ql-coverage__label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ql-text-dim);
+}
+
+.ql-coverage__label strong {
+  color: var(--ql-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ql-coverage__track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--ql-surface-sunken);
+}
+
+.ql-coverage__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  background: var(--ql-accent);
+}
+
+.ql-coverage__mark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ql-text-dim);
+}
+
+.ql-coverage__scale {
+  position: relative;
+  height: 14px;
+  font-size: 11px;
+  color: var(--ql-text-faint);
+}
+
+.ql-coverage__scale span {
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+.ql-coverage__scale span:first-child {
+  transform: none;
+}
+
+.ql-dist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.ql-dist__caption {
+  font-size: 13px;
+  color: var(--ql-text-dim);
+}
+
+.ql-dist__bar {
+  display: flex;
+  gap: 2px;
+  height: 12px;
+}
+
+.ql-dist__segment {
+  min-width: 2px;
+  height: 100%;
+}
+
+.ql-dist__segment:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.ql-dist__segment:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+.ql-dist__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+  color: var(--ql-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.ql-dist__legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ql-dist__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.ql-difficulty__examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ql-above-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  font-size: 13px;
+}
+
+.ql-above-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}

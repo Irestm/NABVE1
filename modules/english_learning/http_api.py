@@ -8,7 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from core.secret_store import SecretStoreUnavailableError
-from modules.english_learning import credentials, learn, link_import, listening, pipeline, service_layer
+from modules.english_learning import assistant_http, credentials, learn, link_import, listening, pipeline, service_layer
 from modules.ai_bridge.providers.base import AllProvidersFailed
 from modules.english_learning.cefr import CEFRJ_ATTRIBUTION, CefrUnavailableError
 from modules.english_learning.domain import Card, Episode, EpisodeWord, FilterSettings, Title
@@ -758,3 +758,6 @@ async def put_module_settings(body: ModuleSettingsUpdate) -> ModuleSettingsModel
         lambda: service_layer.save_module_settings(user_level=body.user_level, allow_answer_hints=body.allow_answer_hints)
     )
     return ModuleSettingsModel(user_level=settings.user_level, allow_answer_hints=settings.allow_answer_hints)  # type: ignore[arg-type]
+
+
+router.include_router(assistant_http.router)

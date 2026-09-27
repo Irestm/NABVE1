@@ -8,7 +8,7 @@ interface Course {
   subtitle: string;
 }
 
-const COURSES: Course[] = [{ id: "english", title: "English", subtitle: "Слова из сериалов" }];
+const COURSES: Course[] = [{ id: "english", title: "English", subtitle: "Сериалы и фильмы" }];
 
 export function LearningPage(): JSX.Element {
   const [courseId, setCourseId] = useState(COURSES[0]?.id ?? "english");

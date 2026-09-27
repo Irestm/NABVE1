@@ -134,6 +134,27 @@ export async function requestJson<T>(path: string, init?: RequestInit): Promise<
   return (await response.json()) as T;
 }
 
+export async function requestStream(path: string, body: unknown, signal: AbortSignal): Promise<Response> {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    signal,
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...authHeaders() },
+  });
+  if (!response.ok || !response.body) {
+    const detail = await response
+      .json()
+      .then((payload: unknown) =>
+        typeof payload === "object" && payload !== null && "detail" in payload
+          ? String((payload as { detail: unknown }).detail)
+          : null,
+      )
+      .catch(() => null);
+    throw new Error(detail ?? `Request to ${path} failed with status ${response.status}`);
+  }
+  return response;
+}
+
 export async function requestForm<T>(path: string, form: FormData): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, { method: "POST", body: form, headers: authHeaders() });
   if (!response.ok) {
