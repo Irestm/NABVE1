@@ -810,9 +810,28 @@ _BOARD_GAME_KIND_MARKERS: dict[str, dict[str, str]] = {
 }
 
 AFFIRMATIVE_PHRASES: dict[str, set[str]] = {
-    "ru": {"да", "подтверждаю", "согласен", "выполняй"},
-    "uk": {"так", "підтверджую", "згоден", "виконуй"},
-    "en": {"yes", "confirm", "confirmed", "do it", "go ahead"},
+    "ru": {
+        "да", "ага", "угу", "ок", "окей", "давай", "конечно", "подтверждаю", "согласен", "согласна",
+        "выполняй", "выключай", "перезагружай", "делай", "валяй", "хорошо", "ладно", "можно", "разумеется",
+        "естественно", "верно", "точно", "так точно", "не вопрос", "поехали", "yes", "yeah", "sure", "ok", "okay",
+    },
+    "uk": {
+        "так", "ага", "угу", "ок", "окей", "давай", "звісно", "підтверджую", "згоден", "згодна", "виконуй",
+        "вимикай", "роби", "добре", "гаразд", "можна", "авжеж", "yes", "ok",
+    },
+    "en": {
+        "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "confirm", "confirmed", "do it", "go ahead",
+        "of course", "absolutely", "right", "go",
+    },
+}
+
+NEGATIVE_PHRASES: dict[str, set[str]] = {
+    "ru": {
+        "нет", "неа", "не надо", "не нужно", "не стоит", "не сейчас", "не выключай", "не делай", "отмена",
+        "отмени", "отменить", "отставить", "стоп", "подожди", "погоди",
+    },
+    "uk": {"ні", "не треба", "не потрібно", "не вимикай", "скасуй", "скасувати", "відміна", "стоп", "зачекай"},
+    "en": {"no", "nope", "don't", "do not", "cancel", "stop", "wait", "not now"},
 }
 
 # Deliberately short, single-word-ish phrases: barge-in (see
@@ -1374,4 +1393,16 @@ def is_affirmative(text: str, language: str) -> bool:
     normalized = _normalize(text)
     if not normalized:
         return False
-    return fuzzy_matches_any(normalized, AFFIRMATIVE_PHRASES.get(language, set()))
+    if is_negative(normalized, language):
+        return False
+    return fuzzy_matches_any(normalized, AFFIRMATIVE_PHRASES.get(language, set()) | AFFIRMATIVE_PHRASES["ru"])
+
+
+def is_negative(text: str, language: str) -> bool:
+    """An explicit refusal always wins over any agreement word in the same
+    reply ("да нет, не надо"), so background speech can't turn a "нет" into
+    a confirmation. Checked with exact word boundaries rather than fuzzily:
+    short words like "нет"/"не" sit too close to common noise transcriptions."""
+    normalized = f" {' '.join(_normalize(text).split())} "
+    phrases = NEGATIVE_PHRASES.get(language, set()) | NEGATIVE_PHRASES["ru"]
+    return any(f" {phrase} " in normalized for phrase in phrases)

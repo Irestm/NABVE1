@@ -872,7 +872,7 @@ class VoiceAssistantLoop:
             return None, True
 
         state_manager.set_state(AssistantState.LISTENING, "Жду подтверждения")
-        confirm_audio = audio_io.record_until_silence(self._settings, self._stop_event)
+        confirm_audio = audio_io.record_confirmation(self._settings, self._stop_event)
         confirm_result = command_stt.transcribe(confirm_audio)
         if is_affirmative(confirm_result.text, spoken_language):
             return resolved_command, False
@@ -1557,7 +1557,7 @@ class VoiceAssistantLoop:
             return True
 
         state_manager.set_state(AssistantState.LISTENING, "Жду подтверждения")
-        confirm_audio = audio_io.record_until_silence(self._settings, self._stop_event)
+        confirm_audio = audio_io.record_confirmation(self._settings, self._stop_event)
         confirm_result = command_stt.transcribe(confirm_audio)
         approved = is_affirmative(confirm_result.text, response_language)
 
@@ -1592,7 +1592,7 @@ class VoiceAssistantLoop:
             return True
 
         state_manager.set_state(AssistantState.LISTENING, "Жду ответа")
-        answer_audio = audio_io.record_until_silence(self._settings, self._stop_event)
+        answer_audio = audio_io.record_confirmation(self._settings, self._stop_event)
         answer_result = command_stt.transcribe(answer_audio)
         if not is_affirmative(answer_result.text, response_language):
             return False
@@ -1730,7 +1730,7 @@ class VoiceAssistantLoop:
             return None, True
 
         state_manager.set_state(AssistantState.LISTENING, "Жду подтверждения")
-        confirm_audio = audio_io.record_until_silence(self._settings, self._stop_event)
+        confirm_audio = audio_io.record_confirmation(self._settings, self._stop_event)
         confirm_result = command_stt.transcribe(confirm_audio)
         if not is_affirmative(confirm_result.text, spoken_language):
             state_manager.set_state(AssistantState.SPEAKING)
@@ -1921,7 +1921,7 @@ class VoiceAssistantLoop:
             return False, True
 
         state_manager.set_state(AssistantState.LISTENING, "Жду подтверждения")
-        confirm_audio = audio_io.record_until_silence(self._settings, self._stop_event)
+        confirm_audio = audio_io.record_confirmation(self._settings, self._stop_event)
         confirm_result = command_stt.transcribe(confirm_audio)
         return is_affirmative(confirm_result.text, response_language), False
 
@@ -2079,7 +2079,7 @@ class VoiceAssistantLoop:
             ):
                 return True
             state_manager.set_state(AssistantState.LISTENING, "Жду подтверждения")
-            confirm_audio = audio_io.record_until_silence(self._settings, self._stop_event)
+            confirm_audio = audio_io.record_confirmation(self._settings, self._stop_event)
             confirm_result = command_stt.transcribe(confirm_audio)
             if not is_affirmative(confirm_result.text, decision.resolved):
                 state_manager.set_state(AssistantState.SPEAKING)
@@ -2381,7 +2381,7 @@ class VoiceAssistantLoop:
                 self._speak_safely(tts, localize_response(response, response_language), response_language)
 
                 state_manager.set_state(AssistantState.LISTENING, "Жду подтверждения")
-                confirm_audio = audio_io.record_until_silence(self._settings, self._stop_event)
+                confirm_audio = audio_io.record_confirmation(self._settings, self._stop_event)
                 confirm_result = command_stt.transcribe(confirm_audio)
                 approved = is_affirmative(confirm_result.text, decision.resolved)
 

@@ -237,3 +237,30 @@ def test_rolling_audio_buffer_start_and_stop_succeed_normally(monkeypatch: pytes
     assert fake_sd.last_stream.stopped is True
     assert fake_sd.last_stream.closed is True
     assert buffer._stream is None
+
+
+def test_confirmation_is_cut_short_even_if_background_noise_never_stops(monkeypatch: pytest.MonkeyPatch) -> None:
+    chunks = [_silence_frame()] * 3 + [_speech_frame()] * 200
+    monkeypatch.setattr(audio_io, "require_sounddevice", lambda: _FakeSoundDevice(chunks))
+    settings = _settings(
+        command_max_seconds=90.0,
+        confirmation_max_seconds=0.3,
+        confirmation_silence_seconds=0.09,
+        confirmation_onset_seconds=8.0,
+    )
+
+    result = audio_io.record_confirmation(settings, threading.Event())
+
+    assert result.shape[0] <= _FRAME_SAMPLES * 15
+
+
+def test_confirmation_gives_up_when_nobody_answers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(audio_io, "require_sounddevice", lambda: _FakeSoundDevice([_silence_frame()] * 50))
+    settings = _settings(
+        command_max_seconds=90.0,
+        confirmation_max_seconds=2.5,
+        confirmation_silence_seconds=0.8,
+        confirmation_onset_seconds=0.3,
+    )
+
+    assert audio_io.record_confirmation(settings, threading.Event()).size == 0

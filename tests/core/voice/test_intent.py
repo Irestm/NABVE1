@@ -979,3 +979,25 @@ def test_analyze_code_trigger_does_not_match_with_extra_words() -> None:
     # question instead, see core/voice/pipeline.py's
     # _resolve_analyze_active_editor.
     assert interpret("проанализируй код на баги", "ru") is None
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["да", "Да.", "давай", "ок", "окей", "угу", "ага", "конечно", "выключай", "хорошо", "ладно", "да, не вопрос",
+     "Да. Продолжение следует...", "да шшш там кто-то говорит на фоне", "Yes", "sure"],
+)
+def test_any_agreement_counts_as_yes(answer: str) -> None:
+    assert is_affirmative(answer, "ru")
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["нет", "да нет, не надо", "не выключай", "отмена", "стоп", "погоди", "", "Продолжение следует...", "No"],
+)
+def test_refusals_and_noise_are_not_yes(answer: str) -> None:
+    assert not is_affirmative(answer, "ru")
+
+
+def test_english_session_still_accepts_russian_yes() -> None:
+    assert is_affirmative("да", "en")
+    assert not is_affirmative("no, cancel", "en")

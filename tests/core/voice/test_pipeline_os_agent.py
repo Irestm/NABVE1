@@ -44,7 +44,7 @@ def _patch_no_barge_in(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _patch_no_recording(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event: np.ones(1, dtype=np.float32)
+        pipeline_module.audio_io, "record_until_silence", lambda settings, stop_event, **kwargs: np.ones(1, dtype=np.float32)
     )
 
 

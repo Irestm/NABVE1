@@ -91,6 +91,11 @@ function ElectronVoiceRecorder({ assistantState, detail }: VoiceRecorderProps): 
 const SILENCE_RMS_THRESHOLD = 0.02;
 const SILENCE_DURATION_MS = 1200;
 const MAX_RECORDING_MS = 30000;
+// A yes/no answer to a confirmation question is a word or two: cut it short so
+// background noise can't hold the mic open (mirrors core/voice/config.py's
+// confirmation_max_seconds / confirmation_silence_seconds).
+const CONFIRM_MAX_SPEECH_MS = 2500;
+const CONFIRM_SILENCE_MS = 800;
 
 // The real reply can take a while (STT + intent routing + a browser-automated
 // AI provider round-trip). Playing one of these instantly covers that gap so
@@ -239,8 +244,11 @@ function BrowserVoiceRecorder({ onRecordingChange, onSpeakingChange }: VoiceReco
 
     const data = new Uint8Array(analyser.fftSize);
     let hasSpoken = false;
+    let firstVoiceAt = 0;
     let lastVoiceAt = Date.now();
     const startedAt = Date.now();
+    const confirming = pendingConfirmTokenRef.current !== null;
+    const silenceLimit = confirming ? CONFIRM_SILENCE_MS : SILENCE_DURATION_MS;
     hadSpeechRef.current = false;
 
     silenceWatcherRef.current = window.setInterval(() => {
@@ -250,12 +258,18 @@ function BrowserVoiceRecorder({ onRecordingChange, onSpeakingChange }: VoiceReco
       const now = Date.now();
 
       if (level > SILENCE_RMS_THRESHOLD) {
+        if (!hasSpoken) {
+          firstVoiceAt = now;
+        }
         hasSpoken = true;
         hadSpeechRef.current = true;
         lastVoiceAt = now;
       }
 
-      if (hasSpoken && now - lastVoiceAt > SILENCE_DURATION_MS) {
+      if (confirming && hasSpoken && now - firstVoiceAt > CONFIRM_MAX_SPEECH_MS) {
+        stopSilenceWatcher();
+        mediaRecorderRef.current?.stop();
+      } else if (hasSpoken && now - lastVoiceAt > silenceLimit) {
         stopSilenceWatcher();
         mediaRecorderRef.current?.stop();
       } else if (now - startedAt > MAX_RECORDING_MS) {

@@ -81,6 +81,15 @@ class VoiceSettings:
     # mid-sentence — this is a ceiling for a runaway mic, not a target length,
     # so it can afford to be generous.
     command_max_seconds: float = float(os.environ.get("ASSISTANT_COMMAND_MAX_SECONDS", "90.0"))
+    # Yes/no answers to a confirmation question are a word or two, so they
+    # get their own tight limits instead of the dictation-sized ones above:
+    # background rustle or someone talking nearby used to keep VAD "hearing
+    # speech" and hold the mic open until the user muted it by hand. Once
+    # speech starts the answer is cut after confirmation_max_seconds no
+    # matter what, and a short pause ends it sooner.
+    confirmation_max_seconds: float = float(os.environ.get("ASSISTANT_CONFIRMATION_MAX_SECONDS", "2.5"))
+    confirmation_silence_seconds: float = float(os.environ.get("ASSISTANT_CONFIRMATION_SILENCE", "0.8"))
+    confirmation_onset_seconds: float = float(os.environ.get("ASSISTANT_CONFIRMATION_ONSET", "8.0"))
     # After a free-text AI answer finishes speaking uninterrupted, how long
     # to keep listening for an unprompted follow-up question before giving
     # up and returning to wake-word waiting — see

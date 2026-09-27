@@ -104,7 +104,7 @@ class CriticalReminderHandler:
         from core.voice import web_pipeline
 
         for attempt in range(_MAX_ACK_ATTEMPTS):
-            audio = audio_io.record_until_silence(self._settings, self._stop_event)
+            audio = audio_io.record_confirmation(self._settings, self._stop_event)
             if getattr(audio, "size", 0) == 0:
                 self._speak("Скажите «понял», чтобы продолжить.", language)
                 continue

@@ -30,6 +30,8 @@ def record_until_silence(
     *,
     onset_timeout_seconds: float | None = None,
     barge_in_stop_event: threading.Event | None = None,
+    max_speech_seconds: float | None = None,
+    silence_timeout_seconds: float | None = None,
 ) -> np.ndarray:
     """Records until the user stops talking, or `command_max_seconds` is
     hit as a hard cap. "Stopped talking" is judged with real voice-activity
@@ -68,7 +70,9 @@ def record_until_silence(
     frames: list[np.ndarray] = []
     silence_seconds = 0.0
     elapsed_seconds = 0.0
+    speech_seconds = 0.0
     speech_detected = False
+    silence_limit = silence_timeout_seconds if silence_timeout_seconds is not None else settings.command_silence_timeout_seconds
 
     with sd.InputStream(
         samplerate=settings.sample_rate, channels=1, dtype="float32", latency="low"
@@ -90,6 +94,11 @@ def record_until_silence(
             frames.append(chunk)
             elapsed_seconds += frame_seconds
 
+            if speech_detected:
+                speech_seconds += frame_seconds
+                if max_speech_seconds is not None and speech_seconds >= max_speech_seconds:
+                    break
+
             if vad.is_speech(chunk):
                 speech_detected = True
                 silence_seconds = 0.0
@@ -101,12 +110,25 @@ def record_until_silence(
                 continue
 
             silence_seconds += frame_seconds
-            if silence_seconds >= settings.command_silence_timeout_seconds:
+            if silence_seconds >= silence_limit:
                 break
 
     if not frames:
         return np.zeros(0, dtype=np.float32)
     return np.concatenate(frames)
+
+
+def record_confirmation(settings: VoiceSettings, stop_event: threading.Event) -> np.ndarray:
+    """Short, noise-proof capture for a yes/no answer — see
+    VoiceSettings.confirmation_max_seconds. Returns an empty array if nobody
+    answers within confirmation_onset_seconds, which callers treat as "no"."""
+    return record_until_silence(
+        settings,
+        stop_event,
+        onset_timeout_seconds=settings.confirmation_onset_seconds,
+        max_speech_seconds=settings.confirmation_max_seconds,
+        silence_timeout_seconds=settings.confirmation_silence_seconds,
+    )
 
 
 # sd.play()/.stop() (python-sounddevice's convenience functions) share one
