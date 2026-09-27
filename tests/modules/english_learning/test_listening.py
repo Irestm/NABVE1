@@ -12,7 +12,7 @@ import pytest
 
 from modules.ai_bridge.providers.base import AIResult
 from modules.english_learning import listening
-from modules.english_learning.domain import Episode, Series, SubtitleCue
+from modules.english_learning.domain import Episode, Title, SubtitleCue
 from modules.english_learning.srt_parser import cues_to_srt
 from modules.english_learning.uow import EnglishUnitOfWork
 
@@ -36,10 +36,10 @@ def _seed(uow_factory: Callable[[], EnglishUnitOfWork], tmp_path: Path, source: 
     srt = tmp_path / "ep.srt"
     srt.write_text(cues_to_srt(_cues()), encoding="utf-8")
     with uow_factory() as uow:
-        series = Series(title="Breaking Bad")
-        uow.series.add(series)
+        series = Title(name="Breaking Bad")
+        uow.titles.add(series)
         assert series.id is not None
-        episode = Episode(series_id=series.id, season=1, episode=1, source=source, srt_path=str(srt))  # type: ignore[arg-type]
+        episode = Episode(title_id=series.id, season=1, episode=1, source=source, srt_path=str(srt))  # type: ignore[arg-type]
         uow.episodes.add(episode)
         uow.commit()
         assert episode.id is not None
@@ -174,10 +174,10 @@ def test_extract_clip_with_real_ffmpeg(uow_factory: Callable[[], EnglishUnitOfWo
     srt = tmp_path / "tone.srt"
     srt.write_text(cues_to_srt([SubtitleCue(1, 1000, 2000, "This is a real test line.")]), encoding="utf-8")
     with uow_factory() as uow:
-        series = Series(title="Tone")
-        uow.series.add(series)
+        series = Title(name="Tone")
+        uow.titles.add(series)
         assert series.id is not None
-        episode = Episode(series_id=series.id, season=1, episode=1, source="manual", srt_path=str(srt))
+        episode = Episode(title_id=series.id, season=1, episode=1, source="manual", srt_path=str(srt))
         uow.episodes.add(episode)
         uow.commit()
         assert episode.id is not None

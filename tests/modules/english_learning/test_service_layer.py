@@ -39,7 +39,7 @@ def test_import_creates_series_episode_words_and_caches_srt(
 ) -> None:
     result = _import(uow_factory, episode_title="Pilot")
 
-    assert result.series.title == "Breaking Bad"
+    assert result.title.name == "Breaking Bad"
     assert result.episode.code == "S01E01"
     assert result.episode.source == "manual"
     assert {word.lemma for word in result.words} == {"figure", "decide", "honest"}
@@ -52,7 +52,7 @@ def test_reimport_updates_the_same_episode(uow_factory: Callable[[], EnglishUnit
     first = _import(uow_factory)
     second = _import(uow_factory, series_title="breaking bad")
 
-    assert first.series.id == second.series.id
+    assert first.title.id == second.title.id
     assert first.episode.id == second.episode.id
     library = service_layer.library(uow_factory)
     assert len(library) == 1
@@ -66,7 +66,7 @@ def test_library_groups_episodes_by_series(uow_factory: Callable[[], EnglishUnit
 
     library = service_layer.library(uow_factory)
 
-    assert [summary.series.title for summary in library] == ["Breaking Bad", "Friends"]
+    assert [summary.title.name for summary in library] == ["Breaking Bad", "Friends"]
     assert [item.episode.code for item in library[0].episodes] == ["S01E01", "S01E02"]
 
 
@@ -93,7 +93,7 @@ def test_invalid_input_is_rejected_before_touching_the_db(uow_factory: Callable[
 def test_migrations_are_idempotent(uow_factory: Callable[[], EnglishUnitOfWork]) -> None:
     for _ in range(3):
         with uow_factory() as uow:
-            assert uow.series.list_all() == []
+            assert uow.titles.list_all() == []
 
 
 def test_vtt_upload_is_converted(uow_factory: Callable[[], EnglishUnitOfWork]) -> None:

@@ -7,7 +7,7 @@ import pytest
 
 from modules.ai_bridge.providers.base import AllProvidersFailed
 from modules.english_learning import link_import, subtitle_store
-from modules.english_learning.domain import Episode, Series, SubtitleCue
+from modules.english_learning.domain import Episode, Title, SubtitleCue
 from modules.english_learning.link_import import LinkImportDeps, LinkImportRequest, NeedsInput
 from modules.english_learning.link_parser import LinkGuess
 from modules.english_learning.opensubtitles import OpenSubtitlesQuotaError
@@ -65,8 +65,8 @@ def _deps(
     def fake_import(**kwargs: Any) -> ImportResult:
         captured.update(kwargs)
         return ImportResult(
-            series=Series(title=kwargs["series_title"], id=1),
-            episode=Episode(series_id=1, season=kwargs["season"], episode=kwargs["episode"], source=kwargs["source"], id=7),
+            title=Title(name=kwargs["series_title"], id=1),
+            episode=Episode(title_id=1, season=kwargs["season"], episode=kwargs["episode"], source=kwargs["source"], id=7),
             words=[],
         )
 

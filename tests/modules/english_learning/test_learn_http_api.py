@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from core.config import settings
 from core.main import app
-from modules.english_learning.domain import Card, Episode, Series
+from modules.english_learning.domain import Card, Episode, Title
 from modules.english_learning.uow import EnglishUnitOfWork
 
 client = TestClient(app)
@@ -13,10 +13,10 @@ AUTH = {"X-Assistant-Token": settings.api_token}
 
 def _seed() -> tuple[int, int]:
     with EnglishUnitOfWork() as uow:
-        series = Series(title="Dark")
-        uow.series.add(series)
+        series = Title(name="Dark")
+        uow.titles.add(series)
         assert series.id is not None
-        episode = Episode(series_id=series.id, season=1, episode=1, source="ai_guess")
+        episode = Episode(title_id=series.id, season=1, episode=1, source="ai_guess")
         uow.episodes.add(episode)
         assert episode.id is not None
         card_id = uow.cards.add(Card(episode.id, "decide", "decide", "VERB", "A2", ["решить"], "Choose.", "We decided.", 0, "core"))

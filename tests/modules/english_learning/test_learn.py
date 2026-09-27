@@ -5,16 +5,16 @@ from collections.abc import Callable
 import pytest
 
 from modules.english_learning import learn
-from modules.english_learning.domain import Card, Episode, Series
+from modules.english_learning.domain import Card, Episode, Title
 from modules.english_learning.uow import EnglishUnitOfWork
 
 
 def _seed(uow_factory: Callable[[], EnglishUnitOfWork], *, with_cards: bool = True) -> tuple[int, list[int]]:
     with uow_factory() as uow:
-        series = Series(title="Dark")
-        uow.series.add(series)
+        series = Title(name="Dark")
+        uow.titles.add(series)
         assert series.id is not None
-        episode = Episode(series_id=series.id, season=1, episode=1, source="manual")
+        episode = Episode(title_id=series.id, season=1, episode=1, source="manual")
         uow.episodes.add(episode)
         assert episode.id is not None
         ids: list[int] = []

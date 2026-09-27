@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from core.logger import get_logger
 from modules.english_learning import cefr, subtitle_store
-from modules.english_learning.domain import Card, Episode, EpisodeSource, EpisodeWord, Series
+from modules.english_learning.domain import Card, Episode, EpisodeSource, EpisodeWord, Title
 from modules.english_learning.lemmatizer import Lemmatizer, get_lemmatizer
 from modules.english_learning.srt_parser import cues_to_srt, decode_srt, parse_srt, parse_vtt
 from modules.english_learning.uow import EnglishUnitOfWork
@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True)
 class ImportResult:
-    series: Series
+    title: Title
     episode: Episode
     words: list[EpisodeWord]
 
@@ -34,8 +34,8 @@ def words_label(count: int) -> str:
     return f"{count} {noun}"
 
 
-def folder_name(series_title: str, episode: Episode, count: int) -> str:
-    return f"{series_title} — {episode.code} — {words_label(count)}"
+def folder_name(title_name: str, episode: Episode, count: int) -> str:
+    return f"{title_name} — {episode.code} — {words_label(count)}"
 
 
 @dataclass(frozen=True)
@@ -47,33 +47,33 @@ class EpisodeSummary:
 
 
 @dataclass(frozen=True)
-class SeriesSummary:
-    series: Series
+class TitleSummary:
+    title: Title
     episodes: list[EpisodeSummary]
 
 
-def _upsert_series(uow: EnglishUnitOfWork, title: str, imdb_id: str | None, tmdb_id: int | None) -> Series:
-    series = uow.series.find(imdb_id=imdb_id, title=title)
-    if series is not None:
-        return series
-    series = Series(title=title.strip(), imdb_id=imdb_id, tmdb_id=tmdb_id)
-    uow.series.add(series)
-    return series
+def _upsert_title(uow: EnglishUnitOfWork, name: str, imdb_id: str | None, tmdb_id: int | None) -> Title:
+    title = uow.titles.find(imdb_id=imdb_id, name=name)
+    if title is not None:
+        return title
+    title = Title(name=name.strip(), imdb_id=imdb_id, tmdb_id=tmdb_id)
+    uow.titles.add(title)
+    return title
 
 
 def _upsert_episode(
     uow: EnglishUnitOfWork,
-    series_id: int,
+    title_id: int,
     season: int,
     episode_number: int,
     title: str | None,
     source: EpisodeSource,
     srt_path: str,
 ) -> Episode:
-    episode = uow.episodes.find(series_id, season, episode_number)
+    episode = uow.episodes.find(title_id, season, episode_number)
     if episode is None:
         episode = Episode(
-            series_id=series_id, season=season, episode=episode_number, title=title, source=source, srt_path=srt_path
+            title_id=title_id, season=season, episode=episode_number, title=title, source=source, srt_path=srt_path
         )
         uow.episodes.add(episode)
         return episode
@@ -113,9 +113,9 @@ def import_subtitles(
     srt_path = subtitle_store.save(imdb_id, series_title, season, episode, srt_text, variant)
 
     with uow_factory() as uow:
-        series = _upsert_series(uow, series_title, imdb_id, tmdb_id)
-        assert series.id is not None
-        stored_episode = _upsert_episode(uow, series.id, season, episode, episode_title, source, str(srt_path))
+        title = _upsert_title(uow, series_title, imdb_id, tmdb_id)
+        assert title.id is not None
+        stored_episode = _upsert_episode(uow, title.id, season, episode, episode_title, source, str(srt_path))
         assert stored_episode.id is not None
         words = [
             EpisodeWord(
@@ -134,9 +134,9 @@ def import_subtitles(
         uow.words.replace_for_episode(stored_episode.id, words)
         uow.commit()
     logger.info(
-        "Imported %s %s: %d cues, %d candidate words", series.title, stored_episode.code, len(cues), len(words)
+        "Imported %s %s: %d cues, %d candidate words", title.name, stored_episode.code, len(cues), len(words)
     )
-    return ImportResult(series=series, episode=stored_episode, words=words)
+    return ImportResult(title=title, episode=stored_episode, words=words)
 
 
 def _as_srt(text: str) -> str:
@@ -177,14 +177,14 @@ def stored_source(
     uow_factory: Callable[[], EnglishUnitOfWork] = EnglishUnitOfWork,
 ) -> EpisodeSource | None:
     with uow_factory() as uow:
-        series = uow.series.find(imdb_id=imdb_id, title=series_title)
-        if series is None or series.id is None:
+        title = uow.titles.find(imdb_id=imdb_id, name=series_title)
+        if title is None or title.id is None:
             return None
-        stored = uow.episodes.find(series.id, season, episode)
+        stored = uow.episodes.find(title.id, season, episode)
         return stored.source if stored is not None else None
 
 
-def _episode_summary(uow: EnglishUnitOfWork, series: Series, episode: Episode) -> EpisodeSummary:
+def _episode_summary(uow: EnglishUnitOfWork, title: Title, episode: Episode) -> EpisodeSummary:
     if episode.id is None:
         raise ValueError("Episode has no id")
     word_count = uow.words.count_for_episode(episode.id)
@@ -193,18 +193,18 @@ def _episode_summary(uow: EnglishUnitOfWork, series: Series, episode: Episode) -
         episode=episode,
         word_count=word_count,
         card_count=card_count,
-        display_name=folder_name(series.title, episode, card_count or word_count),
+        display_name=folder_name(title.display_name, episode, card_count or word_count),
     )
 
 
-def library(uow_factory: Callable[[], EnglishUnitOfWork] = EnglishUnitOfWork) -> list[SeriesSummary]:
+def library(uow_factory: Callable[[], EnglishUnitOfWork] = EnglishUnitOfWork) -> list[TitleSummary]:
     with uow_factory() as uow:
-        result: list[SeriesSummary] = []
-        for series in uow.series.list_all():
-            if series.id is None:
+        result: list[TitleSummary] = []
+        for title in uow.titles.list_all():
+            if title.id is None:
                 continue
-            episodes = [_episode_summary(uow, series, episode) for episode in uow.episodes.list_for_series(series.id)]
-            result.append(SeriesSummary(series=series, episodes=episodes))
+            episodes = [_episode_summary(uow, title, episode) for episode in uow.episodes.list_for_title(title.id)]
+            result.append(TitleSummary(title=title, episodes=episodes))
         return result
 
 

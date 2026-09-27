@@ -98,9 +98,9 @@ def _episode_model(
         raise ValueError("Episode has no id")
     return EpisodeModel(
         id=episode.id,
-        series_id=episode.series_id,
-        season=episode.season,
-        episode=episode.episode,
+        series_id=episode.title_id,
+        season=episode.season or 0,
+        episode=episode.episode or 0,
         code=episode.code,
         title=episode.title,
         source=episode.source,
@@ -159,7 +159,7 @@ def _import_response(result: ImportResult) -> ImportResponse:
     job = card_jobs.start(result.episode.id) if result.episode.id is not None and result.words else None
     return ImportResponse(
         series=SeriesModel(
-            id=result.series.id or 0, title=result.series.title, imdb_id=result.series.imdb_id, episodes=[]
+            id=result.title.id or 0, title=result.title.name, imdb_id=result.title.imdb_id, episodes=[]
         ),
         episode=_episode_model(result.episode, word_count=len(result.words)),
         words=[_word_model(word) for word in result.words],
@@ -173,9 +173,9 @@ async def get_library() -> LibraryResponse:
     return LibraryResponse(
         series=[
             SeriesModel(
-                id=summary.series.id or 0,
-                title=summary.series.title,
-                imdb_id=summary.series.imdb_id,
+                id=summary.title.id or 0,
+                title=summary.title.name,
+                imdb_id=summary.title.imdb_id,
                 episodes=[
                     _episode_model(item.episode, item.word_count, item.card_count, item.display_name)
                     for item in summary.episodes
