@@ -83,3 +83,21 @@ def _inert_card_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
         return GenerationProgress(done=0, total=0, created=0, skipped=0)
 
     monkeypatch.setattr(http_api, "card_jobs", CardJobRegistry(no_generation))
+
+
+SPANISH_MARKERS = frozenset({"dónde", "está", "dinero", "hermano", "vamos", "casa", "mañana", "nos", "vemos"})
+
+
+class FakeDetector:
+    def is_english(self, text: str) -> bool:
+        words = {word.strip(".,!?¿¡").lower() for word in text.split()}
+        return len(words & SPANISH_MARKERS) < 2
+
+
+@pytest.fixture(autouse=True)
+def _fake_language_detector(monkeypatch: pytest.MonkeyPatch) -> FakeDetector:
+    from modules.english_learning import language_filter
+
+    detector = FakeDetector()
+    monkeypatch.setattr(language_filter, "get_detector", lambda: detector)
+    return detector

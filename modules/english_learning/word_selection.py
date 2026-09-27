@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Collection, Iterable, Sequence
+from dataclasses import dataclass, field
 from typing import Protocol
 
-from modules.english_learning.domain import TARGET_LEVELS, SubtitleCue, WordCandidate, WordCategory
+from modules.english_learning.domain import TARGET_LEVELS, Example, SubtitleCue, WordCandidate, WordCategory
+from modules.english_learning.language_filter import CueLanguage
 from modules.english_learning.lemmatizer import AnalyzedToken, Lemmatizer
 
 CONTENT_POS: frozenset[str] = frozenset({"NOUN", "VERB", "ADJ", "ADV"})
@@ -12,6 +13,7 @@ EXTRA_MIN_COUNT = 3
 MIN_WORD_LENGTH = 3
 EXAMPLE_MAX_WORDS = 15
 MIN_EXAMPLE_WORDS = 4
+MAX_EXAMPLES = 3
 
 
 class CefrLevelSource(Protocol):
@@ -27,6 +29,7 @@ class _Tally:
     example: str
     timestamp_ms: int
     good_example: bool
+    examples: list[Example] = field(default_factory=list)
 
 
 def _is_candidate(token: AnalyzedToken) -> bool:
@@ -45,7 +48,7 @@ def _is_good_example(text: str) -> bool:
     return MIN_EXAMPLE_WORDS <= len(text.split()) <= EXAMPLE_MAX_WORDS
 
 
-def _trim_example(text: str, surface: str) -> str:
+def trim_example(text: str, surface: str) -> str:
     words = text.split()
     if len(words) <= EXAMPLE_MAX_WORDS:
         return text
@@ -54,33 +57,53 @@ def _trim_example(text: str, surface: str) -> str:
     return " ".join(words[start : start + EXAMPLE_MAX_WORDS])
 
 
+def _remember_example(tally: _Tally, cue: SubtitleCue, surface: str) -> None:
+    text = trim_example(cue.text, surface)
+    if len(tally.examples) >= MAX_EXAMPLES or any(item.text == text for item in tally.examples):
+        return
+    tally.examples.append(Example(text=text, timestamp_ms=cue.start_ms, cue_index=cue.index))
+
+
 def select_words(
-    cues: list[SubtitleCue],
-    lemmatizer: Lemmatizer,
+    cues: Sequence[SubtitleCue],
+    lemmatizer: Lemmatizer | None,
     cefr: CefrLevelSource,
     *,
     target_levels: Iterable[str] = TARGET_LEVELS,
     extra_min_count: int = EXTRA_MIN_COUNT,
+    languages: Sequence[CueLanguage] | None = None,
+    analyzed: Sequence[list[AnalyzedToken]] | None = None,
+    consumed: Collection[tuple[int, int]] = frozenset(),
 ) -> list[WordCandidate]:
     levels = frozenset(target_levels)
+    if analyzed is None:
+        if lemmatizer is None:
+            raise ValueError("Either a lemmatizer or analyzed tokens are required")
+        analyzed = list(lemmatizer.analyze(cue.text for cue in cues))
     tallies: dict[tuple[str, str], _Tally] = {}
-    for cue, tokens in zip(cues, lemmatizer.analyze(cue.text for cue in cues)):
+    for position, (cue, tokens) in enumerate(zip(cues, analyzed)):
+        label = languages[position] if languages is not None else "en"
+        if label == "foreign":
+            continue
         good_example = _is_good_example(cue.text)
-        for token in tokens:
-            if not _is_candidate(token):
+        for token_index, token in enumerate(tokens):
+            if not _is_candidate(token) or (cue.index, token_index) in consumed:
                 continue
             lemma = token.lemma.lower()
+            if label == "short" and cefr.level(lemma, token.pos) is None:
+                continue
             key = (lemma, token.pos)
             tally = tallies.get(key)
             if tally is None:
-                tallies[key] = _Tally(lemma, token.pos, 1, token.text, cue.text, cue.start_ms, good_example)
-                continue
-            tally.count += 1
-            if good_example and not tally.good_example:
+                tally = _Tally(lemma, token.pos, 0, token.text, cue.text, cue.start_ms, good_example)
+                tallies[key] = tally
+            elif good_example and not tally.good_example:
                 tally.example = cue.text
                 tally.timestamp_ms = cue.start_ms
                 tally.surface = token.text
                 tally.good_example = True
+            tally.count += 1
+            _remember_example(tally, cue, token.text)
 
     candidates: list[WordCandidate] = []
     for tally in tallies.values():
@@ -99,9 +122,11 @@ def select_words(
                 cefr=level,
                 category=category,
                 count=tally.count,
-                example=_trim_example(tally.example, tally.surface),
+                example=trim_example(tally.example, tally.surface),
                 timestamp_ms=tally.timestamp_ms,
                 surface=tally.surface,
+                examples=tuple(tally.examples),
+                cefr_source="list" if level is not None else None,
             )
         )
     candidates.sort(key=lambda item: (item.category != "core", -item.count, item.lemma))

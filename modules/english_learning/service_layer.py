@@ -5,11 +5,12 @@ from dataclasses import dataclass
 
 from core.logger import get_logger
 from modules.english_learning import cefr, subtitle_store
+from modules.english_learning.analysis import analyze_cues
 from modules.english_learning.domain import Card, Episode, EpisodeSource, EpisodeWord, Title
+from modules.english_learning.language_filter import LanguageDetector
 from modules.english_learning.lemmatizer import Lemmatizer, get_lemmatizer
 from modules.english_learning.srt_parser import cues_to_srt, decode_srt, parse_srt, parse_vtt
 from modules.english_learning.uow import EnglishUnitOfWork
-from modules.english_learning.word_selection import select_words
 
 logger = get_logger(__name__)
 
@@ -97,6 +98,7 @@ def import_subtitles(
     lemmatizer: Lemmatizer | None = None,
     uow_factory: Callable[[], EnglishUnitOfWork] = EnglishUnitOfWork,
     ensure_cefr: Callable[[], int] | None = None,
+    detector: LanguageDetector | None = None,
 ) -> ImportResult:
     if not series_title.strip():
         raise ValueError("Не указано название сериала")
@@ -108,7 +110,8 @@ def import_subtitles(
     else:
         ensure_cefr()
     lookup = cefr.load_lookup(uow_factory)
-    candidates = select_words(cues, lemmatizer or get_lemmatizer(), lookup)
+    analysis = analyze_cues(cues, lemmatizer or get_lemmatizer(), lookup, detector=detector)
+    candidates = analysis.candidates
     variant = "ai_guess" if source == "ai_guess" else "en"
     srt_path = subtitle_store.save(imdb_id, series_title, season, episode, srt_text, variant)
 
@@ -128,6 +131,11 @@ def import_subtitles(
                 example=candidate.example,
                 timestamp_ms=candidate.timestamp_ms,
                 surface=candidate.surface,
+                kind=candidate.kind,
+                examples=list(candidate.examples),
+                cefr_source=candidate.cefr_source,
+                confidence=candidate.confidence,
+                details=candidate.details,
             )
             for candidate in candidates
         ]

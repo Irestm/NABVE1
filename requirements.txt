@@ -150,6 +150,8 @@ pyyaml>=6.0
 # --- modules/english_learning (lemmatization for subtitle word selection) ---
 # one-time model download: python -m spacy download en_core_web_sm
 spacy>=3.7
+# per-line language detection (skip non-English subtitle lines)
+lingua-language-detector>=2.2
 # YouTube English subtitles for English Learning link import
 yt-dlp>=2026.8
 

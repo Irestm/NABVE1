@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import re
 
 from modules.english_learning.domain import SubtitleCue
@@ -10,9 +11,10 @@ _TIMING = re.compile(
 )
 _HTML_TAG = re.compile(r"</?[a-zA-Z][^>]*>|<\d{2}:\d{2}:\d{2}\.\d{3}>")
 _ASS_TAG = re.compile(r"\{\\[^}]*\}")
-_SOUND_NOTE = re.compile(r"\[[^\]]*\]|\([^)]*\)|♪[^♪]*♪|♪")
-_SPEAKER_LABEL = re.compile(r"^\s*[A-Z][A-Z0-9 .'\-]{1,30}:\s*")
-_LEADING_DASH = re.compile(r"^\s*[-–—]\s*")
+_SOUND_NOTE = re.compile(r"\[[^\]]*\]|\([^)]*\)|♪[^♪]*♪|[♪♫#]|\*[^*]{1,40}\*")
+_SPEAKER_LABEL = re.compile(r"^\s*[A-Z][A-Z0-9 .'\-#]{1,30}:(?!\d)\s*")
+_LEADING_DASH = re.compile(r"^\s*(?:[-–—]|>>)\s*")
+_INNER_DASH = re.compile(r"(?<=[.!?…\"])\s+[-–—]\s+(?:[A-Z][A-Z0-9 .'\-#]{1,30}:(?!\d)\s*)?")
 _WHITESPACE = re.compile(r"\s+")
 
 
@@ -36,11 +38,12 @@ def _to_ms(hours: str, minutes: str, seconds: str, millis: str) -> int:
 
 
 def clean_line(line: str) -> str:
-    cleaned = _ASS_TAG.sub("", line)
+    cleaned = _ASS_TAG.sub("", html.unescape(line))
     cleaned = _HTML_TAG.sub("", cleaned)
     cleaned = _SOUND_NOTE.sub(" ", cleaned)
     cleaned = _LEADING_DASH.sub("", cleaned)
     cleaned = _SPEAKER_LABEL.sub("", cleaned)
+    cleaned = _INNER_DASH.sub(" ", cleaned)
     return _WHITESPACE.sub(" ", cleaned).strip()
 
 
