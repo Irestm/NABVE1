@@ -60,6 +60,7 @@ if (!app.requestSingleInstanceLock()) {
   let visibilityPollTimer: NodeJS.Timeout | null = null;
   let isQuitting = false;
   let shutdownStarted = false;
+  let backendStopped = false;
   let stopPowerSourceSync: (() => void) | null = null;
   // Set via the "meeting-recording-active-changed" IPC message the preload
   // bridge's assistantAPI.setRecordingActive() sends — see preload.ts. Only
@@ -472,10 +473,14 @@ if (!app.requestSingleInstanceLock()) {
     } catch (error: unknown) {
       process.stderr.write(`[main] Backend shutdown failed: ${String(error)}\n`);
     }
-    app.exit(0);
+    backendStopped = true;
+    app.quit();
   }
 
   app.on("before-quit", (event: Electron.Event) => {
+    if (backendStopped) {
+      return;
+    }
     event.preventDefault();
     if (shutdownStarted) {
       return;

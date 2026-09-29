@@ -266,7 +266,7 @@ app.include_router(power_http_api.router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.allowed_origins),
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
     allow_credentials=False,
 )
