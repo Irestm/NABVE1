@@ -23,6 +23,11 @@ class _FakeTTS:
         return np.ones(1, dtype=np.float32), 16000
 
 
+class _IdleSpeechToText:
+    def prewarm(self) -> None:
+        return None
+
+
 def _make_dispatched_loop(monkeypatch, *, command: Command) -> VoiceAssistantLoop:
     async def handler(_params: dict) -> dict:
         return {}
@@ -94,7 +99,7 @@ def test_classify_via_ai_bridge_records_last_exchange_for_a_direct_answer(monkey
 
 def test_run_resets_last_exchange_on_each_fresh_activation(monkeypatch) -> None:
     loop = VoiceAssistantLoop(CommandDispatcher())
-    monkeypatch.setattr(pipeline_module, "SpeechToText", lambda settings: object())
+    monkeypatch.setattr(pipeline_module, "SpeechToText", lambda settings: _IdleSpeechToText())
     monkeypatch.setattr(pipeline_module, "TextToSpeech", lambda settings: object())
     monkeypatch.setattr(loop, "_run_onboarding_if_needed", lambda: None)
     loop._last_exchange = "Стейл контекст от прошлой, уже закончившейся сессии."

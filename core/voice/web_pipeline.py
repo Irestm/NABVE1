@@ -40,6 +40,7 @@ from core.voice.responses import localize_response, not_understood
 from core.voice.silero_tts import VOICE_OPTIONS
 from core.voice.stt import SpeechToText
 from core.voice.tts import TextToSpeech
+from core.voice.whisper_engine import import_faster_whisper
 
 logger = get_logger(__name__)
 
@@ -73,6 +74,7 @@ def _decode_uploaded_audio(data: bytes, suffix: str) -> Any:
     if not data:
         raise InvalidAudioError("Uploaded audio file is empty.")
 
+    import_faster_whisper(block_torch_import=True)
     try:
         from faster_whisper.audio import decode_audio
     except ImportError:

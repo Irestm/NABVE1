@@ -7,8 +7,9 @@ import numpy as np
 
 from core.voice.audio_io import RollingAudioBuffer, require_sounddevice
 from core.voice.config import VoiceSettings
+from core.voice.listening_stt import ListeningSpeechToText
 from core.voice.phrase_matching import fuzzy_matches_any
-from core.voice.stt import SpeechToText
+from core.voice.speech_gate import SpeechGate
 
 # Natural variations of the default Russian wake phrase, so "Привет!" said
 # plainly, "Привет, Джарвис" and "Эй, Джарвис" all activate the assistant
@@ -57,7 +58,7 @@ class WakeWordDetector(ABC):
 
 
 def _listen_for_any(
-    stt: SpeechToText,
+    stt: ListeningSpeechToText,
     settings: VoiceSettings,
     phrases: dict[str, str | tuple[str, ...]],
     stop_event: threading.Event,
@@ -99,11 +100,12 @@ def _listen_for_any(
     plumb a live language preference into a background thread, is correct
     for every deployment of it, not just a workaround."""
     buffer = RollingAudioBuffer(settings, window_seconds=2.0)
+    gate = SpeechGate.from_settings(settings)
     buffer.start()
     try:
         while not stop_event.is_set() and not (extra_stop_event is not None and extra_stop_event.is_set()):
             window = buffer.read_window(timeout=settings.wake_word_check_interval_seconds)
-            if window.size == 0:
+            if not gate.should_transcribe(window):
                 continue
             result = stt.transcribe(window, settings.fallback_language)
             for name, phrase in phrases.items():
@@ -118,7 +120,7 @@ def _listen_for_any(
 class KeywordWakeWordDetector(WakeWordDetector):
     def __init__(self, settings: VoiceSettings) -> None:
         self._settings = settings
-        self._stt = SpeechToText(settings, model_size=settings.whisper_wake_model_size)
+        self._stt = ListeningSpeechToText(settings, model_size=settings.whisper_wake_model_size)
 
     def listen(self, stop_event: threading.Event) -> bool:
         return _listen_for_any(self._stt, self._settings, {"wake": self._settings.wake_word}, stop_event) == "wake"
@@ -174,7 +176,7 @@ def get_wake_word_detector(settings: VoiceSettings) -> WakeWordDetector:
     return KeywordWakeWordDetector(settings)
 
 
-_phrase_stt_by_size: dict[str, SpeechToText] = {}
+_phrase_stt_by_size: dict[str, ListeningSpeechToText] = {}
 
 
 def listen_for_phrases(
@@ -208,6 +210,6 @@ def listen_for_phrases(
     size = model_size or settings.whisper_wake_model_size
     stt = _phrase_stt_by_size.get(size)
     if stt is None:
-        stt = SpeechToText(settings, model_size=size)
+        stt = ListeningSpeechToText(settings, model_size=size)
         _phrase_stt_by_size[size] = stt
     return _listen_for_any(stt, settings, phrases, stop_event, extra_stop_event=extra_stop_event)

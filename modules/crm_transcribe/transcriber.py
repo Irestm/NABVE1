@@ -6,12 +6,14 @@ from typing import Any
 from core.logger import get_logger
 from core.voice.config import voice_settings
 from core.voice.stt import SpeechToText
+from core.voice.whisper_engine import import_faster_whisper
 
 logger = get_logger(__name__)
 
 
 def decode_audio_file(path: str) -> Any:
     try:
+        import_faster_whisper(block_torch_import=True)
         from faster_whisper.audio import decode_audio
     except ImportError:
         try:

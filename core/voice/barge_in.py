@@ -6,7 +6,8 @@ from core.logger import get_logger
 from core.voice import special_phrases
 from core.voice.audio_io import RollingAudioBuffer
 from core.voice.config import VoiceSettings
-from core.voice.stt import SpeechToText
+from core.voice.listening_stt import ListeningSpeechToText
+from core.voice.speech_gate import SpeechGate
 
 logger = get_logger(__name__)
 
@@ -50,7 +51,10 @@ class BargeInMonitor:
 
     def __init__(self, settings: VoiceSettings) -> None:
         self._settings = settings
-        self._stt = SpeechToText(settings, model_size=settings.whisper_wake_model_size)
+        self._stt = ListeningSpeechToText(settings, model_size=settings.whisper_wake_model_size)
+
+    def _make_gate(self) -> SpeechGate:
+        return SpeechGate.from_settings(self._settings)
 
     def run(
         self,
@@ -61,6 +65,7 @@ class BargeInMonitor:
         context: str = "speaking",
     ) -> None:
         buffer = RollingAudioBuffer(self._settings, window_seconds=_WINDOW_SECONDS)
+        gate = self._make_gate()
         try:
             buffer.start()
         except Exception as mic_unavailable:
@@ -74,7 +79,7 @@ class BargeInMonitor:
         try:
             while not stop_event.is_set():
                 window = buffer.read_window(timeout=_POLL_TIMEOUT_SECONDS)
-                if window.size == 0:
+                if not gate.should_transcribe(window):
                     continue
                 try:
                     result = self._stt.transcribe(window, language)

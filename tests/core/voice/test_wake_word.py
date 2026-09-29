@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 
 import numpy as np
+import pytest
 
 import core.voice.wake_word as wake_word_module
 from core.voice.config import VoiceSettings
@@ -17,6 +18,11 @@ class _FakeSTT:
         raise AssertionError("not used in these tests; _listen_for_any is stubbed out")
 
 
+@pytest.fixture(autouse=True)
+def _gate_passes_any_non_empty_window(monkeypatch) -> None:
+    monkeypatch.setattr(wake_word_module.SpeechGate, "should_transcribe", lambda self, window: window.size > 0)
+
+
 def setup_function() -> None:
     # Module-level cache (see wake_word._phrase_stt_by_size) persists across
     # tests otherwise, letting an earlier test's instances leak into a later
@@ -29,7 +35,7 @@ def test_defaults_to_wake_tier_when_model_size_not_given(monkeypatch) -> None:
     seen: list[str] = []
     monkeypatch.setattr(
         wake_word_module,
-        "SpeechToText",
+        "ListeningSpeechToText",
         lambda settings, model_size: seen.append(model_size) or _FakeSTT(model_size),
     )
     monkeypatch.setattr(
@@ -49,7 +55,7 @@ def test_explicit_model_size_overrides_wake_tier_default(monkeypatch) -> None:
     seen: list[str] = []
     monkeypatch.setattr(
         wake_word_module,
-        "SpeechToText",
+        "ListeningSpeechToText",
         lambda settings, model_size: seen.append(model_size) or _FakeSTT(model_size),
     )
     monkeypatch.setattr(
@@ -74,7 +80,7 @@ def test_caches_one_instance_per_model_size(monkeypatch) -> None:
         construction_count["n"] += 1
         return _FakeSTT(model_size)
 
-    monkeypatch.setattr(wake_word_module, "SpeechToText", fake_speech_to_text)
+    monkeypatch.setattr(wake_word_module, "ListeningSpeechToText", fake_speech_to_text)
     monkeypatch.setattr(
         wake_word_module,
         "_listen_for_any",
@@ -157,7 +163,7 @@ def test_listen_for_any_returns_none_immediately_when_extra_stop_event_is_alread
 
 def test_listen_for_phrases_forwards_extra_stop_event_to_listen_for_any(monkeypatch) -> None:
     settings = VoiceSettings()
-    monkeypatch.setattr(wake_word_module, "SpeechToText", lambda settings, model_size: _FakeSTT(model_size))
+    monkeypatch.setattr(wake_word_module, "ListeningSpeechToText", lambda settings, model_size: _FakeSTT(model_size))
     seen: dict[str, object] = {}
 
     def fake_listen_for_any(stt, settings, phrases, stop_event, extra_stop_event=None):

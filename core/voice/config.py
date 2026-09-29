@@ -12,16 +12,6 @@ VOICES_DIR: Path = DATA_DIR / "voices"
 logger = get_logger(__name__)
 
 
-def _detect_whisper_device() -> str:
-    try:
-        import torch
-
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        logger.warning("Could not check torch.cuda.is_available(); defaulting whisper_device to cpu", exc_info=True)
-        return "cpu"
-
-
 @dataclass(frozen=True)
 class VoiceSettings:
     wake_word: str = os.environ.get("ASSISTANT_WAKE_WORD", "ассистент")
@@ -29,7 +19,7 @@ class VoiceSettings:
 
     whisper_model_size: str = os.environ.get("ASSISTANT_WHISPER_MODEL", "small")
     whisper_wake_model_size: str = os.environ.get("ASSISTANT_WHISPER_WAKE_MODEL", "tiny")
-    whisper_device: str = os.environ.get("ASSISTANT_WHISPER_DEVICE") or _detect_whisper_device()
+    whisper_device: str = os.environ.get("ASSISTANT_WHISPER_DEVICE") or "auto"
     whisper_compute_type: str = os.environ.get("ASSISTANT_WHISPER_COMPUTE", "int8")
 
     supported_languages: tuple[str, ...] = ("ru", "uk", "en")
@@ -104,6 +94,7 @@ class VoiceSettings:
     # negatives). 2 is a balanced default for a quiet-room desktop mic.
     vad_aggressiveness: int = int(os.environ.get("ASSISTANT_VAD_AGGRESSIVENESS", "2"))
     wake_word_check_interval_seconds: float = 1.0
+    wake_gate_min_voiced_ratio: float = float(os.environ.get("ASSISTANT_WAKE_GATE_MIN_VOICED_RATIO", "0.05"))
 
     wake_word_backend: str = os.environ.get("ASSISTANT_WAKE_WORD_BACKEND", "keyword")
     porcupine_access_key: str | None = os.environ.get("PORCUPINE_ACCESS_KEY")

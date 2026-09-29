@@ -36,6 +36,11 @@ class _FakeBuffer:
         return next(self._windows, np.zeros(0, dtype=np.float32))
 
 
+@pytest.fixture(autouse=True)
+def _gate_passes_any_non_empty_window(monkeypatch) -> None:
+    monkeypatch.setattr(barge_in_module.SpeechGate, "should_transcribe", lambda self, window: window.size > 0)
+
+
 def _monitor(
     monkeypatch,
     buffer: _FakeBuffer,
