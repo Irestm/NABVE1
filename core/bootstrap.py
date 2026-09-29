@@ -5,6 +5,7 @@ from typing import Callable
 
 from core.config import settings
 from core.dispatcher import CommandDispatcher, build_dispatcher
+from core.gpu_worker.client import get_gpu_worker_client
 from core.message_bus import MessageBus, message_bus
 from core.telegram_notifier import TelegramNotifier
 from core.voice.announcements import ReminderAnnouncer
@@ -48,6 +49,8 @@ from modules.office_impress import register_commands as register_office_impress_
 from modules.office_notes import register_commands as register_office_notes_commands
 from modules.office_writer import register_commands as register_office_writer_commands
 from modules.password_manager import register_commands as register_password_manager_commands
+from modules.power_management.gpu_worker_link import link_gpu_worker
+from modules.power_management.service import get_power_service
 from modules.plugin_agent import register_commands as register_plugin_agent_commands
 from modules.plugin_agent import shutdown as shutdown_plugin_agent
 from modules.plugin_agent.events import PluginCandidateReadyForReview
@@ -117,6 +120,7 @@ class Composed:
 
 
 def compose(bus: MessageBus = message_bus) -> Composed:
+    link_gpu_worker(get_power_service(), get_gpu_worker_client())
     dispatcher = build_dispatcher(settings.confirmation_ttl_seconds)
     voice_loop = VoiceAssistantLoop(dispatcher)
 

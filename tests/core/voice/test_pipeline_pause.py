@@ -10,7 +10,7 @@ class _FakeTTS:
         raise AssertionError("synthesize should not be called in these tests")
 
 
-class _IdleSpeechToText:
+class _PrewarmableStub:
     def prewarm(self) -> None:
         return None
 
@@ -147,8 +147,8 @@ def test_run_survives_a_transient_wake_word_failure_and_keeps_looping(monkeypatc
     failure on the first pass and asserts the loop survives it and retries,
     instead of exiting for good."""
     loop = _make_loop()
-    monkeypatch.setattr(pipeline_module, "SpeechToText", lambda settings: _IdleSpeechToText())
-    monkeypatch.setattr(pipeline_module, "TextToSpeech", lambda settings: object())
+    monkeypatch.setattr(pipeline_module, "SpeechToText", lambda settings: _PrewarmableStub())
+    monkeypatch.setattr(pipeline_module, "TextToSpeech", lambda settings: _PrewarmableStub())
     monkeypatch.setattr(loop, "_run_onboarding_if_needed", lambda: None)
 
     calls = {"count": 0}
@@ -176,8 +176,8 @@ def test_barge_in_interruption_pauses_instead_of_listening_immediately(monkeypat
     # AssistantState.PAUSED, and go through _wait_for_wake_or_pause again on
     # the next iteration instead of skipping it.
     loop = _make_loop()
-    monkeypatch.setattr(pipeline_module, "SpeechToText", lambda settings: _IdleSpeechToText())
-    monkeypatch.setattr(pipeline_module, "TextToSpeech", lambda settings: object())
+    monkeypatch.setattr(pipeline_module, "SpeechToText", lambda settings: _PrewarmableStub())
+    monkeypatch.setattr(pipeline_module, "TextToSpeech", lambda settings: _PrewarmableStub())
     monkeypatch.setattr(loop, "_run_onboarding_if_needed", lambda: None)
 
     wait_calls = {"count": 0}
@@ -211,8 +211,8 @@ def test_continuous_conversation_handles_several_commands_without_a_new_wake_phr
     # exchange - _wait_for_wake_or_pause is only called once here, even
     # though _handle_command runs three times before the loop ends.
     loop = _make_loop()
-    monkeypatch.setattr(pipeline_module, "SpeechToText", lambda settings: _IdleSpeechToText())
-    monkeypatch.setattr(pipeline_module, "TextToSpeech", lambda settings: object())
+    monkeypatch.setattr(pipeline_module, "SpeechToText", lambda settings: _PrewarmableStub())
+    monkeypatch.setattr(pipeline_module, "TextToSpeech", lambda settings: _PrewarmableStub())
     monkeypatch.setattr(loop, "_run_onboarding_if_needed", lambda: None)
 
     wait_calls = {"count": 0}
@@ -245,8 +245,8 @@ def test_continuous_conversation_stops_and_requires_a_new_wake_phrase_after_a_pa
     # loop must stop calling _handle_command immediately - not keep going
     # until the next command also happens to be a pause.
     loop = _make_loop()
-    monkeypatch.setattr(pipeline_module, "SpeechToText", lambda settings: _IdleSpeechToText())
-    monkeypatch.setattr(pipeline_module, "TextToSpeech", lambda settings: object())
+    monkeypatch.setattr(pipeline_module, "SpeechToText", lambda settings: _PrewarmableStub())
+    monkeypatch.setattr(pipeline_module, "TextToSpeech", lambda settings: _PrewarmableStub())
     monkeypatch.setattr(loop, "_run_onboarding_if_needed", lambda: None)
 
     wait_calls = {"count": 0}
@@ -281,8 +281,8 @@ def test_continuous_conversation_ends_on_a_hard_error_instead_of_retrying_tightl
     # broken _handle_command would otherwise spin with no blocking wait at
     # all in between attempts.
     loop = _make_loop()
-    monkeypatch.setattr(pipeline_module, "SpeechToText", lambda settings: _IdleSpeechToText())
-    monkeypatch.setattr(pipeline_module, "TextToSpeech", lambda settings: object())
+    monkeypatch.setattr(pipeline_module, "SpeechToText", lambda settings: _PrewarmableStub())
+    monkeypatch.setattr(pipeline_module, "TextToSpeech", lambda settings: _PrewarmableStub())
     monkeypatch.setattr(loop, "_run_onboarding_if_needed", lambda: None)
 
     wait_calls = {"count": 0}

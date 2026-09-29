@@ -109,6 +109,7 @@ from core.lifecycle.shutdown import install_supervised_child_guard, run_bounded
 from core.voice.audio_io import stop_all_audio
 from modules.youtube_control import browser_control as youtube_browser_control
 from modules.power_management import http_api as power_http_api
+from core.gpu_worker.client import get_gpu_worker_client
 from modules.ai_bridge.providers import keys as provider_keys
 from modules.ai_bridge.providers.gemini_api import GEMINI_RPD_LIMIT, GeminiApiProvider
 from modules.spotify_control import oauth as spotify_oauth
@@ -235,6 +236,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             ("messaging_snooze_checker", messaging_snooze_checker.stop),
             ("gmail_poller", gmail_poller.stop),
             ("telegram_outbound_poller", telegram_outbound_poller.stop),
+            ("gpu_worker", get_gpu_worker_client().stop),
         ],
         _SHUTDOWN_STEPS_TIMEOUT_SECONDS,
     )

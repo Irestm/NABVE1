@@ -620,6 +620,9 @@ class VoiceAssistantLoop:
             if not detected:
                 break
 
+            command_stt.prewarm()
+            tts.prewarm()
+
             # Fresh activation, fresh conversation - no memory of whatever
             # topic an earlier, already-ended session was about.
             self._last_exchange = None

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import numpy as np
+
+from core.gpu_worker.client import GpuWorkerClient, get_gpu_worker_client
 
 # Weights: Silero's own model.silero.ai host isn't reachable from every
 # network; a working mirror of the multi-speaker v3_1_ru checkpoint is at
@@ -12,6 +13,7 @@ import numpy as np
 # — download it to data/voices/silero_ru_v3.pt (see VoiceSettings.silero_ru_model_path).
 DEFAULT_SPEAKER = "eugene"
 SAMPLE_RATE = 48000
+_SYNTHESIS_TIMEOUT_SECONDS = 180.0
 
 
 @dataclass(frozen=True)
@@ -102,32 +104,46 @@ def resolve_voice_pitch_shift(speaker: str) -> float:
 
 
 class SileroVoice:
-    """A single loaded Silero TTS checkpoint (a torch.package archive, not a
+    """A single Silero TTS checkpoint (a torch.package archive, not a
     plain state dict — hence PackageImporter rather than torch.load).
-    Loaded lazily on first synthesize() call, then cached for the process's
-    lifetime, matching TextToSpeech's own lazy-per-language voice loading.
+    Loaded lazily inside the GPU worker process (core/gpu_worker) on the
+    first synthesize() call and cached there while the worker is alive, so
+    the main process never imports torch.
 
     The checkpoint is multi-speaker (see VOICE_OPTIONS), so the speaker is
     passed per synthesize() call rather than baked in at construction —
     that lets callers switch voices (or preview one without switching the
     default) without reloading the model."""
 
-    def __init__(self, model_path: Path, speaker: str = DEFAULT_SPEAKER, sample_rate: int = SAMPLE_RATE) -> None:
+    def __init__(
+        self,
+        model_path: Path,
+        speaker: str = DEFAULT_SPEAKER,
+        sample_rate: int = SAMPLE_RATE,
+        client: GpuWorkerClient | None = None,
+    ) -> None:
         self._model_path = model_path
         self._speaker = speaker
         self._sample_rate = sample_rate
-        self._model: Any | None = None
+        self._client = client
 
-    def _get_model(self) -> Any:
-        if self._model is None:
-            import torch
+    def _worker(self) -> GpuWorkerClient:
+        return self._client or get_gpu_worker_client()
 
-            torch.set_num_threads(4)
-            importer = torch.package.PackageImporter(str(self._model_path))
-            self._model = importer.load_pickle("tts_models", "model")
-        return self._model
+    def prewarm(self) -> None:
+        self._worker().call_in_background(
+            "tts.silero_load", {"model_path": str(self._model_path)}, _SYNTHESIS_TIMEOUT_SECONDS
+        )
 
     def synthesize(self, text: str, speaker: str | None = None) -> tuple[np.ndarray, int]:
-        model = self._get_model()
-        audio = model.apply_tts(text=text, speaker=speaker or self._speaker, sample_rate=self._sample_rate)
-        return audio.numpy().astype(np.float32), self._sample_rate
+        audio, sample_rate = self._worker().call(
+            "tts.silero",
+            {
+                "model_path": str(self._model_path),
+                "text": text,
+                "speaker": speaker or self._speaker,
+                "sample_rate": self._sample_rate,
+            },
+            _SYNTHESIS_TIMEOUT_SECONDS,
+        )
+        return np.asarray(audio, dtype=np.float32), int(sample_rate)

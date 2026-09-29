@@ -36,6 +36,13 @@ def import_faster_whisper(block_torch_import: bool) -> ModuleType:
                 del sys.modules["torch"]
 
 
+def import_torch() -> ModuleType:
+    with _IMPORT_LOCK:
+        import torch
+
+        return torch
+
+
 def is_cuda_library_error(exc: BaseException) -> bool:
     message = str(exc).lower()
     return any(marker in message for marker in _CUDA_LIBRARY_MARKERS)

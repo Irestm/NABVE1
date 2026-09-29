@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
 import threading
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
+
+from core.gpu_worker.client import (
+    GpuWorkerClient,
+    GpuWorkerError,
+    GpuWorkerOperationError,
+    get_gpu_worker_client,
+)
 from core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -15,43 +25,76 @@ logger = get_logger(__name__)
 # under ~/.cache/torch/sentence_transformers after that.
 DEFAULT_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 
+_LOAD_TIMEOUT_SECONDS = 600.0
+_ENCODE_TIMEOUT_SECONDS = 180.0
+
 _models: dict[str, Any] = {}
 _unavailable_reasons: dict[str, str] = {}
 _models_lock = threading.Lock()
 
 
+def _client() -> GpuWorkerClient:
+    return get_gpu_worker_client()
+
+
+def _package_installed(package: str) -> bool:
+    try:
+        return importlib.util.find_spec(package) is not None
+    except (ValueError, ImportError):
+        return sys.modules.get(package) is not None
+
+
+class RemoteEmbeddingModel:
+    def __init__(self, model_name: str) -> None:
+        self.model_name = model_name
+
+    def encode(
+        self,
+        texts: list[str],
+        normalize_embeddings: bool = False,
+        convert_to_numpy: bool = True,
+    ) -> np.ndarray:
+        result = _client().call(
+            "embeddings.encode",
+            {"model_name": self.model_name, "texts": list(texts), "normalize": normalize_embeddings},
+            _ENCODE_TIMEOUT_SECONDS,
+        )
+        return np.asarray(result)
+
+
 def get_shared_model(model_name: str = DEFAULT_MODEL_NAME) -> Any | None:
-    """Loads and caches one SentenceTransformer per `model_name` for the
+    """Returns one shared embedding model handle per `model_name` for the
     whole process. modules.hardware_adaptive.command_classifier and
     modules.fitness_tracker.intent_parser both ask for the same
-    DEFAULT_MODEL_NAME and get back the exact same ~470MB in-memory model
-    instead of each holding its own copy — the reason this loader was
-    pulled out of command_classifier.py instead of just duplicating it.
-    Never raises: any failure (package missing, no network on first
-    download, ...) is cached and returned as None so callers degrade the
-    same way command_classifier already did before this was extracted."""
+    DEFAULT_MODEL_NAME and share the exact same model (loaded once, inside
+    the GPU worker) instead of each holding its own copy. Never raises: a
+    missing package or a failed load is cached and returned as None so
+    callers degrade the same way command_classifier already did; a worker
+    that could not start is reported as None without being cached."""
     with _models_lock:
         if model_name in _models:
             return _models[model_name]
         if model_name in _unavailable_reasons:
             return None
 
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError as exc:
-            _unavailable_reasons[model_name] = f"sentence-transformers is not installed: {exc}"
+        if not _package_installed("sentence_transformers"):
+            _unavailable_reasons[model_name] = "sentence-transformers is not installed"
             logger.warning(_unavailable_reasons[model_name])
             return None
 
         try:
-            model = SentenceTransformer(model_name)
-        except Exception as exc:  # noqa: BLE001 - any load failure just disables the fast path
+            _client().call("embeddings.load", {"model_name": model_name}, _LOAD_TIMEOUT_SECONDS)
+        except GpuWorkerOperationError as exc:
             _unavailable_reasons[model_name] = f"Failed to load embedding model '{model_name}': {exc}"
             logger.warning(_unavailable_reasons[model_name], exc_info=True)
             return None
+        except GpuWorkerError:
+            logger.warning("GPU worker unavailable for embedding model '%s'", model_name, exc_info=True)
+            return None
 
+        model = RemoteEmbeddingModel(model_name)
         _models[model_name] = model
-        logger.info("Loaded shared embedding model '%s'", model_name)
+        logger.info("Loaded shared embedding model '%s' in the GPU worker", model_name)
         return model
 
 

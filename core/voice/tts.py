@@ -229,6 +229,11 @@ class TextToSpeech:
             )
         return self._silero
 
+    def prewarm(self) -> None:
+        silero = self._get_silero()
+        if silero is not None:
+            silero.prewarm()
+
     def _resolve_voice_language(self, language: str) -> str:
         """Pick the Piper voice to actually use for `language`, falling back to
         `fallback_language` (with a warning) when no model is configured or the
