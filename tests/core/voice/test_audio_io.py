@@ -176,6 +176,7 @@ class _FakeCallbackStream:
         callback: object,
         fail_on_start: bool,
         latency: str | None = None,
+        blocksize: int = 0,
     ) -> None:
         self.callback = callback
         self.started = False

@@ -190,6 +190,9 @@ def stop_all_audio() -> None:
             logger.exception("Failed to close a microphone stream during shutdown")
 
 
+_ROLLING_BLOCK_SECONDS: float = 0.1
+
+
 class RollingAudioBuffer:
     def __init__(self, settings: VoiceSettings, window_seconds: float = 2.0) -> None:
         self._settings = settings
@@ -209,7 +212,8 @@ class RollingAudioBuffer:
             samplerate=self._settings.sample_rate,
             channels=1,
             dtype="float32",
-            latency="low",
+            blocksize=int(self._settings.sample_rate * _ROLLING_BLOCK_SECONDS),
+            latency="high",
             callback=self._callback,
         )
         # Only assign to self._stream once .start() has actually succeeded —

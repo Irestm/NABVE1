@@ -1,7 +1,8 @@
-import { app, powerMonitor } from "electron";
+import { app } from "electron";
 import { spawn, ChildProcess } from "node:child_process";
 import path from "node:path";
 import { BACKEND_BASE_URL } from "./config";
+import { isOnBatteryPower } from "./powerSource";
 import { backendResourcesDir, packagedDataDir, packagedLogsDir, readStockfishPath, venvPythonBin } from "./setup";
 
 // Dev: run straight from the repo checkout with whatever `python3`/`python`
@@ -56,7 +57,7 @@ export async function startBackend(): Promise<ChildProcess | null> {
 
   const pythonBin = resolvePythonBinary();
   const env = { ...process.env };
-  env.ASSISTANT_ON_BATTERY = powerMonitor.isOnBatteryPower() ? "1" : "0";
+  env.ASSISTANT_ON_BATTERY = isOnBatteryPower() ? "1" : "0";
   if (app.isPackaged) {
     // See core/config.py's ASSISTANT_DATA_DIR/ASSISTANT_LOGS_DIR override —
     // the packaged backend source tree may be read-only (AppImage mount),
