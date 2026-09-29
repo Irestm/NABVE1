@@ -1,0 +1,17 @@
+html.page-inactive *,
+html.page-inactive *::before,
+html.page-inactive *::after {
+  animation-play-state: paused !important;
+}
+
+html.page-dormant .blob-backdrop *,
+html.page-dormant .theme-backdrop,
+html.page-dormant .theme-backdrop *,
+html.page-dormant .theme-backdrop *::before,
+html.page-dormant .theme-backdrop *::after {
+  animation-play-state: paused !important;
+}
+
+.blob-backdrop {
+  contain: strict;
+}

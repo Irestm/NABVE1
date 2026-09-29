@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { createCalendarEvent, deleteCalendarEvent, listUpcomingEvents } from "../api/client";
 import type { CalendarEvent, RecurrenceRule } from "../types";
 import { DelayedTasksPanel } from "./DelayedTasksPanel";
+import { usePolling } from "../hooks/usePolling";
 import "./PlannerView.css";
 
 const WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -122,11 +123,7 @@ export function PlannerView(): JSX.Element {
     }
   }
 
-  useEffect(() => {
-    void refresh();
-    const interval = window.setInterval(() => void refresh(), POLL_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, []);
+  usePolling(refresh, POLL_INTERVAL_MS);
 
   const eventsByDate = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();

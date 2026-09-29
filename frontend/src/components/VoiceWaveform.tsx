@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
+import { startFrameLoop } from "../hooks/frameLoop";
 import { useMicAnalyser } from "../hooks/useMicAnalyser";
+import { usePageActive } from "../hooks/usePageActive";
 import { useSyntheticAnalyser } from "../hooks/useSyntheticAnalyser";
 import "./VoiceWaveform.css";
 
@@ -35,8 +37,10 @@ function readCssColor(varName: string): string {
 
 export function VoiceWaveform({ mode, active }: VoiceWaveformProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const micAnalyserRef = useMicAnalyser(mode === "listening" && active);
-  const synthAnalyserRef = useSyntheticAnalyser(mode === "speaking" && active);
+  const pageActive = usePageActive();
+  const running = active && pageActive;
+  const micAnalyserRef = useMicAnalyser(mode === "listening" && running);
+  const synthAnalyserRef = useSyntheticAnalyser(mode === "speaking" && running);
   const analyserRef = mode === "listening" ? micAnalyserRef : synthAnalyserRef;
 
   useEffect(() => {
@@ -49,15 +53,12 @@ export function VoiceWaveform({ mode, active }: VoiceWaveformProps): JSX.Element
     const dpr = window.devicePixelRatio || 1;
     const color = readCssColor(mode === "listening" ? "--glow-listening" : "--glow-speaking");
     const data = new Uint8Array(32);
-    let frameId: number;
 
     function resize(): void {
       const rect = canvas!.getBoundingClientRect();
       canvas!.width = Math.max(1, rect.width * dpr);
       canvas!.height = Math.max(1, rect.height * dpr);
     }
-    resize();
-    window.addEventListener("resize", resize);
 
     function draw(): void {
       const width = canvas!.width;
@@ -65,7 +66,7 @@ export function VoiceWaveform({ mode, active }: VoiceWaveformProps): JSX.Element
       ctx!.clearRect(0, 0, width, height);
 
       const analyser = analyserRef.current;
-      if (analyser && active) {
+      if (analyser && running) {
         analyser.getByteFrequencyData(data);
       } else {
         data.fill(0);
@@ -83,16 +84,31 @@ export function VoiceWaveform({ mode, active }: VoiceWaveformProps): JSX.Element
         ctx!.fillStyle = color;
         roundedRect(ctx!, x, y, barWidth - gap, barHeight, (barWidth - gap) / 2);
       }
-
-      frameId = requestAnimationFrame(draw);
     }
-    draw();
+
+    function handleResize(): void {
+      resize();
+      if (!running) {
+        draw();
+      }
+    }
+    resize();
+    window.addEventListener("resize", handleResize);
+    const resizeObserver: ResizeObserver | null =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(handleResize);
+    resizeObserver?.observe(canvas);
+
+    const stopLoop: (() => void) | null = running ? startFrameLoop(draw) : null;
+    if (!stopLoop) {
+      draw();
+    }
 
     return () => {
-      cancelAnimationFrame(frameId);
-      window.removeEventListener("resize", resize);
+      stopLoop?.();
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", handleResize);
     };
-  }, [mode, active, analyserRef]);
+  }, [mode, active, running, analyserRef]);
 
   return (
     <div className={`voice-waveform voice-waveform--${mode}${active ? " voice-waveform--active" : ""}`}>

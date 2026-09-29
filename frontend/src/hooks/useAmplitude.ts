@@ -1,6 +1,8 @@
 import { useEffect, type RefObject } from "react";
 import type { AssistantState } from "../types";
+import { startFrameLoop } from "./frameLoop";
 import { useMicAnalyser } from "./useMicAnalyser";
+import { usePageActive } from "./usePageActive";
 import { useSyntheticAnalyser } from "./useSyntheticAnalyser";
 
 // Idle/error/paused have no real or synthetic audio source, but the avatar
@@ -34,19 +36,27 @@ export function useAmplitude(targetRef: RefObject<HTMLElement>, state: Assistant
   // spoken answers the exact same way a normal voice command does — the
   // orb reacting to actual mic input during the first-run interview, not
   // just sitting on a flat baseline, was the whole point of adding this.
-  const listening = state === "listening" || state === "onboarding";
-  const synthActive = state === "speaking" || state === "thinking" || state === "processing";
+  const pageActive = usePageActive();
+  const listening = pageActive && (state === "listening" || state === "onboarding");
+  const synthActive = pageActive && (state === "speaking" || state === "thinking" || state === "processing");
 
   const micAnalyserRef = useMicAnalyser(listening);
   const synthAnalyserRef = useSyntheticAnalyser(synthActive);
 
   useEffect(() => {
-    let frameId: number;
-    const data = new Uint8Array(32);
     const baseline = IDLE_BASELINE[state] ?? 0.14;
+    const setAmplitude = (value: number): void => {
+      targetRef.current?.style.setProperty("--amplitude", value.toFixed(3));
+    };
 
-    function loop(): void {
-      const analyser = listening ? micAnalyserRef.current : synthActive ? synthAnalyserRef.current : null;
+    if (!listening && !synthActive) {
+      setAmplitude(baseline);
+      return;
+    }
+
+    const data = new Uint8Array(32);
+    return startFrameLoop(() => {
+      const analyser = listening ? micAnalyserRef.current : synthAnalyserRef.current;
       let amplitude = baseline;
       if (analyser) {
         analyser.getByteFrequencyData(data);
@@ -56,11 +66,7 @@ export function useAmplitude(targetRef: RefObject<HTMLElement>, state: Assistant
         }
         amplitude = sum / data.length / 255;
       }
-      targetRef.current?.style.setProperty("--amplitude", amplitude.toFixed(3));
-      frameId = requestAnimationFrame(loop);
-    }
-    loop();
-
-    return () => cancelAnimationFrame(frameId);
-  }, [listening, synthActive, state, targetRef, micAnalyserRef, synthAnalyserRef]);
+      setAmplitude(amplitude);
+    });
+  },[listening, synthActive, state, targetRef, micAnalyserRef, synthAnalyserRef]);
 }

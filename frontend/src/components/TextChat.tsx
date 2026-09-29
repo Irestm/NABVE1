@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Eraser } from "lucide-react";
+import { usePolling } from "../hooks/usePolling";
 import { clearConversation, confirmCommand, getConversation, sendTextQuery } from "../api/client";
 import type { ConversationTurn } from "../types";
 import "./TextChat.css";
@@ -64,15 +65,11 @@ export function TextChat(): JSX.Element {
     }
   }
 
-  useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => {
-      if (!busyRef.current) {
-        void refresh();
-      }
-    }, REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, []);
+  usePolling(() => {
+    if (!busyRef.current) {
+      void refresh();
+    }
+  }, REFRESH_INTERVAL_MS);
 
   useEffect(() => {
     busyRef.current = sending || pending !== null;

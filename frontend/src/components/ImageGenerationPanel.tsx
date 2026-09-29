@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { deleteGeneratedImage, getGeneratedImageFileUrl, listGeneratedImages } from "../api/client";
 import type { GeneratedImage } from "../types";
+import { usePolling } from "../hooks/usePolling";
 import "./ImageGenerationPanel.css";
 
 // A generated image only ever reaches the frontend by refetching the list —
@@ -36,11 +37,7 @@ export function ImageGenerationPanel(): JSX.Element {
     }
   }
 
-  useEffect(() => {
-    void refresh();
-    const interval = window.setInterval(() => void refresh(), POLL_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, []);
+  usePolling(refresh, POLL_INTERVAL_MS);
 
   async function handleDelete(imageId: number): Promise<void> {
     setDeletingId(imageId);

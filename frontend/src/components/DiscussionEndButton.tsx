@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { MessagesSquare, X } from "lucide-react";
+import { usePolling } from "../hooks/usePolling";
 import { getStatus, runCommand } from "../api/client";
 import "./DiscussionEndButton.css";
 
@@ -27,13 +28,9 @@ export function DiscussionEndButton({ accent }: DiscussionEndButtonProps): JSX.E
     }
   }
 
-  useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => {
-      if (!busyRef.current) void refresh();
-    }, POLL_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, []);
+  usePolling(() => {
+    if (!busyRef.current) void refresh();
+  }, POLL_INTERVAL_MS);
 
   if (!active) {
     return null;

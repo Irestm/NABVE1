@@ -48,11 +48,17 @@ import { DEFAULT_DESIGN_ID } from "./design/registry";
 import { ThemeBackdrop } from "./design/ThemeBackdrop";
 import type { DesignId } from "./design/types";
 import { useGojoEasterEgg } from "./design/useGojoEasterEgg";
+import { usePageActivityClasses } from "./hooks/usePageActive";
+import { usePolling } from "./hooks/usePolling";
 import { isElectron } from "./platform/electronAdapter";
 import type { AssistantState } from "./types";
 import "./theme.css";
 import "./design/themes.css";
 import "./App.css";
+import "./pageActivity.css";
+
+const STATUS_POLL_INTERVAL_MS = 1500;
+const IDLE_STATES: ReadonlySet<AssistantState> = new Set<AssistantState>(["idle", "background_listening", "paused"]);
 
 const DESIGN_STORAGE_KEY = "assistantDesign";
 
@@ -140,34 +146,23 @@ export function App(): JSX.Element {
       ? "speaking"
       : assistantState;
 
-  useEffect(() => {
-    let cancelled = false;
+  usePageActivityClasses(IDLE_STATES.has(displayState));
 
-    async function poll(): Promise<void> {
-      try {
-        const status = await getStatus();
-        if (!cancelled) {
-          setAssistantState(status.state);
-          setDetail(status.detail);
-          setActiveModuleContext(status.active_module_context);
-          setGestureModeActive(status.gesture_mode_active);
-          setConnectionError("");
-        }
-      } catch (error) {
-        if (!cancelled) {
-          console.error("Failed to poll /api/status:", error);
-          setConnectionError("Нет связи с ядром ассистента");
-        }
-      }
+  async function pollStatus(): Promise<void> {
+    try {
+      const status = await getStatus();
+      setAssistantState(status.state);
+      setDetail(status.detail);
+      setActiveModuleContext(status.active_module_context);
+      setGestureModeActive(status.gesture_mode_active);
+      setConnectionError("");
+    } catch (error) {
+      console.error("Failed to poll /api/status:", error);
+      setConnectionError("Нет связи с ядром ассистента");
     }
+  }
 
-    void poll();
-    const interval = window.setInterval(() => void poll(), 1500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, []);
+  usePolling(pollStatus, STATUS_POLL_INTERVAL_MS);
 
   return (
     <>

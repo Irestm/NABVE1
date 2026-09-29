@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { getImageRequest } from "../api/client";
+import { usePolling } from "../hooks/usePolling";
 import "./BoardGameImageModal.css";
 
 const POLL_INTERVAL_MS = 1500;
@@ -10,27 +11,19 @@ const POLL_INTERVAL_MS = 1500;
 export function BoardGameImageModal(): JSX.Element | null {
   const [svg, setSvg] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function poll(): Promise<void> {
-      try {
-        const response = await getImageRequest();
-        if (!cancelled && response.svg) {
-          setSvg(response.svg);
-        }
-      } catch (error) {
-        // Backend not reachable this tick — just retry next poll.
-        console.error("Failed to poll /api/ui/image_request:", error);
+  async function poll(): Promise<void> {
+    try {
+      const response = await getImageRequest();
+      if (response.svg) {
+        setSvg(response.svg);
       }
+    } catch (error) {
+      // Backend not reachable this tick — just retry next poll.
+      console.error("Failed to poll /api/ui/image_request:", error);
     }
+  }
 
-    const interval = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, []);
+  usePolling(poll, POLL_INTERVAL_MS);
 
   if (!svg) {
     return null;

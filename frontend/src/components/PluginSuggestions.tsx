@@ -5,6 +5,7 @@ import {
   listPluginSuggestions,
   rejectPluginSuggestion,
 } from "../api/client";
+import { isPageActive } from "../hooks/usePageActive";
 import type { PluginSuggestion } from "../types";
 
 const POLL_INTERVAL_MS = 15000;
@@ -56,7 +57,11 @@ export function PluginSuggestions(): JSX.Element | null {
     }
 
     void poll();
-    const interval = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
+    const interval = window.setInterval(() => {
+      if (isPageActive()) {
+        void poll();
+      }
+    }, POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(interval);

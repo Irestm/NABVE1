@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { confirmCommand, listCommandButtons, runCommand } from "../api/client";
+import { usePageActive } from "../hooks/usePageActive";
 import type { CommandButtonDescriptor, CommandParamField } from "../types";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { DiscussionEndButton } from "./DiscussionEndButton";
@@ -234,14 +235,16 @@ function StopwatchControl({ accent }: { accent: string }): JSX.Element {
   const [accumulatedMs, setAccumulatedMs] = useState(0);
   const [nowMs, setNowMs] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
+  const pageActive = usePageActive();
 
   useEffect(() => {
-    if (!running || startedAt == null) {
+    if (!running || startedAt == null || !pageActive) {
       return;
     }
+    setNowMs(Date.now());
     const id = window.setInterval(() => setNowMs(Date.now()), 71);
     return () => window.clearInterval(id);
-  }, [running, startedAt]);
+  }, [running, startedAt, pageActive]);
 
   // Collapse back to a plain button when the click lands anywhere outside
   // the widget (the stopwatch and its own buttons keep it open). The

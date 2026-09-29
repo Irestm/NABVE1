@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { cancelDelayedTask, listDelayedTasks } from "../api/client";
 import type { DelayedTask } from "../types";
+import { usePolling } from "../hooks/usePolling";
 import "./DelayedTasksPanel.css";
 
 const POLL_INTERVAL_MS = 15000;
@@ -25,11 +26,7 @@ export function DelayedTasksPanel() {
     }
   }
 
-  useEffect(() => {
-    void refresh();
-    const interval = window.setInterval(() => void refresh(), POLL_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, []);
+  usePolling(refresh, POLL_INTERVAL_MS);
 
   async function onCancel(taskId: number): Promise<void> {
     try {

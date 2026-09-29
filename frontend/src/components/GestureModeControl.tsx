@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { Check, Eye, GraduationCap, Hand, X } from "lucide-react";
 import { getStatus, gesturePreviewUrl, runCommand, setGesturePreview } from "../api/client";
+import { isPageActive, usePageActive } from "../hooks/usePageActive";
 import type { GestureCalibration } from "../types";
 import { GestureTraining } from "./GestureTraining";
 import "./GestureModeControl.css";
@@ -26,6 +27,7 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
   const [previewSrc, setPreviewSrc] = useState("");
   const busyRef = useRef(false);
   const calibratingRef = useRef(false);
+  const pageActive = usePageActive();
 
   async function refresh(): Promise<void> {
     try {
@@ -42,7 +44,7 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
     void refresh();
     let timer = 0;
     const tick = () => {
-      if (!busyRef.current) void refresh();
+      if (!busyRef.current && isPageActive()) void refresh();
       timer = window.setTimeout(
         tick,
         calibratingRef.current ? POLL_INTERVAL_CALIBRATING_MS : POLL_INTERVAL_MS,
@@ -55,7 +57,7 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
   // Turn the backend preview producer on only while the checkbox is on and
   // the mode is active; poll the JPEG a few times a second.
   useEffect(() => {
-    const on = preview && active;
+    const on = preview && active && pageActive;
     void setGesturePreview(on).catch(() => undefined);
     if (!on) {
       setPreviewSrc("");
@@ -66,7 +68,7 @@ export function GestureModeControl({ accent }: GestureModeControlProps): JSX.Ele
       window.clearInterval(timer);
       void setGesturePreview(false).catch(() => undefined);
     };
-  }, [preview, active]);
+  }, [preview, active, pageActive]);
 
   async function run(command: string): Promise<void> {
     setBusy(true);

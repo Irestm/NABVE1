@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { confirmCommand, listPendingMessages, runCommand, speak } from "../api/client";
 import type { PendingMessage } from "../types";
+import { usePolling } from "../hooks/usePolling";
 import "./MessagingPanel.css";
 
 // Same "just refetch, nothing else propagates a live update" reasoning as
@@ -24,11 +25,7 @@ export function MessagingPanel(): JSX.Element {
     }
   }
 
-  useEffect(() => {
-    void refresh();
-    const interval = window.setInterval(() => void refresh(), POLL_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, []);
+  usePolling(refresh, POLL_INTERVAL_MS);
 
   async function handleReadAloud(message: PendingMessage): Promise<void> {
     try {

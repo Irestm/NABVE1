@@ -66,6 +66,9 @@ if (!app.requestSingleInstanceLock()) {
 
   ipcMain.on("meeting-recording-active-changed", (_event, active: boolean) => {
     meetingRecordingActive = Boolean(active);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.setBackgroundThrottling(!meetingRecordingActive);
+    }
   });
 
   // components/CustomCommandsPanel.tsx's launch_app "Обзор…" button (see
@@ -202,12 +205,7 @@ if (!app.requestSingleInstanceLock()) {
         preload: path.join(__dirname, "preload.js"),
         contextIsolation: true,
         nodeIntegration: false,
-        // Chromium throttles timers in a hidden/minimized-to-tray renderer by
-        // default, which would otherwise stutter or stall MediaRecorder's
-        // periodic `ondataavailable` callback (see
-        // frontend/src/meeting/meetingRecorder.ts) — a meeting recording must
-        // keep running uninterrupted while this window is hidden in the tray.
-        backgroundThrottling: false,
+        backgroundThrottling: true,
         // How preload.ts learns `apiToken` (see its own comment) — Electron
         // appends these verbatim to the renderer process's argv, which a
         // preload script (unlike the sandboxed renderer itself) can read.
@@ -227,6 +225,16 @@ if (!app.requestSingleInstanceLock()) {
         app.quit();
       }
     });
+
+    const sendWindowActive = (active: boolean): void => {
+      if (!window.isDestroyed()) {
+        window.webContents.send("window-active-changed", active);
+      }
+    };
+    window.on("hide", () => sendWindowActive(false));
+    window.on("minimize", () => sendWindowActive(false));
+    window.on("show", () => sendWindowActive(true));
+    window.on("restore", () => sendWindowActive(true));
 
     window.webContents.on("before-input-event", (event: Electron.Event, input: Electron.Input) => {
       const quitShortcut = input.type === "keyDown" && (input.control || input.meta) && !input.alt && !input.shift && input.code === "KeyQ";

@@ -274,6 +274,7 @@ export interface AssistantWindowAPI {
   // form's "Обзор…" button.
   pickExecutablePath?: () => Promise<string | null>;
   pickVideoPath?: () => Promise<string | null>;
+  onWindowActiveChanged?: (callback: (active: boolean) => void) => () => void;
 }
 
 export type MeetingRecordingStatus = "uploading" | "processing" | "ready" | "error";

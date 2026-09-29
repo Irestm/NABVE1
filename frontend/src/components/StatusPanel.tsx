@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { getAIBridgeStatus, runCommand } from "../api/client";
 import type { AIBridgeStatus, ProviderName } from "../types";
 import { ProviderCard } from "./ProviderCard";
+import { usePolling } from "../hooks/usePolling";
 import "./StatusPanel.css";
+
+const STATUS_POLL_INTERVAL_MS = 5000;
 
 const ALL_PROVIDERS: ProviderName[] = ["gemini", "chatgpt", "deepseek", "grok"];
 
@@ -12,27 +15,15 @@ export function StatusPanel(): JSX.Element {
   const [busyProvider, setBusyProvider] = useState<ProviderName | null>(null);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function poll(): Promise<void> {
-      try {
-        const next = await getAIBridgeStatus();
-        if (!cancelled) {
-          setStatus(next);
-        }
-      } catch {
-        // Backend not reachable yet; leave last known status displayed.
-      }
+  async function poll(): Promise<void> {
+    try {
+      setStatus(await getAIBridgeStatus());
+    } catch {
+      // Backend not reachable yet; leave last known status displayed.
     }
+  }
 
-    void poll();
-    const interval = window.setInterval(() => void poll(), 5000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, []);
+  usePolling(poll, STATUS_POLL_INTERVAL_MS);
 
   async function handleReveal(): Promise<void> {
     setRevealing(true);
