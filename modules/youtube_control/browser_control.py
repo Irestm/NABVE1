@@ -110,6 +110,22 @@ class YouTubeBrowserSession:
             return False
         return not paused
 
+    async def close(self) -> None:
+        context, playwright = self._context, self._playwright
+        self._context = None
+        self._page = None
+        self._playwright = None
+        if context is not None:
+            try:
+                await context.close()
+            except Exception:
+                logger.debug("YouTube browser context was already closed", exc_info=True)
+        if playwright is not None:
+            try:
+                await playwright.stop()
+            except Exception:
+                logger.debug("YouTube playwright driver was already stopped", exc_info=True)
+
 
 _session: YouTubeBrowserSession | None = None
 
@@ -134,3 +150,10 @@ async def is_playing() -> bool:
     if _session is None:
         return False
     return await _session.is_playing()
+
+
+async def close_session() -> None:
+    global _session
+    session, _session = _session, None
+    if session is not None:
+        await session.close()

@@ -146,3 +146,74 @@ def test_restart_does_not_respawn_if_stop_requested_during_backoff() -> None:
         supervisor._restart("test reason")
 
     popen.assert_not_called()
+
+
+def test_spawn_marks_the_child_as_supervised() -> None:
+    supervisor = _supervisor()
+
+    with patch("core.watchdog.supervisor.subprocess.Popen", return_value=MagicMock(pid=1)) as popen:
+        supervisor._spawn()
+
+    env = popen.call_args.kwargs["env"]
+    assert env["ASSISTANT_SUPERVISED"] == "1"
+    assert env["ASSISTANT_SUPERVISOR_PID"].isdigit()
+    assert "--timeout-graceful-shutdown" in popen.call_args.args[0]
+
+
+def test_spawn_does_nothing_once_stop_was_requested() -> None:
+    supervisor = _supervisor()
+    supervisor.stop()
+
+    with patch("core.watchdog.supervisor.subprocess.Popen") as popen:
+        supervisor._spawn()
+
+    popen.assert_not_called()
+    assert supervisor._process is None
+
+
+def test_run_does_not_restart_a_child_that_exited_after_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    supervisor = _supervisor()
+    exited = MagicMock(pid=1)
+    exited.poll.return_value = 0
+    spawned: list[MagicMock] = []
+
+    def _popen(*args: object, **kwargs: object) -> MagicMock:
+        spawned.append(exited)
+        return exited
+
+    real_wait = supervisor._stop_event.wait
+
+    def _wait(timeout: float | None = None) -> bool:
+        real_wait(0)
+        return False
+
+    def _signal_arrives() -> bool:
+        supervisor._stop_event.set()
+        return True
+
+    monkeypatch.setattr(supervisor._stop_event, "wait", _wait)
+    monkeypatch.setattr(supervisor, "_parent_changed", lambda: _signal_arrives() and False)
+    monkeypatch.setattr("core.watchdog.supervisor.set_parent_death_signal", lambda signum: True)
+    with patch("core.watchdog.supervisor.subprocess.Popen", side_effect=_popen):
+        supervisor.run()
+
+    assert len(spawned) == 1
+
+
+def test_run_stops_when_the_parent_process_disappears(monkeypatch: pytest.MonkeyPatch) -> None:
+    supervisor = _supervisor()
+    alive = MagicMock(pid=1)
+    alive.poll.return_value = None
+    alive.wait.return_value = 0
+    parents = iter([500, 1])
+    monkeypatch.setattr("core.watchdog.supervisor.os.getppid", lambda: next(parents, 1))
+    monkeypatch.setattr("core.watchdog.supervisor.set_parent_death_signal", lambda signum: True)
+
+    with patch("core.watchdog.supervisor.subprocess.Popen", return_value=alive) as popen, patch.object(
+        supervisor, "_check_health", return_value=True
+    ):
+        supervisor.run()
+
+    popen.assert_called_once()
+    alive.terminate.assert_called_once()
+    assert supervisor._stop_event.is_set()

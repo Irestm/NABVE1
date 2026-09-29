@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import queue
+import sys
 import threading
+import weakref
 from types import ModuleType
 
 import numpy as np
@@ -168,12 +170,33 @@ def play_audio(samples: np.ndarray, sample_rate: int, stop_event: threading.Even
                 return
 
 
+_ACTIVE_BUFFERS: weakref.WeakSet[RollingAudioBuffer] = weakref.WeakSet()
+_ACTIVE_BUFFERS_LOCK = threading.Lock()
+
+
+def stop_all_audio() -> None:
+    sd = sys.modules.get("sounddevice")
+    if sd is not None:
+        try:
+            sd.stop()
+        except Exception:
+            logger.exception("Failed to stop audio playback during shutdown")
+    with _ACTIVE_BUFFERS_LOCK:
+        buffers = list(_ACTIVE_BUFFERS)
+    for buffer in buffers:
+        try:
+            buffer.stop()
+        except Exception:
+            logger.exception("Failed to close a microphone stream during shutdown")
+
+
 class RollingAudioBuffer:
     def __init__(self, settings: VoiceSettings, window_seconds: float = 2.0) -> None:
         self._settings = settings
         self._window_seconds = window_seconds
         self._queue: queue.Queue[np.ndarray] = queue.Queue()
         self._stream: object | None = None
+        self._stream_lock = threading.Lock()
 
     def _callback(self, indata: np.ndarray, frames: int, time_info: object, status: object) -> None:
         if status:
@@ -199,13 +222,20 @@ class RollingAudioBuffer:
         except Exception:
             stream.close()
             raise
-        self._stream = stream
+        with self._stream_lock:
+            self._stream = stream
+        with _ACTIVE_BUFFERS_LOCK:
+            _ACTIVE_BUFFERS.add(self)
 
     def stop(self) -> None:
-        if self._stream is not None:
-            self._stream.stop()  # type: ignore[attr-defined]
-            self._stream.close()  # type: ignore[attr-defined]
+        with _ACTIVE_BUFFERS_LOCK:
+            _ACTIVE_BUFFERS.discard(self)
+        with self._stream_lock:
+            stream = self._stream
             self._stream = None
+        if stream is not None:
+            stream.stop()  # type: ignore[attr-defined]
+            stream.close()  # type: ignore[attr-defined]
 
     def read_window(self, timeout: float) -> np.ndarray:
         window_frames = int(self._settings.sample_rate * self._window_seconds)

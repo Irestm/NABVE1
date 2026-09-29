@@ -104,6 +104,10 @@ from core.voice import web_pipeline
 from modules.ai_bridge import provider_auth, virtual_display
 from modules.ai_bridge.providers import http_api as providers_http_api
 from modules.english_learning import http_api as english_http_api
+from core.lifecycle import http_api as lifecycle_http_api
+from core.lifecycle.shutdown import install_supervised_child_guard, run_bounded
+from core.voice.audio_io import stop_all_audio
+from modules.youtube_control import browser_control as youtube_browser_control
 from modules.ai_bridge.providers import keys as provider_keys
 from modules.ai_bridge.providers.gemini_api import GEMINI_RPD_LIMIT, GeminiApiProvider
 from modules.spotify_control import oauth as spotify_oauth
@@ -170,10 +174,14 @@ messaging_snooze_checker = _composed.messaging_snooze_checker
 gmail_poller = _composed.gmail_poller
 delayed_command_runner = _composed.delayed_command_runner
 
+_SHUTDOWN_STEPS_TIMEOUT_SECONDS = 2.0
+_SHUTDOWN_BROWSERS_TIMEOUT_SECONDS = 2.0
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     logger.info("Assistant core service starting up")
+    parent_watcher = install_supervised_child_guard()
     # The conversation transcript is session-scoped, not a permanent
     # history — cleared on every startup so it can't outlive a shutdown
     # (covers a clean power-off and a crash alike). The "Контекст" button
@@ -209,25 +217,47 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await telegram_client_manager.connect_all_stored_accounts()
     telegram_outbound_task = asyncio.create_task(telegram_outbound_poller.run_forever())
     yield
-    voice_loop.stop()
-    reminder_checker.stop()
-    delayed_command_runner.stop()
-    await asyncio.to_thread(gesture_controller.stop)
-    hardware_monitor.stop()
-    recording_processor.stop()
-    recording_transcriber.stop()
-    messaging_snooze_checker.stop()
-    gmail_poller.stop()
-    telegram_outbound_poller.stop()
-    telegram_outbound_task.cancel()
-    await get_provider_manager().close_all()
-    virtual_display.stop()
     logger.info("Assistant core service shutting down")
+    if parent_watcher is not None:
+        parent_watcher.stop()
+    await asyncio.to_thread(
+        run_bounded,
+        [
+            ("voice_loop", voice_loop.stop),
+            ("audio", stop_all_audio),
+            ("reminder_checker", reminder_checker.stop),
+            ("delayed_command_runner", delayed_command_runner.stop),
+            ("gesture_controller", gesture_controller.stop),
+            ("hardware_monitor", hardware_monitor.stop),
+            ("recording_processor", recording_processor.stop),
+            ("recording_transcriber", recording_transcriber.stop),
+            ("messaging_snooze_checker", messaging_snooze_checker.stop),
+            ("gmail_poller", gmail_poller.stop),
+            ("telegram_outbound_poller", telegram_outbound_poller.stop),
+        ],
+        _SHUTDOWN_STEPS_TIMEOUT_SECONDS,
+    )
+    telegram_outbound_task.cancel()
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(
+                get_provider_manager().close_all(),
+                youtube_browser_control.close_session(),
+                return_exceptions=True,
+            ),
+            _SHUTDOWN_BROWSERS_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Browser sessions did not close within %.1fs", _SHUTDOWN_BROWSERS_TIMEOUT_SECONDS)
+    virtual_display.stop()
+    stop_all_audio()
+    logger.info("Assistant core service stopped")
 
 
 app = FastAPI(title="Assistant Core", lifespan=lifespan)
 app.include_router(providers_http_api.router)
 app.include_router(english_http_api.router)
+app.include_router(lifecycle_http_api.router)
 
 app.add_middleware(
     CORSMiddleware,

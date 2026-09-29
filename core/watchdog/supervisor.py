@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import signal
 import subprocess
 import sys
@@ -10,6 +11,8 @@ import urllib.request
 from types import FrameType
 
 from core.config import BASE_DIR, settings
+from core.lifecycle.parent_death import set_parent_death_signal
+from core.lifecycle.shutdown import SUPERVISED_ENV, SUPERVISOR_PID_ENV
 from core.logger import get_logger
 
 logger = get_logger("core.watchdog.supervisor")
@@ -21,6 +24,7 @@ _DEFAULT_INITIAL_BACKOFF_SECONDS = 1.0
 _DEFAULT_MAX_BACKOFF_SECONDS = 30.0
 _DEFAULT_HEALTHY_RESET_SECONDS = 60.0
 _TERMINATE_WAIT_SECONDS = 5.0
+_GRACEFUL_SHUTDOWN_SECONDS = 1
 
 
 class Supervisor:
@@ -54,12 +58,25 @@ class Supervisor:
         self._consecutive_failures = 0
         self._backoff = initial_backoff
         self._healthy_since: float | None = None
+        self._parent_pid: int | None = None
 
     @property
     def _health_url(self) -> str:
         return f"http://{self._host}:{self._port}/api/status"
 
+    def _child_env(self) -> dict[str, str]:
+        env = dict(os.environ)
+        env[SUPERVISED_ENV] = "1"
+        env[SUPERVISOR_PID_ENV] = str(os.getpid())
+        return env
+
+    def _parent_changed(self) -> bool:
+        return self._parent_pid is not None and os.getppid() != self._parent_pid
+
     def _spawn(self) -> None:
+        if self._stop_event.is_set():
+            logger.info("Stop requested; not starting a new core process")
+            return
         cmd = [
             sys.executable,
             "-m",
@@ -69,8 +86,10 @@ class Supervisor:
             self._bind_host,
             "--port",
             str(self._port),
+            "--timeout-graceful-shutdown",
+            str(_GRACEFUL_SHUTDOWN_SECONDS),
         ]
-        self._process = subprocess.Popen(cmd, cwd=str(BASE_DIR))
+        self._process = subprocess.Popen(cmd, cwd=str(BASE_DIR), env=self._child_env())
         self._consecutive_failures = 0
         self._healthy_since = None
         logger.info("Started core process pid=%s cmd=%s", self._process.pid, " ".join(cmd))
@@ -120,15 +139,23 @@ class Supervisor:
     def run(self) -> None:
         previous_sigint = signal.signal(signal.SIGINT, self._handle_signal)
         previous_sigterm = signal.signal(signal.SIGTERM, self._handle_signal)
+        set_parent_death_signal(signal.SIGTERM)
+        self._parent_pid = os.getppid()
         try:
             logger.info("Watchdog supervisor starting, target=%s", self._health_url)
             self._spawn()
             while not self._stop_event.is_set():
                 if self._stop_event.wait(self._check_interval):
                     break
+                if self._parent_changed():
+                    logger.warning("Parent process %s is gone; stopping supervisor", self._parent_pid)
+                    self.stop()
+                    break
 
                 exit_code = self._process.poll() if self._process is not None else None
                 if exit_code is not None:
+                    if self._stop_event.is_set():
+                        break
                     logger.error("Core process exited unexpectedly with code %s", exit_code)
                     self._restart(f"process exited with code {exit_code}")
                     continue

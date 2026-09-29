@@ -264,3 +264,20 @@ def test_confirmation_gives_up_when_nobody_answers(monkeypatch: pytest.MonkeyPat
     )
 
     assert audio_io.record_confirmation(settings, threading.Event()).size == 0
+
+
+def test_stop_all_audio_closes_every_open_microphone_buffer(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_sd = _FakeSoundDeviceForBuffer(fail_on_start=False)
+    monkeypatch.setattr(audio_io, "require_sounddevice", lambda: fake_sd)
+    monkeypatch.delitem(__import__("sys").modules, "sounddevice", raising=False)
+    buffer = audio_io.RollingAudioBuffer(_settings())
+    buffer.start()
+    stream = fake_sd.last_stream
+
+    audio_io.stop_all_audio()
+
+    assert stream.stopped is True
+    assert stream.closed is True
+    assert buffer._stream is None
+    buffer.stop()
+
