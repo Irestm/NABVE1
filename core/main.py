@@ -108,6 +108,7 @@ from core.lifecycle import http_api as lifecycle_http_api
 from core.lifecycle.shutdown import install_supervised_child_guard, run_bounded
 from core.voice.audio_io import stop_all_audio
 from modules.youtube_control import browser_control as youtube_browser_control
+from modules.power_management import http_api as power_http_api
 from modules.ai_bridge.providers import keys as provider_keys
 from modules.ai_bridge.providers.gemini_api import GEMINI_RPD_LIMIT, GeminiApiProvider
 from modules.spotify_control import oauth as spotify_oauth
@@ -258,6 +259,7 @@ app = FastAPI(title="Assistant Core", lifespan=lifespan)
 app.include_router(providers_http_api.router)
 app.include_router(english_http_api.router)
 app.include_router(lifecycle_http_api.router)
+app.include_router(power_http_api.router)
 
 app.add_middleware(
     CORSMiddleware,
