@@ -57,6 +57,7 @@ if (!app.requestSingleInstanceLock()) {
   let trayHandle: TrayHandle | null = null;
   let visibilityPollTimer: NodeJS.Timeout | null = null;
   let isQuitting = false;
+  let shutdownStarted = false;
   // Set via the "meeting-recording-active-changed" IPC message the preload
   // bridge's assistantAPI.setRecordingActive() sends — see preload.ts. Only
   // gates actual app quit (below); hiding the window to the tray already
@@ -223,7 +224,15 @@ if (!app.requestSingleInstanceLock()) {
     window.on("close", (event: Electron.Event) => {
       if (!isQuitting) {
         event.preventDefault();
-        window.hide();
+        app.quit();
+      }
+    });
+
+    window.webContents.on("before-input-event", (event: Electron.Event, input: Electron.Input) => {
+      const quitShortcut = input.type === "keyDown" && (input.control || input.meta) && !input.alt && !input.shift && input.code === "KeyQ";
+      if (quitShortcut) {
+        event.preventDefault();
+        app.quit();
       }
     });
 
@@ -283,6 +292,13 @@ if (!app.requestSingleInstanceLock()) {
     mainWindow?.setAlwaysOnTop(enabled);
   }
 
+  function stopUiVisibilityPolling(): void {
+    if (visibilityPollTimer) {
+      clearInterval(visibilityPollTimer);
+      visibilityPollTimer = null;
+    }
+  }
+
   function startUiVisibilityPolling(): void {
     visibilityPollTimer = setInterval(() => {
       void fetch(`${BACKEND_BASE_URL}/api/ui/visibility_request`, {
@@ -311,6 +327,9 @@ if (!app.requestSingleInstanceLock()) {
 
   async function launchNormally(): Promise<void> {
     await startBackend();
+    if (shutdownStarted) {
+      return;
+    }
     mainWindow = createStatusWindow();
     trayHandle = createTray(mainWindow, setAlwaysOnTop);
     startUiVisibilityPolling();
@@ -416,24 +435,47 @@ if (!app.requestSingleInstanceLock()) {
     }
   });
 
-  app.on("before-quit", (event) => {
-    if (!isQuitting && meetingRecordingActive && !confirmQuitDuringActiveRecording()) {
-      event.preventDefault();
+  async function shutdownAndExit(): Promise<void> {
+    if (shutdownStarted) {
       return;
     }
+    shutdownStarted = true;
     isQuitting = true;
-    if (visibilityPollTimer) {
-      clearInterval(visibilityPollTimer);
-      visibilityPollTimer = null;
-    }
+    stopUiVisibilityPolling();
     trayHandle?.tray.destroy();
-    stopBackend();
+    trayHandle = null;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.hide();
+    }
+    try {
+      await stopBackend();
+    } catch (error: unknown) {
+      process.stderr.write(`[main] Backend shutdown failed: ${String(error)}\n`);
+    }
+    app.exit(0);
+  }
+
+  app.on("before-quit", (event: Electron.Event) => {
+    event.preventDefault();
+    if (shutdownStarted) {
+      return;
+    }
+    if (meetingRecordingActive && !confirmQuitDuringActiveRecording()) {
+      return;
+    }
+    void shutdownAndExit();
   });
 
+  const terminationSignals: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
+  for (const signal of terminationSignals) {
+    process.on(signal, () => {
+      process.stderr.write(`[main] Received ${signal}, shutting down\n`);
+      void shutdownAndExit();
+    });
+  }
+
   app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") {
-      app.quit();
-    }
+    app.quit();
   });
 
   app.on("activate", () => {

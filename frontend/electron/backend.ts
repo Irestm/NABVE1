@@ -1,6 +1,7 @@
-import { app } from "electron";
+import { app, powerMonitor } from "electron";
 import { spawn, ChildProcess } from "node:child_process";
 import path from "node:path";
+import { BACKEND_BASE_URL } from "./config";
 import { backendResourcesDir, packagedDataDir, packagedLogsDir, readStockfishPath, venvPythonBin } from "./setup";
 
 // Dev: run straight from the repo checkout with whatever `python3`/`python`
@@ -13,7 +14,14 @@ import { backendResourcesDir, packagedDataDir, packagedLogsDir, readStockfishPat
 // system-wide at all.
 const DEV_PROJECT_ROOT = path.resolve(__dirname, "..", "..");
 
+const SHUTDOWN_REQUEST_TIMEOUT_MS = 1000;
+const GRACEFUL_EXIT_TIMEOUT_MS = 3000;
+const FORCED_EXIT_TIMEOUT_MS = 2000;
+const GROUP_EXIT_POLL_INTERVAL_MS = 100;
+
 let backendProcess: ChildProcess | null = null;
+let shuttingDown = false;
+let stopPromise: Promise<void> | null = null;
 
 function resolvePythonBinary(): string {
   if (process.env.ASSISTANT_PYTHON_BIN) {
@@ -38,12 +46,17 @@ export async function startBackend(): Promise<ChildProcess | null> {
     return null;
   }
 
+  if (shuttingDown) {
+    return null;
+  }
+
   if (backendProcess) {
     return backendProcess;
   }
 
   const pythonBin = resolvePythonBinary();
   const env = { ...process.env };
+  env.ASSISTANT_ON_BATTERY = powerMonitor.isOnBatteryPower() ? "1" : "0";
   if (app.isPackaged) {
     // See core/config.py's ASSISTANT_DATA_DIR/ASSISTANT_LOGS_DIR override —
     // the packaged backend source tree may be read-only (AppImage mount),
@@ -60,6 +73,7 @@ export async function startBackend(): Promise<ChildProcess | null> {
   const child = spawn(pythonBin, ["-m", "core.watchdog"], {
     cwd: app.isPackaged ? backendResourcesDir() : DEV_PROJECT_ROOT,
     stdio: "pipe",
+    detached: process.platform !== "win32",
     windowsHide: true,
     env,
   });
@@ -88,12 +102,119 @@ export async function startBackend(): Promise<ChildProcess | null> {
   return child;
 }
 
-export function stopBackend(): void {
-  if (isExternalBackend()) {
+function hasExited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (hasExited(child)) {
+    return Promise.resolve(true);
+  }
+  return new Promise<boolean>((resolve) => {
+    const onExit = (): void => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    const timer = setTimeout(() => {
+      child.off("exit", onExit);
+      resolve(hasExited(child));
+    }, timeoutMs);
+    child.once("exit", onExit);
+  });
+}
+
+async function requestGracefulShutdown(): Promise<void> {
+  try {
+    await fetch(`${BACKEND_BASE_URL}/api/system/shutdown`, {
+      method: "POST",
+      headers: { "X-Assistant-Token": process.env.ASSISTANT_API_TOKEN ?? "" },
+      signal: AbortSignal.timeout(SHUTDOWN_REQUEST_TIMEOUT_MS),
+    });
+  } catch (error: unknown) {
+    process.stderr.write(`[backend] shutdown request failed: ${String(error)}\n`);
+  }
+}
+
+function signalProcessGroup(child: ChildProcess, signal: NodeJS.Signals | 0): boolean {
+  const pid = child.pid;
+  if (pid === undefined) {
+    return false;
+  }
+  try {
+    process.kill(-pid, signal);
+    return true;
+  } catch (error: unknown) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") {
+      return false;
+    }
+    process.stderr.write(`[backend] failed to send ${signal} to group ${pid}: ${String(error)}\n`);
+    if (signal !== 0 && !hasExited(child)) {
+      child.kill(signal);
+    }
+    return !hasExited(child);
+  }
+}
+
+async function waitForGroupExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  if (!(await waitForExit(child, timeoutMs))) {
+    return false;
+  }
+  while (signalProcessGroup(child, 0)) {
+    if (Date.now() >= deadline) {
+      return false;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, GROUP_EXIT_POLL_INTERVAL_MS));
+  }
+  return true;
+}
+
+function killWindowsProcessTree(child: ChildProcess): Promise<void> {
+  const pid = child.pid;
+  if (pid === undefined || hasExited(child)) {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    killer.on("error", (error: Error) => {
+      process.stderr.write(`[backend] taskkill failed: ${String(error)}\n`);
+      resolve();
+    });
+    killer.on("exit", () => resolve());
+  });
+}
+
+async function terminateBackend(child: ChildProcess): Promise<void> {
+  await requestGracefulShutdown();
+  if (process.platform === "win32") {
+    if (!(await waitForExit(child, GRACEFUL_EXIT_TIMEOUT_MS))) {
+      await killWindowsProcessTree(child);
+      await waitForExit(child, FORCED_EXIT_TIMEOUT_MS);
+    }
     return;
   }
-  if (backendProcess) {
-    backendProcess.kill();
-    backendProcess = null;
+  signalProcessGroup(child, "SIGTERM");
+  if (await waitForGroupExit(child, GRACEFUL_EXIT_TIMEOUT_MS)) {
+    return;
   }
+  process.stderr.write("[backend] did not exit after SIGTERM, sending SIGKILL\n");
+  signalProcessGroup(child, "SIGKILL");
+  await waitForGroupExit(child, FORCED_EXIT_TIMEOUT_MS);
+}
+
+export function stopBackend(): Promise<void> {
+  shuttingDown = true;
+  if (stopPromise) {
+    return stopPromise;
+  }
+  const child = backendProcess;
+  if (isExternalBackend() || !child) {
+    stopPromise = Promise.resolve();
+    return stopPromise;
+  }
+  stopPromise = terminateBackend(child).finally(() => {
+    backendProcess = null;
+  });
+  return stopPromise;
 }
