@@ -275,6 +275,8 @@ export interface AssistantWindowAPI {
   pickExecutablePath?: () => Promise<string | null>;
   pickVideoPath?: () => Promise<string | null>;
   onWindowActiveChanged?: (callback: (active: boolean) => void) => () => void;
+  getAutostart?: () => Promise<boolean>;
+  setAutostart?: (enabled: boolean) => Promise<boolean>;
 }
 
 export type MeetingRecordingStatus = "uploading" | "processing" | "ready" | "error";

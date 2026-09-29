@@ -42,6 +42,8 @@ contextBridge.exposeInMainWorld("assistantAPI", {
   // back, unlike setRecordingActive above.
   pickExecutablePath: () => ipcRenderer.invoke("pick-executable") as Promise<string | null>,
   pickVideoPath: () => ipcRenderer.invoke("pick-video") as Promise<string | null>,
+  getAutostart: () => ipcRenderer.invoke("autostart-get") as Promise<boolean>,
+  setAutostart: (enabled: boolean) => ipcRenderer.invoke("autostart-set", enabled) as Promise<boolean>,
   onWindowActiveChanged: (callback: (active: boolean) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, active: boolean): void => callback(Boolean(active));
     ipcRenderer.on("window-active-changed", listener);

@@ -6,6 +6,7 @@ import { getProfileFact, runCommand, saveAboutMe, setProfileFact } from "../api/
 import { DESIGNS } from "../design/registry";
 import { CustomCommandsPanel } from "./CustomCommandsPanel";
 import { PersonalityPanel } from "./PersonalityPanel";
+import { PowerSettingsPanel } from "./PowerSettingsPanel";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 import type { DesignId } from "../design/types";
 import "./SettingsPanel.css";
@@ -25,7 +26,7 @@ const DEFAULT_GENDER: Gender = "male";
 const CLAUDE_LOGIN_POLL_MS = 3000;
 const CLAUDE_LOGIN_POLL_MAX_ATTEMPTS = 40; // ~2 minutes
 
-type SettingsTab = "design" | "profile" | "voice" | "personality" | "code";
+type SettingsTab = "design" | "profile" | "voice" | "personality" | "power" | "code";
 
 interface ClaudeAuthStatus {
   loggedIn: boolean;
@@ -308,6 +309,13 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
               </button>
               <button
                 type="button"
+                className={`settings-panel__tab${tab === "power" ? " settings-panel__tab--active" : ""}`}
+                onClick={() => setTab("power")}
+              >
+                Питание
+              </button>
+              <button
+                type="button"
                 className={`settings-panel__tab${tab === "code" ? " settings-panel__tab--active" : ""}`}
                 onClick={() => setTab("code")}
               >
@@ -454,6 +462,8 @@ export function SettingsPanel({ designId, onDesignChange }: SettingsPanelProps):
               <VoiceSettingsPanel />
             ) : tab === "personality" ? (
               <PersonalityPanel />
+            ) : tab === "power" ? (
+              <PowerSettingsPanel />
             ) : tab === "code" ? (
               <div className="settings-panel__profile">
                 <div className="settings-panel__field">

@@ -2,7 +2,9 @@ import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, shell } 
 import { autoUpdater } from "electron-updater";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
+import { registerAutostartIpc } from "./autostart";
 import { startBackend, stopBackend } from "./backend";
+import { startPowerSourceSync } from "./powerSource";
 import { getSetupLogPath, needsSetup, runSetup } from "./setup";
 import { createSetupWindow, sendSetupError, sendSetupProgress } from "./setupWindow";
 import { createTray, TrayHandle } from "./tray";
@@ -58,6 +60,7 @@ if (!app.requestSingleInstanceLock()) {
   let visibilityPollTimer: NodeJS.Timeout | null = null;
   let isQuitting = false;
   let shutdownStarted = false;
+  let stopPowerSourceSync: (() => void) | null = null;
   // Set via the "meeting-recording-active-changed" IPC message the preload
   // bridge's assistantAPI.setRecordingActive() sends — see preload.ts. Only
   // gates actual app quit (below); hiding the window to the tray already
@@ -103,6 +106,8 @@ if (!app.requestSingleInstanceLock()) {
     }
     return result.filePaths[0];
   });
+
+  registerAutostartIpc();
 
   function confirmQuitDuringActiveRecording(): boolean {
     const options: Electron.MessageBoxSyncOptions = {
@@ -237,7 +242,8 @@ if (!app.requestSingleInstanceLock()) {
     window.on("restore", () => sendWindowActive(true));
 
     window.webContents.on("before-input-event", (event: Electron.Event, input: Electron.Input) => {
-      const quitShortcut = input.type === "keyDown" && (input.control || input.meta) && !input.alt && !input.shift && input.code === "KeyQ";
+      const quitShortcut =
+        input.type === "keyDown" && (input.control || input.meta) && !input.alt && !input.shift && input.code === "KeyQ";
       if (quitShortcut) {
         event.preventDefault();
         app.quit();
@@ -345,6 +351,10 @@ if (!app.requestSingleInstanceLock()) {
 
     const window = mainWindow;
     await Promise.all([waitForWindowPainted(window), waitForBackendReady()]);
+    if (shutdownStarted) {
+      return;
+    }
+    stopPowerSourceSync = startPowerSourceSync(apiToken);
     window.show();
   }
 
@@ -450,6 +460,8 @@ if (!app.requestSingleInstanceLock()) {
     shutdownStarted = true;
     isQuitting = true;
     stopUiVisibilityPolling();
+    stopPowerSourceSync?.();
+    stopPowerSourceSync = null;
     trayHandle?.tray.destroy();
     trayHandle = null;
     if (mainWindow && !mainWindow.isDestroyed()) {
