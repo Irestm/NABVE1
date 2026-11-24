@@ -9,7 +9,7 @@ import path from "node:path";
 // gain a new entry — an existing install's persisted setup_state.json will
 // then be considered stale and runSetup() runs again, instead of the app
 // silently starting with dependencies missing forever.
-const SETUP_SCHEMA_VERSION = 6;
+const SETUP_SCHEMA_VERSION = 7;
 
 const PYTHON_MIN_MAJOR = 3;
 const PYTHON_MIN_MINOR = 12;
@@ -581,6 +581,9 @@ export async function runSetup(onProgress: (progress: SetupProgress) => void): P
     "https://download.pytorch.org/whl/cpu",
     "torch",
   ]);
+
+  onProgress({ step: "Скачиваю языковую модель...", percent: 70 });
+  await runCommand("spacy download", venvPython, ["-m", "spacy", "download", "en_core_web_sm"]);
 
   onProgress({ step: "Устанавливаю браузерный движок...", percent: 75 });
   await runCommand("playwright install", venvPython, ["-m", "playwright", "install", "chromium"]);
